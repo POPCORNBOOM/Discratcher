@@ -220,5 +220,18 @@
   "titlebar.maximize": "最大化",
   "titlebar.minimize": "最小化",
   "titlebar.progress": "总进度",
-  "titlebar.restore": "还原"
+  "titlebar.restore": "还原",
+  "update.available": "有新版本 {version}",
+  "update.check": "检查更新",
+  "update.checking": "正在检查更新…",
+  "update.download": "下载更新",
+  "update.failed": "检查更新失败：{e}",
+  "update.install": "安装更新",
+  "update.later": "稍后",
+  "update.latest": "已是最新版本",
+  "update.noNotes": "这个版本没有更新说明。",
+  "update.note": "完成后会自动重启。",
+  "update.now": "更新并重启",
+  "update.title": "更新到 {version}",
+  "update.version": "版本 {version}"
 }

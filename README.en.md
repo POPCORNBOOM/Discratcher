@@ -59,6 +59,10 @@ The core logic does not depend on a window framework, and drive access is implem
 2. Pick an image and press burn.
 3. If your disc is not listed, calibrate it once (this uses up a disc), then share the result.
 
+## Updates
+
+The app looks for a new version at startup, or you can use Help → Check for updates. Updates are signature-checked and the app restarts after installing. On Linux, only the AppImage can update itself.
+
 ## Platform support
 
 | Platform | Status |

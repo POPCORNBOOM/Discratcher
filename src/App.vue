@@ -28,6 +28,7 @@ import TitleBar from './components/TitleBar.vue'
 import UiIcon from './components/UiIcon.vue'
 import { useProcess } from './stores/process'
 import { useStudio, type View } from './stores/studio'
+import { startUpdater } from './updater'
 import CalibrateView from './views/CalibrateView.vue'
 import CarveView from './views/CarveView.vue'
 import HomeView from './views/HomeView.vue'
@@ -52,6 +53,7 @@ onMounted(async () => {
   await s.refreshPresets()
   await s.refreshDrives()
   process.listen()
+  void startUpdater()
   poll = window.setInterval(() => s.job || s.refreshDrives(), DRIVE_POLL_MS)
 })
 onBeforeUnmount(() => clearInterval(poll))

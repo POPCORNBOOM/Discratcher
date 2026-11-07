@@ -220,5 +220,18 @@
   "titlebar.maximize": "Maximize",
   "titlebar.minimize": "Minimize",
   "titlebar.progress": "Overall progress",
-  "titlebar.restore": "Restore"
+  "titlebar.restore": "Restore",
+  "update.available": "Update to {version}",
+  "update.check": "Check for updates",
+  "update.checking": "Checking for updates…",
+  "update.download": "Download update",
+  "update.failed": "Could not check for updates: {e}",
+  "update.install": "Install update",
+  "update.later": "Later",
+  "update.latest": "You are on the latest version",
+  "update.noNotes": "This version has no release notes.",
+  "update.note": "The app restarts when this finishes.",
+  "update.now": "Update and restart",
+  "update.title": "Update to {version}",
+  "update.version": "Version {version}"
 }

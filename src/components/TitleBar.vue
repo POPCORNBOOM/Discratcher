@@ -1,5 +1,5 @@
 <template>
-  <header class="titlebar" data-tauri-drag-region="deep">
+  <header class="titlebar" :class="{ mac }" data-tauri-drag-region="deep">
     <div class="left">
       <UiButton icon-only variant="ghost" :icon="mdiArrowLeft" :aria-label="t('titlebar.back')" :disabled="!s.canBack" @click="s.back()" />
       <UiMenubar :menus="menus" />
@@ -29,7 +29,9 @@
         </section>
       </div>
 
-      <div class="controls" data-tauri-drag-region="false">
+      <UiButton v-if="update" variant="soft" :disabled="p.status === 'running'" @click="updateDialog = true">{{ t('update.available', { version: update.version }) }}</UiButton>
+
+      <div v-if="!mac" class="controls" data-tauri-drag-region="false">
         <button class="wc" type="button" :aria-label="t('titlebar.minimize')" :data-tooltip="t('titlebar.minimize')" @click="windowControl('minimize')">
           <UiIcon :path="mdiWindowMinimize" :size="14" />
         </button>
@@ -42,21 +44,32 @@
       </div>
     </div>
 
+    <UiDialog v-if="updateDialog && update" :title="t('update.available', { version: update.version })" @close="updateDialog = false">
+      <p class="notes selectable">{{ update.body || t('update.noNotes') }}</p>
+      <template #actions>
+        <UiButton variant="ghost" @click="updateDialog = false">{{ t('update.later') }}</UiButton>
+        <UiButton variant="solid" @click="confirmUpdate">{{ t('update.now') }}</UiButton>
+      </template>
+    </UiDialog>
+
     <div v-if="overallProgress != null" class="titlebar-progress" role="progressbar" :aria-label="t('titlebar.progress')" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(overallProgress * 100)"><i :style="{ width: `${overallProgress * 100}%` }" /></div>
   </header>
 </template>
 
 <script setup lang="ts">
-import { mdiArrowLeft, mdiCheck, mdiClose, mdiTranslate, mdiCrosshairsGps, mdiExportVariant, mdiFire, mdiFolderOpenOutline, mdiGithub, mdiHomeOutline, mdiImageEditOutline, mdiMagnify, mdiMessageAlertOutline, mdiWindowMaximize, mdiWindowMinimize, mdiWindowRestore } from '@mdi/js'
+import { mdiUpdate, mdiArrowLeft, mdiCheck, mdiClose, mdiTranslate, mdiCrosshairsGps, mdiExportVariant, mdiFire, mdiFolderOpenOutline, mdiGithub, mdiHomeOutline, mdiImageEditOutline, mdiMagnify, mdiMessageAlertOutline, mdiWindowMaximize, mdiWindowMinimize, mdiWindowRestore } from '@mdi/js'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isWindowMaximized, openInBrowser, windowControl } from '../api'
 import { REPOSITORY_URL } from '../catalog'
 import { locale, locales, setLocale, t } from '../i18n'
 import { notices } from '../notices'
+import { useProcess } from '../stores/process'
 import { useStudio } from '../stores/studio'
 import { overallProgress, tasks } from '../tasks'
+import { appVersion, checkForUpdate, checking, installUpdate, update } from '../updater'
 import BrandMark from './BrandMark.vue'
 import UiButton from './UiButton.vue'
+import UiDialog from './UiDialog.vue'
 import UiIcon from './UiIcon.vue'
 import UiMenubar, { type Menu } from './UiMenubar.vue'
 
@@ -64,7 +77,12 @@ const FADE_MS = 2200
 const ERROR_FADE_MS = 6000
 const PANEL_CLOSE_DELAY_MS = 120
 
+/** macOS draws its own traffic lights over the window; elsewhere the page draws the buttons. */
+const mac = navigator.userAgent.includes('Mac')
+
 const s = useStudio()
+const p = useProcess()
+const updateDialog = ref(false)
 const taskPanel = ref(false)
 const noticePanel = ref(false)
 const faded = ref(false)
@@ -87,6 +105,11 @@ watch(latest, (n) => {
   faded.value = false
   if (n) fadeTimer = window.setTimeout(() => (faded.value = true), n.tone === 'danger' ? ERROR_FADE_MS : FADE_MS)
 })
+
+function confirmUpdate() {
+  updateDialog.value = false
+  installUpdate()
+}
 
 function openTasks() {
   clearTimeout(closeTimer)
@@ -125,6 +148,7 @@ const menus = computed<Menu[]>(() => [
     actions: [
       { key: 'repo', title: t('menu.repo'), icon: mdiGithub, run: () => void openInBrowser(`${REPOSITORY_URL}/issues?q=label%3Acalibration`) },
       { key: 'issue', title: t('menu.issue'), icon: mdiMessageAlertOutline, run: () => void openInBrowser(`${REPOSITORY_URL}/issues/new`) },
+      { key: 'update', title: t(checking.value ? 'update.checking' : 'update.check'), icon: mdiUpdate, disabled: checking.value, run: () => void checkForUpdate(true) },
       { key: 'd1', divider: true },
       {
         key: 'language',
@@ -132,6 +156,7 @@ const menus = computed<Menu[]>(() => [
         icon: mdiTranslate,
         children: locales.map((l) => ({ key: l.code, title: l.name, icon: l.code === locale.value ? mdiCheck : undefined, run: () => setLocale(l.code) })),
       },
+      ...(appVersion.value ? [{ key: 'version', title: t('update.version', { version: appVersion.value }), disabled: true }] : []),
     ],
   },
 ])
@@ -156,6 +181,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .titlebar { position: relative; height: var(--oc-shell-titlebar-height); flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: var(--oc-space-sm); padding: 0 0 0 var(--oc-space-md); background: var(--oc-bg-block); border-bottom: 1px solid var(--oc-border-muted); z-index: 10; }
+.titlebar.mac { padding: 0 var(--oc-space-md) 0 84px; }
+.notes { max-height: 320px; overflow-y: auto; white-space: pre-wrap; }
 .left { display: flex; align-items: center; gap: var(--oc-space-2xs); }
 .middle { display: flex; justify-content: center; }
 .brand { position: relative; display: inline-flex; align-items: center; gap: var(--oc-space-xs); height: var(--oc-size-md); padding: 0 var(--oc-space-sm); border-radius: var(--oc-radius-control); color: var(--oc-fg-muted); font-size: var(--oc-text-sm); }

@@ -53,12 +53,15 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Discratcher ${{ github.ref_name }}
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json
 
   publish:
     needs: build
@@ -81,4 +84,8 @@ jobs:
             notes="$(git log --pretty='- %s' "${prev:+$prev..}$tag")"
           fi
           printf '%s\n\n---\n\nmacOS 版未签名，首次打开请右键选择“打开”。\n' "$notes" > notes.md
+          gh release download "$tag" --pattern latest.json
+          jq --rawfile notes notes.md '.notes = $notes' latest.json > notes.json
+          mv notes.json latest.json
+          gh release upload "$tag" latest.json --clobber
           gh release edit "$tag" --draft=false --latest --notes-file notes.md
