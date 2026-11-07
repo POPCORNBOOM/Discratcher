@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/POPCORNBOOM/Discratcher/actions/workflows/ci.yml"><img src="https://github.com/POPCORNBOOM/Discratcher/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-9045f9" alt="MIT License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-9045f9" alt="GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-555" alt="Platform">
 </p>
 
@@ -102,7 +102,7 @@ Discratcher 的目标是让 DVD-R 刻图的标定更简单，并在 macOS、Wind
 <summary><strong>测盘片时踩到的问题</strong></summary>
 
 - 部分 USB 光驱（如 LG GUD1N）在 macOS 上拒绝 MMC 接口，导致设备无法打开。现在回退为直接加载 SCSITaskLib 做绑定。
-- 原默认测量范围仅为盘面的 3%–85%，最外圈约 34 万个扇区未被覆盖。范围已扩大到 2%–96%（25.29–56.91 mm），并确认外圈存在轨距畸变，峰峰值约 2.9°。
+- 原默认测量范围仅为盘面的 3%–85%，最外圈约 34 万个扇区未被覆盖。范围已扩大到 2%–96%（25.29–56.91 mm），并确认恒定轨距模型在整个范围内的残差峰峰值约 2.9°，54.2 mm 以外约 1.8°（一次 56 阶实测，同一台光驱和同一张盘）。
 - 原导出流程拟合的是理想恒定轨距点而非实测点，导致三次系数始终接近 0。现在直接拟合实测解包裹角，整盘残差 RMS 从 0.715° 降至 0.402°。
 - 原默认总扇区数为 2,298,496，比 DVD-R 实际的 2,295,104 多 3,392，使外径偏大约 0.035 mm。已修正为实际值。
 - 已刻录且没有文件系统的光盘，会因无法取得独占锁而打开失败（0xE00002D5）。现在改读 `/dev/rdiskN` 并启用 `F_NOCACHE`，无需独占访问。
@@ -120,9 +120,9 @@ Discratcher 的目标是让 DVD-R 刻图的标定更简单，并在 macOS、Wind
 
 ## 参考
 
-- [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos)：用光驱读取时序测盘片螺旋的探针（GPLv3），这里拿它的公开数据做测试对照。
-- [disc-probe](https://github.com/Ashley-QwQ/disc-probe)：上面那个项目的上游。
+- [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos)：用光驱读取时序测盘片螺旋的探针（GPLv3）。部分标定代码参考了它的实现，公开数据用作测试对照。
+- [disc-probe](https://github.com/Ashley-QwQ/disc-probe)：上面那个项目的上游（GPLv3）。
 
 ## 许可
 
-[MIT](LICENSE)
+[GPL-3.0-or-later](LICENSE)。署名见 [NOTICE](NOTICE)。

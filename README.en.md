@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/POPCORNBOOM/Discratcher/actions/workflows/ci.yml"><img src="https://github.com/POPCORNBOOM/Discratcher/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-9045f9" alt="MIT License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-9045f9" alt="GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-555" alt="Platform">
 </p>
 
@@ -102,7 +102,7 @@ Discratcher exists to make calibration simpler for DVD-R image burning, with the
 <summary><strong>Problems hit while measuring discs</strong></summary>
 
 - On macOS, some USB drives (such as the LG GUD1N) reject the MMC interface and cannot be opened. The fallback loads SCSITaskLib directly.
-- The default range covered only 3%–85% of the disc, leaving about 340,000 outer sectors unmeasured. The range is now 2%–96% (25.29–56.91 mm), and the outer tracks do show pitch distortion, about 2.9° peak to peak.
+- The default range covered only 3%–85% of the disc, leaving about 340,000 outer sectors unmeasured. The range is now 2%–96% (25.29–56.91 mm), and the constant-pitch residual is about 2.9° peak to peak across that range, about 1.8° beyond 54.2 mm (one 56-rung run on one drive and one disc).
 - Preset export fitted ideal constant-pitch points rather than measurements, so the cubic coefficient always stayed near 0. The fit now uses the measured unwrapped angles directly, lowering the whole-disc residual RMS from 0.715° to 0.402°.
 - The default total sector count was 2,298,496, which is 3,392 more than a DVD-R's actual 2,295,104 and makes the outer diameter about 0.035 mm too large. It now holds the actual value.
 - Burned discs with no file system could not be opened because the exclusive lock was unavailable (0xE00002D5). Reads now go through `/dev/rdiskN` with `F_NOCACHE`, which needs no exclusive access.
@@ -120,9 +120,9 @@ Discratcher exists to make calibration simpler for DVD-R image burning, with the
 
 ## References
 
-- [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos): a probe that measures the disc spiral from drive read timing (GPLv3). Its public data serves as a test reference here.
-- [disc-probe](https://github.com/Ashley-QwQ/disc-probe): the upstream of the project above.
+- [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos): a probe that measures the disc spiral from drive read timing (GPLv3). Parts of the calibration code draw on its implementation, and its public data serves as a test reference.
+- [disc-probe](https://github.com/Ashley-QwQ/disc-probe): the upstream of the project above (GPLv3).
 
 ## License
 
-[MIT](LICENSE)
+[GPL-3.0-or-later](LICENSE). See [NOTICE](NOTICE) for attribution.

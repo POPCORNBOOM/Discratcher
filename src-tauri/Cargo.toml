@@ -3,7 +3,7 @@ name = "discratcher"
 version = "0.1.1"
 description = "DVD-R data-side carving and drive-timing calibration studio."
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-or-later"
 
 [lib]
 name = "discratcher_lib"

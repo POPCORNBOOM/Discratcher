@@ -1,0 +1,25 @@
+Discratcher
+Copyright (C) 2026 Yigu Wang, Mihua
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See LICENSE for the full text.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+
+Derived work
+------------
+
+Parts of the calibration code draw on these GPL-3.0 projects, including the
+ladder search and spindle settling in crates/disc-core/src/calib/ and values such
+as the spiral grid size and the calibration volume label:
+
+- disc-probe: https://github.com/Ashley-QwQ/disc-probe
+- discprobe-macos: https://github.com/NaiveTomcat/discprobe-macos
+
+The source code of Discratcher and of these changes is available at
+https://github.com/POPCORNBOOM/Discratcher
