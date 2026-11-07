@@ -118,11 +118,24 @@ Discratcher 的目标是让 DVD-R 刻图的标定更简单，并在 macOS、Wind
 
 </details>
 
-## 参考
+## 前人工作与致谢
 
-- [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos)：用光驱读取时序测盘片螺旋的探针（GPLv3）。部分标定代码参考了它的实现，公开数据用作测试对照。
-- [disc-probe](https://github.com/Ashley-QwQ/disc-probe)：上面那个项目的上游（GPLv3）。
+用读取计时测扇区角度并不是这里首创。[disc-probe](https://github.com/Ashley-QwQ/disc-probe) 的致谢整理了更早的工作：
+
+- 光盘防拷里的 DPM（Data Position Measurement）；
+- redump 论坛 2025 年关于用 FUA 重读同一扇区测一整圈时间的讨论；
+- 飞利浦专利 US7538787B2《在光盘上写入标签的方法》。
+
+本项目建立在这些开源工作之上：
+
+- [disc-probe](https://github.com/Ashley-QwQ/disc-probe)（GPL-3.0-or-later）：读取计时标定的开源实现。Discratcher 的逐级测量、主轴稳定判断和部分常量参考了它的实现。
+- [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos)（GPLv3）：disc-probe 的 macOS 移植。它的公开数据用作本项目的测试对照。
+- [DiscImageStudio](https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio)（GPL-3.0-or-later）：数据面刻图的螺旋模型和编码参考了它。
+
+感谢这些项目的作者，也感谢向它们报告实测结果的用户。
 
 ## 许可
 
-[GPL-3.0-or-later](LICENSE)。署名见 [NOTICE](NOTICE)。
+Copyright (C) 2026 Yigu Wang, Mihua
+
+本程序是自由软件：你可以按照自由软件基金会发布的 GNU 通用公共许可证（第 3 版，或任何更新的版本）重新发布和修改它。发布本程序是希望它有用，但不提供任何担保，包括适销性或特定用途适用性的隐含担保。详见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。SPDX：`GPL-3.0-or-later`。

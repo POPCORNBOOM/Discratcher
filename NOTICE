@@ -14,12 +14,15 @@ PARTICULAR PURPOSE. See the GNU General Public License for more details.
 Derived work
 ------------
 
-Parts of the calibration code draw on these GPL-3.0 projects, including the
+Parts of the calibration code draw on these GPL projects, including the
 ladder search and spindle settling in crates/disc-core/src/calib/ and values such
 as the spiral grid size and the calibration volume label:
 
 - disc-probe: https://github.com/Ashley-QwQ/disc-probe
 - discprobe-macos: https://github.com/NaiveTomcat/discprobe-macos
+
+The spiral model and encoding for data-side images draw on DiscImageStudio
+(GPL-3.0-or-later): https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio
 
 The source code of Discratcher and of these changes is available at
 https://github.com/POPCORNBOOM/Discratcher

@@ -118,11 +118,24 @@ Discratcher exists to make calibration simpler for DVD-R image burning, with the
 
 </details>
 
-## References
+## Prior work and acknowledgements
 
-- [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos): a probe that measures the disc spiral from drive read timing (GPLv3). Parts of the calibration code draw on its implementation, and its public data serves as a test reference.
-- [disc-probe](https://github.com/Ashley-QwQ/disc-probe): the upstream of the project above (GPLv3).
+Measuring sector angles from read timing did not start here. The acknowledgements of [disc-probe](https://github.com/Ashley-QwQ/disc-probe) collect the earlier work:
+
+- DPM (Data Position Measurement) in disc copy protection;
+- a 2025 redump forum discussion on timing a full turn by re-reading one sector with FUA;
+- Philips patent US7538787B2, a method of writing a label on an optical disc.
+
+This project builds on these open source works:
+
+- [disc-probe](https://github.com/Ashley-QwQ/disc-probe) (GPL-3.0-or-later): the open source implementation of read-timing calibration. Discratcher's step-by-step measurement, spindle settling and some constants draw on it.
+- [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos) (GPLv3): the macOS port of disc-probe. Its public data serves as a test reference here.
+- [DiscImageStudio](https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio) (GPL-3.0-or-later): the spiral model and encoding for data-side images draw on it.
+
+Thanks to the authors of these projects, and to everyone who reported measurements to them.
 
 ## License
 
-[GPL-3.0-or-later](LICENSE). See [NOTICE](NOTICE) for attribution.
+Copyright (C) 2026 Yigu Wang, Mihua
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY, without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See [LICENSE](LICENSE) and [NOTICE](NOTICE). SPDX: `GPL-3.0-or-later`.
