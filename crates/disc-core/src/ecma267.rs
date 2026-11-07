@@ -87,7 +87,7 @@ mod tests {
     /// Real image from the sibling discprobe checkout, skipped when it is not on this machine.
     #[test]
     fn real_burned_image_descrambles_to_exactly_two_bytes() {
-        let path = std::path::Path::new(env!("HOME")).join("Github/discprobe-macos/carved_artwork.iso");
+        let Some(path) = crate::probe_root().map(|r| r.join("carved_artwork.iso")) else { return };
         let Ok(mut f) = std::fs::File::open(&path) else { return };
         use std::io::{Read, Seek, SeekFrom};
         let lut = build_scrambler_lut();

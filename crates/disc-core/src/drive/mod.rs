@@ -9,6 +9,8 @@ pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
 #[cfg(target_os = "windows")]
+pub mod imapi;
+#[cfg(target_os = "windows")]
 pub mod windows;
 
 use serde::{Deserialize, Serialize};
@@ -89,7 +91,35 @@ pub fn open_timed(id: &str, paced: bool) -> Result<Box<dyn TimedDrive>, String> 
     Err("这个平台没有光驱后端".into())
 }
 
-/// Shared MMC command blocks, so the three transports stay byte-for-byte alike.
+/// Write speeds to offer for a blank disc. "offered" is what the drive itself
+/// reported; "detected_max" is the drive's own limit, which wins over what the disc
+/// claims: a 16x disc in an 8x drive is 8x. With nothing reported at all, guess low
+/// rather than offer a speed nobody confirmed.
+pub fn derive_write_speeds(
+    media_type: &str,
+    is_blank: bool,
+    offered: Vec<u8>,
+    detected_max: Option<u8>,
+) -> (Vec<u8>, u8) {
+    if !is_blank {
+        return (Vec::new(), 0);
+    }
+    let is_cd = media_type.to_ascii_uppercase().contains("CD");
+    let default_ladder = if is_cd { vec![4, 8, 10, 16, 24, 32, 40, 48] } else { vec![2, 4, 6, 8, 12, 16] };
+
+    let max_speed = detected_max.or_else(|| offered.iter().copied().max()).unwrap_or(if is_cd { 16 } else { 4 });
+
+    let mut speeds: Vec<u8> = offered.into_iter().filter(|&s| s <= max_speed).collect();
+    if speeds.is_empty() {
+        speeds = default_ladder.into_iter().filter(|&s| s <= max_speed).collect();
+    }
+
+    let effective_max = speeds.iter().copied().max().unwrap_or(max_speed);
+    (speeds, effective_max)
+}
+
+/// CDB layouts and reply decoding shared by every transport, so the three backends
+/// cannot drift apart, and so the parsing is testable without a drive.
 pub mod mmc {
     pub fn read12(lba: u32, sectors: u32, fua: bool) -> [u8; 12] {
         let l = lba.to_be_bytes();
@@ -112,6 +142,58 @@ pub mod mmc {
         u32::from_be_bytes([b[0], b[1], b[2], b[3]]) + 1
     }
 
+    /// Vendor, product and revision from a standard INQUIRY reply. The three fields
+    /// are space padded, and not every drive pads them neatly.
+    pub fn parse_inquiry(b: &[u8]) -> (String, String, String) {
+        let field = |r: std::ops::Range<usize>| {
+            let end = r.end.min(b.len());
+            let start = r.start.min(end);
+            String::from_utf8_lossy(&b[start..end]).trim().to_string()
+        };
+        (field(8..16), field(16..32), field(32..36))
+    }
+
+    /// What is loaded, from the current profile in a GET CONFIGURATION header. The
+    /// drive answers with the profile of the medium, not of the drive.
+    pub fn profile_media_type(profile: u16) -> Option<&'static str> {
+        Some(match profile {
+            0x0008 => "CD-ROM",
+            0x0009 => "CD-R",
+            0x000A => "CD-RW",
+            0x0010 => "DVD-ROM",
+            0x0011 => "DVD-R",
+            0x0012 => "DVD-RAM",
+            0x0013 | 0x0014 => "DVD-RW",
+            0x001A => "DVD+RW",
+            0x001B => "DVD+R",
+            0x002B => "DVD+R DL",
+            0x0040 => "BD-ROM",
+            0x0041 | 0x0042 => "BD-R",
+            0x0043 => "BD-RE",
+            _ => return None,
+        })
+    }
+
+    /// Disc status from READ DISC INFORMATION: 0 empty, 1 appendable, 2 finalised.
+    /// A status nobody can read counts as finalised, so an unknown disc is never
+    /// mistaken for a blank one.
+    pub fn disc_status(b: &[u8]) -> u8 {
+        b.get(2).map_or(2, |v| (v >> 4) & 0x03)
+    }
+
+    /// Sectors a blank medium of this type holds. Some drives answer READ CAPACITY
+    /// with nothing at all for a disc that has never been written, and one sector is
+    /// worse than the nominal size: the calibration would plan its reads around it.
+    pub fn nominal_sectors(media_type: &str) -> u32 {
+        match media_type {
+            "CD-R" | "CD-RW" | "CD-ROM" => 359_849,
+            "DVD+R DL" => 4_173_824,
+            m if m.starts_with("DVD") => 2_295_104,
+            m if m.starts_with("BD") => 12_219_392,
+            _ => 0,
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -124,5 +206,59 @@ pub mod mmc {
             assert_eq!(set_speed(5540)[..4], [0xBB, 0x00, 0x15, 0xA4]);
             assert_eq!(parse_capacity(&[0, 0x23, 0x05, 0x3F, 0, 0, 8, 0]), 2_295_104);
         }
+
+        #[test]
+        fn inquiry_fields_are_trimmed() {
+            let mut b = [0u8; 36];
+            b[..8].copy_from_slice(&[0x05, 0x80, 0x00, 0x32, 0x5B, 0x00, 0x00, 0x00]);
+            b[8..16].copy_from_slice(b"HL-DT-ST");
+            b[16..32].copy_from_slice(b"DVDRAM GUD1N    ");
+            b[32..36].copy_from_slice(b"1.01");
+            assert_eq!(parse_inquiry(&b), ("HL-DT-ST".into(), "DVDRAM GUD1N".into(), "1.01".into()));
+            // A short reply must not panic either.
+            assert_eq!(parse_inquiry(&b[..10]).0, "HL");
+        }
+
+        #[test]
+        fn profiles_name_the_media_not_the_drive() {
+            assert_eq!(profile_media_type(0x0011), Some("DVD-R"));
+            assert_eq!(profile_media_type(0x0009), Some("CD-R"));
+            assert_eq!(profile_media_type(0x002B), Some("DVD+R DL"));
+            assert_eq!(profile_media_type(0x0013), Some("DVD-RW"));
+            assert_eq!(profile_media_type(0x0043), Some("BD-RE"));
+            assert_eq!(profile_media_type(0x0000), None);
+        }
+
+        #[test]
+        fn disc_status_reads_the_two_bit_field() {
+            assert_eq!(disc_status(&[0, 0, 0x00]), 0);
+            assert_eq!(disc_status(&[0, 0, 0x10]), 1);
+            assert_eq!(disc_status(&[0, 0, 0x20]), 2);
+            // A reply too short to hold the field must not read as blank.
+            assert_eq!(disc_status(&[]), 2);
+        }
+
+        #[test]
+        fn nominal_capacity_fills_in_for_a_blank_disc() {
+            assert_eq!(nominal_sectors("DVD-R"), 2_295_104);
+            assert_eq!(nominal_sectors("DVD+R DL"), 4_173_824);
+            assert_eq!(nominal_sectors("CD-R"), 359_849);
+            assert_eq!(nominal_sectors("None"), 0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_speeds_are_guessed_low_when_nothing_was_reported() {
+        assert_eq!(derive_write_speeds("DVD-R", true, Vec::new(), None), (vec![2, 4], 4));
+        assert_eq!(derive_write_speeds("CD-R", true, Vec::new(), None), (vec![4, 8, 10, 16], 16));
+        // A written disc is not offered a speed at all.
+        assert_eq!(derive_write_speeds("DVD-R", false, vec![2, 4], Some(8)), (Vec::new(), 0));
+        // Offered speeds above the drive limit are dropped.
+        assert_eq!(derive_write_speeds("DVD-R", true, vec![2, 4, 8, 12, 16], Some(8)), (vec![2, 4, 8], 8));
     }
 }

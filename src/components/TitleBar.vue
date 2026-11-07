@@ -28,6 +28,18 @@
           <div v-for="n in [...notices].reverse()" :key="n.id" class="line small" :class="n.tone"><UiIcon :path="n.icon" /><span>{{ n.message }}</span></div>
         </section>
       </div>
+
+      <div class="controls" data-tauri-drag-region="false">
+        <button class="wc" type="button" :aria-label="t('titlebar.minimize')" :data-tooltip="t('titlebar.minimize')" @click="windowControl('minimize')">
+          <UiIcon :path="mdiWindowMinimize" :size="14" />
+        </button>
+        <button class="wc" type="button" :aria-label="maxed ? t('titlebar.restore') : t('titlebar.maximize')" :data-tooltip="maxed ? t('titlebar.restore') : t('titlebar.maximize')" @click="toggleMaximized">
+          <UiIcon :path="maxed ? mdiWindowRestore : mdiWindowMaximize" :size="14" />
+        </button>
+        <button class="wc close" type="button" :aria-label="t('titlebar.close')" :data-tooltip="t('titlebar.close')" @click="windowControl('close')">
+          <UiIcon :path="mdiClose" :size="14" />
+        </button>
+      </div>
     </div>
 
     <div v-if="overallProgress != null" class="titlebar-progress" role="progressbar" :aria-label="t('titlebar.progress')" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(overallProgress * 100)"><i :style="{ width: `${overallProgress * 100}%` }" /></div>
@@ -35,9 +47,9 @@
 </template>
 
 <script setup lang="ts">
-import { mdiArrowLeft, mdiCheck, mdiTranslate, mdiCrosshairsGps, mdiExportVariant, mdiFire, mdiFolderOpenOutline, mdiGithub, mdiHomeOutline, mdiImageEditOutline, mdiMagnify, mdiMessageAlertOutline } from '@mdi/js'
+import { mdiArrowLeft, mdiCheck, mdiClose, mdiTranslate, mdiCrosshairsGps, mdiExportVariant, mdiFire, mdiFolderOpenOutline, mdiGithub, mdiHomeOutline, mdiImageEditOutline, mdiMagnify, mdiMessageAlertOutline, mdiWindowMaximize, mdiWindowMinimize, mdiWindowRestore } from '@mdi/js'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { openInBrowser } from '../api'
+import { isWindowMaximized, openInBrowser, windowControl } from '../api'
 import { REPOSITORY_URL } from '../catalog'
 import { locale, locales, setLocale, t } from '../i18n'
 import { notices } from '../notices'
@@ -58,6 +70,16 @@ const noticePanel = ref(false)
 const faded = ref(false)
 let fadeTimer = 0
 let closeTimer = 0
+
+/** The window is frameless, so its buttons are ours and the icon has to follow it. */
+const maxed = ref(false)
+async function syncMaximized() {
+  maxed.value = await isWindowMaximized()
+}
+async function toggleMaximized() {
+  await windowControl('toggleMaximize')
+  await syncMaximized()
+}
 
 const latest = computed(() => notices.value[notices.value.length - 1] ?? null)
 watch(latest, (n) => {
@@ -120,20 +142,32 @@ function onShortcut(e: KeyboardEvent) {
     s.back()
   }
 }
-onMounted(() => window.addEventListener('keydown', onShortcut))
-onBeforeUnmount(() => window.removeEventListener('keydown', onShortcut))
+onMounted(() => {
+  window.addEventListener('keydown', onShortcut)
+  // Maximising can also come from a double click on the drag region, so follow the window.
+  window.addEventListener('resize', syncMaximized)
+  void syncMaximized()
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onShortcut)
+  window.removeEventListener('resize', syncMaximized)
+})
 </script>
 
 <style scoped>
-.titlebar { position: relative; height: var(--oc-shell-titlebar-height); flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: var(--oc-space-sm); padding: 0 var(--oc-space-md) 0 84px; background: var(--oc-bg-block); border-bottom: 1px solid var(--oc-border-muted); z-index: 10; }
+.titlebar { position: relative; height: var(--oc-shell-titlebar-height); flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: var(--oc-space-sm); padding: 0 0 0 var(--oc-space-md); background: var(--oc-bg-block); border-bottom: 1px solid var(--oc-border-muted); z-index: 10; }
 .left { display: flex; align-items: center; gap: var(--oc-space-2xs); }
 .middle { display: flex; justify-content: center; }
 .brand { position: relative; display: inline-flex; align-items: center; gap: var(--oc-space-xs); height: var(--oc-size-md); padding: 0 var(--oc-space-sm); border-radius: var(--oc-radius-control); color: var(--oc-fg-muted); font-size: var(--oc-text-sm); }
 .mark { width: 11px; height: 14px; color: var(--oc-accent); }
 .brand.busy { color: var(--oc-fg-default); cursor: pointer; }
 .brand.busy:hover { background-color: var(--oc-bg-hover); }
-.right { display: flex; justify-content: flex-end; min-width: 0; }
-.notice-host { position: relative; min-width: var(--oc-size-lg); min-height: var(--oc-size-sm); display: flex; align-items: center; justify-content: flex-end; }
+.right { display: flex; justify-content: flex-end; align-items: stretch; align-self: stretch; min-width: 0; gap: var(--oc-space-xs); }
+.controls { display: flex; align-items: stretch; }
+.wc { width: 36px; display: grid; place-items: center; border: 0; padding: 0; background: transparent; color: var(--oc-fg-muted); transition: background-color var(--oc-duration) var(--oc-ease), color var(--oc-duration) var(--oc-ease); }
+.wc:hover { background: var(--oc-bg-hover); color: var(--oc-fg-default); }
+.wc.close:hover { background: #c42b1c; color: #fff; }
+.notice-host { position: relative; align-self: center; min-width: var(--oc-size-lg); min-height: var(--oc-size-sm); display: flex; align-items: center; justify-content: flex-end; }
 .flash { display: inline-flex; align-items: center; gap: var(--oc-space-2xs); max-width: min(36vw, 420px); font-size: var(--oc-text-xs); color: var(--oc-fg-muted); opacity: 1; transition: opacity var(--oc-duration) var(--oc-ease); }
 .flash.faded { opacity: 0; }
 .notice-host:hover .flash, .titlebar:hover .flash { opacity: 1; }

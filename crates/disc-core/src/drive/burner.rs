@@ -33,8 +33,15 @@ pub fn parse_hdiutil_line(line: &str) -> Option<BurnProgress> {
     Some(BurnProgress { percent: None, message: msg.to_string() })
 }
 
-/// Command line for this platform. `test_only` runs the laser off where the tool allows it.
+/// Command line for the platforms that burn with an external tool. Windows burns in process
+/// through IMAPI2 instead, so this is only reached from macOS and Linux.
 pub fn burn_command(drive_id: &str, iso: &str, speed: u8, verify: bool, test_only: bool) -> Result<Vec<String>, String> {
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (drive_id, iso, speed, verify, test_only);
+        return Err("这个平台没有刻录后端".into());
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let _ = drive_id;
     #[cfg(target_os = "macos")]
     {
@@ -57,14 +64,6 @@ pub fn burn_command(drive_id: &str, iso: &str, speed: u8, verify: bool, test_onl
         a.push("-Z".into());
         a.push(format!("{drive_id}={iso}"));
         return Ok(a);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let _ = (speed, verify);
-        if test_only {
-            return Err("Windows 的光盘映像刻录机不支持试刻".into());
-        }
-        return Ok(vec!["isoburn.exe".to_string(), "/Q".into(), drive_id.trim_start_matches(r"\\.\").into(), iso.into()]);
     }
     #[allow(unreachable_code)]
     Err("这个平台没有刻录后端".into())
@@ -151,7 +150,11 @@ pub fn burn(argv: &[String], cancel: &AtomicBool, on_progress: &mut dyn FnMut(Bu
     if status.success() {
         Ok(())
     } else {
-        Err(if err.trim().is_empty() { format!("刻录失败：{last}（退出码 {status}）") } else { err })
+        Err(if err.trim().is_empty() {
+        format!("刻录失败：{last}（退出码 {}）", status.code().unwrap_or(-1))
+    } else {
+        err
+    })
     }
 }
 

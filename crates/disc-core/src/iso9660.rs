@@ -3,10 +3,10 @@
 //! The filesystem lets the OS recognise and unmount the disc and satisfies burners that
 //! refuse a bare image. It occupies LBA 16..=19, inside the innermost millimetre.
 
-use crate::carver::create_mapped;
+use crate::carver::{create_sized, CarveProgress};
 use crate::ecma267::SECTOR_BYTES;
 use crate::rng::SplitMix64;
-use rayon::prelude::*;
+use std::io::Write;
 use std::path::Path;
 
 pub const CALIBRATION_VOLUME: &str = "DISCPROBE_RANDOM";
@@ -75,21 +75,81 @@ pub fn write_volume(image: &mut [u8], label: &str, total_sectors: u32) {
     dir_record(&mut root[34..68], ROOT, SECTOR_BYTES as u32, 1);
 }
 
+/// Sectors per write. 4 MiB keeps the write count low and still lets progress move.
+const BATCH_SECTORS: usize = 2048;
+
 /// Deterministic random fill: timing reads need ordinary data, single-byte textures make
-/// drives retry. Each sector has its own stream, so the build parallelises.
-pub fn generate_calibration_iso(path: &Path, total_sectors: u32) -> Result<(), String> {
+/// drives retry. Each sector has its own stream, so a sector can be produced on its own.
+fn fill_sector(s: &mut [u8], lba: usize) {
+    let mut g = SplitMix64(0x2026_1104_0000_0000 ^ lba as u64);
+    for w in s.chunks_exact_mut(8) {
+        w.copy_from_slice(&g.next_u64().to_le_bytes());
+    }
+}
+
+fn megabytes_per_s(bytes: u64, elapsed: std::time::Duration) -> f64 {
+    let secs = elapsed.as_secs_f64();
+    if secs <= 0.0 {
+        return 0.0;
+    }
+    bytes as f64 / 1e6 / secs
+}
+
+/// Write the calibration image, reporting progress as it goes.
+///
+/// The file is written straight through rather than through a mapping. Faulting in 4.7 GB
+/// through a mapping was measured at 87 s on a nearly full system drive, where writing the
+/// same bytes in order took a few seconds, and a mapping shows no progress while it fills.
+pub fn generate_calibration_iso(
+    path: &Path,
+    total_sectors: u32,
+    progress: &(dyn Fn(CarveProgress) + Sync),
+) -> Result<(), String> {
     if total_sectors < 32 {
         return Err("扇区数太少".into());
     }
-    let mut map = create_mapped(path, total_sectors as u64 * SECTOR_BYTES as u64)?;
-    map.par_chunks_mut(SECTOR_BYTES).enumerate().for_each(|(i, s)| {
-        let mut g = SplitMix64(0x2026_1104_0000_0000 ^ i as u64);
-        for w in s.chunks_exact_mut(8) {
-            w.copy_from_slice(&g.next_u64().to_le_bytes());
+    let total = total_sectors as usize;
+    let size = total as u64 * SECTOR_BYTES as u64;
+    let file = create_sized(path, size)?;
+    let began = std::time::Instant::now();
+    let mut out = std::io::BufWriter::with_capacity(4 << 20, file);
+
+    // The descriptors sit in the first sectors, over random data.
+    let head_len = (FS_LAST_LBA + 1) * SECTOR_BYTES;
+    let mut head = vec![0u8; head_len];
+    for (i, s) in head.chunks_mut(SECTOR_BYTES).enumerate() {
+        fill_sector(s, i);
+    }
+    write_volume(&mut head, CALIBRATION_VOLUME, total_sectors);
+
+    let mut batch = vec![0u8; BATCH_SECTORS * SECTOR_BYTES];
+    let mut done = 0usize;
+    let mut last_percent = -1i32;
+    while done < total {
+        let n = BATCH_SECTORS.min(total - done);
+        let buf = &mut batch[..n * SECTOR_BYTES];
+        for (k, s) in buf.chunks_mut(SECTOR_BYTES).enumerate() {
+            let lba = done + k;
+            match head.get(lba * SECTOR_BYTES..(lba + 1) * SECTOR_BYTES) {
+                Some(h) => s.copy_from_slice(h),
+                None => fill_sector(s, lba),
+            }
         }
-    });
-    write_volume(&mut map, CALIBRATION_VOLUME, total_sectors);
-    map.flush().map_err(|e| e.to_string())
+        out.write_all(buf).map_err(|e| format!("写入校准镜像失败：{e}"))?;
+        done += n;
+        let percent = (done * 100 / total) as i32;
+        if percent != last_percent {
+            last_percent = percent;
+            progress(CarveProgress {
+                percent: percent as f64,
+                mb_per_s: megabytes_per_s((done * SECTOR_BYTES) as u64, began.elapsed()),
+                max_sector_dark_ratio: 0.0,
+            });
+        }
+    }
+    out.flush().map_err(|e| format!("写入校准镜像失败：{e}"))?;
+    out.get_ref().sync_all().map_err(|e| format!("写入校准镜像失败：{e}"))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -101,7 +161,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("disc-core-iso-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("c.iso");
-        generate_calibration_iso(&p, 1024).unwrap();
+        generate_calibration_iso(&p, 1024, &|_| {}).unwrap();
         let d = std::fs::read(&p).unwrap();
         assert_eq!(d.len(), 1024 * 2048);
         assert_eq!(&d[16 * 2048 + 1..16 * 2048 + 6], b"CD001");

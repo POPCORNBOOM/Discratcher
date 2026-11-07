@@ -12,6 +12,8 @@ const TASK_KEY = 'process'
 
 export interface StepContext {
   report: (percent: number | null, message?: string) => void
+  /** Stops the job until the user answers; the answer decides whether the step goes on. */
+  ask: (question: string, accept: string) => Promise<boolean>
 }
 
 export interface ProcessStep {
@@ -47,7 +49,7 @@ export interface BurnPlan {
   note: string
   fileName: string
   prepareLabel: string
-  prepare: (path: string) => Promise<unknown>
+  prepare: (path: string, ctx: StepContext) => Promise<unknown>
   autoClose?: boolean
   rateIssue?: string
   shareable?: DiscGeometryPreset
@@ -68,6 +70,23 @@ export const useProcess = defineStore('process', () => {
   /** The finished job really wrote a disc: a test burn or the virtual drive does not count. */
   const burned = ref(false)
   const burnSettings = reactive({ speed: 4, verify: false, testOnly: false })
+  /** A question a running step cannot answer itself; the page renders it as a dialog. */
+  const pendingAsk = ref<{ question: string; accept: string } | null>(null)
+  let askResolve: ((yes: boolean) => void) | null = null
+
+  function ask(question: string, accept: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      askResolve = resolve
+      pendingAsk.value = { question, accept }
+    })
+  }
+
+  function answerAsk(yes: boolean) {
+    const resolve = askResolve
+    askResolve = null
+    pendingAsk.value = null
+    resolve?.(yes)
+  }
   const step = computed(() => request.value?.steps[stepIndex.value] ?? null)
   const dangerous = computed(() => status.value === 'running' && !!step.value?.dangerous?.())
   const totalSeconds = computed(() => (request.value?.steps ?? []).reduce((sum, x) => sum + x.estimate(), 0))
@@ -98,6 +117,7 @@ export const useProcess = defineStore('process', () => {
     stepIndex.value = 0
     percent.value = null
     failure.value = ''
+    pendingAsk.value = null
     burned.value = false
     s.view = 'process'
     if (!req.writes) void start()
@@ -120,9 +140,9 @@ export const useProcess = defineStore('process', () => {
         {
           label: plan.prepareLabel,
           estimate: () => COMPOSE_SECONDS,
-          run: async () => {
+          run: async (ctx) => {
             path = await call<string>('cache_iso_path', { name: plan.fileName })
-            await plan.prepare(path)
+            await plan.prepare(path, ctx)
           },
         },
         {
@@ -152,13 +172,14 @@ export const useProcess = defineStore('process', () => {
           message.value = req.steps[i].label
           wrote ||= !!req.steps[i].dangerous?.()
           publish()
-          await req.steps[i].run({ report })
+          await req.steps[i].run({ report, ask })
         }
         return true
       } finally {
         await req.cleanup?.().catch(() => {})
       }
     })
+    pendingAsk.value = null
     removeTask(TASK_KEY)
     await s.refreshDrives()
     if (ok) {
@@ -196,5 +217,5 @@ export const useProcess = defineStore('process', () => {
     on<BurnProgress>('burn://progress', (p) => report(p.percent, p.message))
   }
 
-  return { request, burned, status, stepIndex, percent, message, failure, stopping, burnSettings, dangerous, totalSeconds, stepSeconds, laterSeconds, open, openBurn, start, stop, close, listen }
+  return { request, burned, status, stepIndex, percent, message, failure, stopping, burnSettings, dangerous, totalSeconds, stepSeconds, laterSeconds, open, openBurn, start, stop, close, listen, pendingAsk, answerAsk }
 })

@@ -183,16 +183,25 @@ fn free_space(path: &Path) -> Option<u64> {
         }
         Some(s.f_bavail as u64 * s.f_frsize as u64)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+        let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let mut free: u64 = 0;
+        let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, std::ptr::null_mut(), std::ptr::null_mut()) };
+        (ok != 0).then_some(free)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = path;
         None
     }
 }
 
-/// Map a fresh output file, refusing up front if it cannot fit: writing past a full
-/// disk through a mapping would kill the process with SIGBUS.
-pub(crate) fn create_mapped(path: &Path, bytes: u64) -> Result<MmapMut, String> {
+/// Create an output file of exactly this size, after making sure the disk can hold it.
+pub(crate) fn create_sized(path: &Path, bytes: u64) -> Result<std::fs::File, String> {
     if let Some(free) = free_space(path) {
         if free < bytes {
             return Err(format!("磁盘空间不足：需要 {:.2} GB，只剩 {:.2} GB", bytes as f64 / 1e9, free as f64 / 1e9));
@@ -206,6 +215,13 @@ pub(crate) fn create_mapped(path: &Path, bytes: u64) -> Result<MmapMut, String> 
         .open(path)
         .map_err(|e| format!("无法创建 {}：{e}", path.display()))?;
     f.set_len(bytes).map_err(|e| e.to_string())?;
+    Ok(f)
+}
+
+/// Map a fresh output file, refusing up front if it cannot fit: writing past a full
+/// disk through a mapping would kill the process.
+pub(crate) fn create_mapped(path: &Path, bytes: u64) -> Result<MmapMut, String> {
+    let f = create_sized(path, bytes)?;
     unsafe { MmapMut::map_mut(&f) }.map_err(|e| e.to_string())
 }
 
@@ -477,7 +493,7 @@ mod tests {
     /// byte-for-byte agreement would hide on a mostly-light, finely dithered source.
     #[test]
     fn orientation_matches_real_burned_image() {
-        let root = std::path::Path::new(env!("HOME")).join("Github/discprobe-macos");
+        let Some(root) = crate::probe_root() else { return };
         let (iso, art) = (root.join("carved_artwork.iso"), root.join("artwork_safe_dither.png"));
         let Ok(mut f) = std::fs::File::open(&iso) else { return };
         let field = crate::artwork::load_field(&art, CropMode::SquareCenter, None, 0.0, false).unwrap();

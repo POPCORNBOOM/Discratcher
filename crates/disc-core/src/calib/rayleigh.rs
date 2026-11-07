@@ -200,7 +200,8 @@ mod tests {
     /// checks each rung's phase against the published table.
     #[test]
     fn real_run_phases_reproduce() {
-        let root = std::path::Path::new(env!("HOME")).join("Github/discprobe-macos/results/geo-disk8-20261106-211940");
+        let Some(root) = crate::probe_root() else { return };
+        let root = root.join("results/geo-disk8-20261106-211940");
         let Ok(events) = std::fs::read_to_string(root.join("events.csv")) else { return };
         let targets = std::fs::read_to_string(root.join("targets.csv")).unwrap();
         let mut by: BTreeMap<u32, (Vec<f64>, Vec<f64>)> = BTreeMap::new();

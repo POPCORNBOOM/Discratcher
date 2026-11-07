@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { t } from './i18n'
@@ -28,6 +29,20 @@ export async function on<T>(event: string, cb: (p: T) => void): Promise<() => vo
 
 export async function loadCatalog(): Promise<CatalogEntry[]> {
   return mock ? mock.catalog() : fetchCatalog()
+}
+
+/** The page draws the window frame, so these are the only window calls the UI makes. */
+export async function windowControl(action: 'minimize' | 'toggleMaximize' | 'close'): Promise<void> {
+  if (!inTauri) return
+  const w = getCurrentWindow()
+  if (action === 'minimize') await w.minimize()
+  else if (action === 'toggleMaximize') await w.toggleMaximize()
+  else await w.close()
+}
+
+/** False where there is no native window, so the restore icon never lies in a browser. */
+export async function isWindowMaximized(): Promise<boolean> {
+  return inTauri ? getCurrentWindow().isMaximized() : false
 }
 
 export async function openInBrowser(url: string) {

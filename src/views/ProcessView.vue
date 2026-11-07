@@ -80,6 +80,13 @@
         </div>
       </template>
     </div>
+  <UiDialog v-if="p.pendingAsk" :title="t('burn.riskTitle')" @close="p.answerAsk(false)">
+    <p class="selectable">{{ p.pendingAsk.question }}</p>
+    <template #actions>
+      <UiButton variant="ghost" size="lg" @click="p.answerAsk(false)">{{ t('common.cancel') }}</UiButton>
+      <UiButton variant="danger" size="lg" @click="p.answerAsk(true)">{{ p.pendingAsk.accept }}</UiButton>
+    </template>
+  </UiDialog>
   <ContributeDialog v-if="sharing && shareable" :preset="shareable" @close="sharing = false" />
   </section>
 </template>
@@ -91,6 +98,7 @@ import ContributeDialog from '../components/ContributeDialog.vue'
 import DrivePicker from '../components/DrivePicker.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiButton from '../components/UiButton.vue'
+import UiDialog from '../components/UiDialog.vue'
 import UiIcon from '../components/UiIcon.vue'
 import UiSelect from '../components/UiSelect.vue'
 import UiSwitch from '../components/UiSwitch.vue'

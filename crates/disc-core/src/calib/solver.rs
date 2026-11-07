@@ -402,9 +402,8 @@ mod tests {
     }
 
     fn real_points() -> Option<(Vec<PhasePoint>, f64)> {
-        let p = std::path::Path::new(env!("HOME"))
-            .join("Github/discprobe-macos/results/geo-disk8-20261106-211940/targets.csv");
-        let t = std::fs::read_to_string(p).ok()?;
+        let root = crate::probe_root()?;
+        let t = std::fs::read_to_string(root.join("results/geo-disk8-20261106-211940/targets.csv")).ok()?;
         let mut v: Vec<PhasePoint> = t
             .lines()
             .skip(1)

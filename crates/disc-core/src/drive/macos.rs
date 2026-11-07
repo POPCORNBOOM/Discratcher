@@ -5,7 +5,7 @@
 //! fallback: `F_NOCACHE` skips the OS cache only, so the drive's own cache has to be
 //! evicted with distant reads, which `supports_fua() == false` tells the ladder to do.
 
-use super::{mmc, OpticalDriveInfo, TimedDrive, TimedRead};
+use super::{derive_write_speeds, mmc, OpticalDriveInfo, TimedDrive, TimedRead};
 use std::ffi::{c_char, c_int, c_void, CString};
 use std::os::fd::AsRawFd;
 use std::process::Command;
@@ -220,37 +220,6 @@ pub fn parse_burn_speeds_xml(xml: &str) -> (Vec<u8>, Option<u8>) {
     (speeds, max_speed)
 }
 
-pub fn derive_write_speeds(
-    media_type: &str,
-    is_blank: bool,
-    xml_speeds: Vec<u8>,
-    detected_max: Option<u8>,
-) -> (Vec<u8>, u8) {
-    if !is_blank {
-        return (Vec::new(), 0);
-    }
-    let is_cd = media_type.to_ascii_uppercase().contains("CD");
-    let default_ladder = if is_cd {
-        vec![4, 8, 10, 16, 24, 32, 40, 48]
-    } else {
-        vec![2, 4, 6, 8, 12, 16]
-    };
-
-    // The drive's own limit wins over what the disc claims: a 16x disc in an 8x drive is 8x.
-    // With nothing reported at all, guess low rather than offer a speed nobody confirmed.
-    let max_speed = detected_max
-        .or_else(|| xml_speeds.iter().copied().max())
-        .unwrap_or(if is_cd { 16 } else { 4 });
-
-    let mut speeds: Vec<u8> = xml_speeds.into_iter().filter(|&s| s <= max_speed).collect();
-    if speeds.is_empty() {
-        speeds = default_ladder.into_iter().filter(|&s| s <= max_speed).collect();
-    }
-
-    let effective_max = speeds.iter().copied().max().unwrap_or(max_speed);
-    (speeds, effective_max)
-}
-
 pub fn parse_drutil(text: &str) -> Option<OpticalDriveInfo> {
     let lines: Vec<&str> = text.lines().collect();
     let header = lines.iter().position(|l| l.trim_start().starts_with("Vendor"))?;
@@ -364,13 +333,6 @@ mod tests {
         let d = parse_drutil(t).unwrap();
         assert_eq!(d.max_write_speed, 8);
         assert_eq!(d.write_speeds, vec![2, 4, 6, 8]);
-    }
-
-    #[test]
-    fn disc_speeds_above_the_drive_limit_are_dropped() {
-        let (speeds, max) = derive_write_speeds("DVD-R", true, vec![2, 4, 8, 12, 16], Some(8));
-        assert_eq!(speeds, vec![2, 4, 8]);
-        assert_eq!(max, 8);
     }
 
     #[test]

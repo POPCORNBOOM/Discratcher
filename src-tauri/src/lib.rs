@@ -76,9 +76,11 @@ fn add_calibration_record(app: AppHandle, record: serde_json::Value) -> Result<(
     write_atomic(&data_file(&app, "calibrations.json")?, &text)
 }
 
+/// Probing a drive costs tens of milliseconds, and the page asks every three
+/// seconds, so it runs on a blocking thread rather than the UI one.
 #[tauri::command]
-fn list_optical_drives() -> Vec<OpticalDriveInfo> {
-    drive::list_drives()
+async fn list_optical_drives() -> Vec<OpticalDriveInfo> {
+    blocking(|| Ok(drive::list_drives())).await.unwrap_or_default()
 }
 
 #[tauri::command]
@@ -151,8 +153,13 @@ fn remove_cached_iso(app: AppHandle, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn generate_calibration_iso(output_path: String, total_sectors: u32) -> Result<(), String> {
-    blocking(move || iso9660::generate_calibration_iso(Path::new(&output_path), total_sectors)).await
+async fn generate_calibration_iso(app: AppHandle, output_path: String, total_sectors: u32) -> Result<(), String> {
+    blocking(move || {
+        iso9660::generate_calibration_iso(Path::new(&output_path), total_sectors, &|p| {
+            let _ = app.emit("carve://progress", p);
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -272,10 +279,29 @@ async fn burn_iso_to_drive(
                 let _ = app.emit("burn://progress", p);
             });
         }
-        let argv = burner::burn_command(&drive_id, &iso_path, speed, verify, test_only)?;
-        burner::burn(&argv, &cancel, &mut |p| {
-            let _ = app.emit("burn://progress", p);
-        })
+        // Windows burns inside the app: IMAPI2 is called straight from Rust, so progress
+        // arrives from the drive and no window or helper process is involved.
+        #[cfg(target_os = "windows")]
+        {
+            if test_only {
+                return Err("Windows 的刻录接口不支持试刻".into());
+            }
+            let _ = verify;
+            let drive = disc_core::drive::windows::drive_letter(&drive_id)
+                .ok_or_else(|| format!("{drive_id} 没有盘符，无法交给刻录机"))?;
+            let reporter = app.clone();
+            return disc_core::drive::imapi::burn(&drive, &iso_path, speed, cancel, move |percent, phase| {
+                let p = burner::BurnProgress { percent: Some(percent), message: phase.to_string() };
+                let _ = reporter.emit("burn://progress", p);
+            });
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let argv = burner::burn_command(&drive_id, &iso_path, speed, verify, test_only)?;
+            burner::burn(&argv, &cancel, &mut |p| {
+                let _ = app.emit("burn://progress", p);
+            })
+        }
     })
     .await
 }

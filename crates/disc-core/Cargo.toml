@@ -1,6 +1,6 @@
 [package]
 name = "disc-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 description = "Spiral geometry, ISO carving and drive-timing calibration for DVD-R data-side imaging."
@@ -18,7 +18,7 @@ base64 = "0.22"
 libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_Security"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Com", "Win32_System_Variant", "Win32_Security"] }
 
 [build-dependencies]
 cc = "1"

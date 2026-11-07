@@ -44,6 +44,11 @@
 
           <UiSwitch v-model="c.servoSafeDither">{{ t('carve.servoSafe') }}</UiSwitch>
           <UiSlider v-model="c.maxDarkDutyCycle" :label="t('carve.maxDuty')" :min="0.5" :max="0.85" :step="0.01" :disabled="!c.servoSafeDither" :format="(v) => `${Math.round(v * 100)}%`" />
+          <p class="small muted">{{ t('carve.dutyNote') }}</p>
+          <div v-if="c.servoSafeDither && c.maxDarkDutyCycle > MAX_SECTOR_DARK" class="notice danger">
+            <UiIcon :path="mdiAlertOctagonOutline" />
+            <div>{{ t('carve.dutyWarn', { pct: pct(c.maxDarkDutyCycle) }) }}</div>
+          </div>
           <p class="small muted">{{ t('carve.servoNote') }}</p>
           <div v-if="!c.servoSafeDither" class="notice danger">
             <UiIcon :path="mdiAlertOctagonOutline" />
@@ -83,7 +88,7 @@ import { COMPOSE_SECONDS } from '../etaModel'
 import { t } from '../i18n'
 import { issueOf } from '../catalog'
 import { notifyError } from '../notices'
-import { useProcess } from '../stores/process'
+import { useProcess, type StepContext } from '../stores/process'
 import { useStudio } from '../stores/studio'
 import type { ArtworkAnalysis, BuiltIso, DiscGeometryPreset } from '../types'
 
@@ -97,6 +102,8 @@ const crops = computed(() => [
   { value: 'custom', label: t('carve.cropCustom') },
 ])
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`
+/** The servo safety line the build measures against; going past it is allowed but warned. */
+const MAX_SECTOR_DARK = 0.7
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p
 const formatOffset = (v: number) => (v > 0 ? `+${v.toFixed(1)}%` : `${v.toFixed(1)}%`)
 const hasTransform = computed(() => c.offsetX !== 0 || c.offsetY !== 0 || c.rotationDeg !== 0 || (c.cropMode === 'custom' && c.scale !== 1))
@@ -163,9 +170,15 @@ function resetView() {
   Object.assign(pan, { x: 0, y: 0 })
 }
 
-async function compose(path: string) {
+async function compose(path: string, ctx?: StepContext) {
   const r = await call<BuiltIso>('build_carved_iso', { config: { ...c, outputIsoPath: path, preset: s.preset } })
-  if (!r.summary.limitOk || r.audit.foreignBytes) throw t('carve.verifyFail')
+  // A foreign byte means the image is not what was asked for: never write that to a disc.
+  if (r.audit.foreignBytes) throw t('carve.selfCheckFail', { n: r.audit.foreignBytes, lba: r.audit.worstLba })
+  // An over-dark image is a risk the user is allowed to take: warn, then obey.
+  if (!r.summary.limitOk) {
+    const question = t('carve.riskBody', { pct: pct(r.summary.maxSectorDarkRatio) })
+    if (!(await ctx?.ask(question, t('carve.riskContinue')))) throw t('carve.riskDeclined')
+  }
 }
 /** A real burn finished with these parameters: only now may they be shared. */
 async function markBurned(preset: DiscGeometryPreset) {
@@ -189,7 +202,7 @@ async function exportIso() {
   const base = fileName(c.sourceImagePath).replace(/\.[^.]+$/, '')
   const out = await pickSavePath(`${base || 'carved'}.iso`)
   if (!out) return
-  p.open({ title: t('carve.exportTitle'), note: fileName(out), writes: false, doneMessage: t('carve.exported', { name: fileName(out) }), steps: [{ label: t('carve.compose'), estimate: () => COMPOSE_SECONDS, run: () => compose(out) }] })
+  p.open({ title: t('carve.exportTitle'), note: fileName(out), writes: false, doneMessage: t('carve.exported', { name: fileName(out) }), steps: [{ label: t('carve.compose'), estimate: () => COMPOSE_SECONDS, run: (ctx) => compose(out, ctx) }] })
 }
 
 onMounted(() => (s.carve = { choose, exportIso, burn }))

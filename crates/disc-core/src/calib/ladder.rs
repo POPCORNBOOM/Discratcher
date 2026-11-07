@@ -554,9 +554,8 @@ mod tests {
     /// measured table may not move ri, repair a turn or read as suspect.
     #[test]
     fn finishing_stage_leaves_real_run_alone() {
-        let path = std::path::Path::new(env!("HOME"))
-            .join("Github/discprobe-macos/results/geo-disk8-20261106-211940/targets.csv");
-        let Ok(t) = std::fs::read_to_string(path) else { return };
+        let Some(root) = crate::probe_root() else { return };
+        let Ok(t) = std::fs::read_to_string(root.join("results/geo-disk8-20261106-211940/targets.csv")) else { return };
         let mut pts: Vec<PhasePoint> = t
             .lines()
             .skip(1)
