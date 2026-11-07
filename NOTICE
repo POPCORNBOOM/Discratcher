@@ -16,7 +16,8 @@ Derived work
 
 Parts of the calibration code draw on these GPL projects, including the
 ladder search and spindle settling in crates/disc-core/src/calib/ and values such
-as the spiral grid size and the calibration volume label:
+as the spiral grid size and the calibration volume label. File headers and
+"Source:" comments mark the main places:
 
 - disc-probe: https://github.com/Ashley-QwQ/disc-probe
 - discprobe-macos: https://github.com/NaiveTomcat/discprobe-macos

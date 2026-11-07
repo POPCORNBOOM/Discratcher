@@ -1,5 +1,6 @@
 //! Damped least squares for the spiral models. QR on scaled columns: the u/v columns of
 //! this problem are almost parallel, and normal equations would throw that precision away.
+//! The constant-pitch model and `completion_bit` follow discprobe `calib.py` and `geo.py`.
 
 use crate::ecma267::SECTOR_CHANNEL_BITS;
 use crate::spiral::{Spiral, SpiralParams};

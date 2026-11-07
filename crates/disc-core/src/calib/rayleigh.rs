@@ -1,4 +1,5 @@
 //! Spindle period from completion timestamps, and robust circular statistics.
+//! The 0.2° floor and the 0.9 harmonic check follow discprobe `geo.py` and `analysis.py`.
 
 use std::f64::consts::TAU;
 

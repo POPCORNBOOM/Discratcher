@@ -17,6 +17,7 @@ pub const SECTOR_CHANNEL_BITS: u32 = 38_688;
 pub const NOMINAL_BIT_LENGTH_NM: f64 = 133.3;
 pub const PSN_OFFSET: u32 = 0x30000;
 /// Scrambled byte with 5 NRZI transitions per codeword: dense short marks.
+/// Source: the dark byte in DiscImageStudio.
 pub const DARK_BYTE: u8 = 0xA5;
 /// Scrambled byte with 2 NRZI transitions per codeword: sparse long marks.
 pub const LIGHT_BYTE: u8 = 0x92;

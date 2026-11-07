@@ -1,5 +1,10 @@
 //! Calibration ladder: measure phases near the reference, then walk outward, each rung's
 //! whole-turn count resolved from the model the previous rungs built.
+//!
+//! Rewritten in Rust from `geo.py` (GPL-3.0-or-later): the measurement flow, settling and
+//! most thresholds follow it. Point selection and the cubic fit are our own.
+//! - <https://github.com/Ashley-QwQ/disc-probe/blob/main/discprobe/geo.py>
+//! - <https://github.com/NaiveTomcat/discprobe-macos/blob/main/discprobe/geo.py>
 
 use super::rayleigh::{circular_stats, estimate_period, phase_deg, refine_period, CircularStats};
 use super::solver::*;
@@ -29,8 +34,7 @@ const SETTLE_READS: usize = 16;
 /// A cold start took three rounds on the GUD1N, so this leaves plenty of room.
 const SETTLE_ROUNDS: usize = 30;
 const SETTLED_COHERENCE: f64 = 0.99;
-/// Two rounds this close mean the spindle stopped changing. Seeking alone moves the
-/// speed by 0.07 %, so a tighter limit would reject a healthy drive.
+/// Two rounds this close mean the spindle stopped changing.
 const PERIOD_TOLERANCE: f64 = 2e-3;
 /// Fit rms above this many read-noise units is treated as a misfit.
 const MISFIT_FACTOR: f64 = 2.5;

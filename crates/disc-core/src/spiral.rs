@@ -8,6 +8,7 @@ use crate::ecma267::SECTOR_CHANNEL_BITS;
 use serde::{Deserialize, Serialize};
 use std::f64::consts::TAU;
 
+/// Source: `GRID` in discprobe `disexport.py`.
 pub const DEFAULT_GRID: usize = 40_001;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

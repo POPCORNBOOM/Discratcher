@@ -101,8 +101,8 @@ Discratcher exists to make calibration simpler for DVD-R image burning, with the
 <details>
 <summary><strong>Problems hit while measuring discs</strong></summary>
 
-- On macOS, some USB drives (such as the LG GUD1N) reject the MMC interface and cannot be opened. The fallback loads SCSITaskLib directly.
-- The default range covered only 3%–85% of the disc, leaving about 340,000 outer sectors unmeasured. The range is now 2%–96% (25.29–56.91 mm), and the constant-pitch residual is about 2.9° peak to peak across that range, about 1.8° beyond 54.2 mm (one 56-rung run on one drive and one disc).
+- On macOS, some USB drives (such as the LG GUD1N) reject the MMC interface and cannot be opened. The app now falls back to the SCSITask user client.
+- The default range covered only 3%–85% of the disc, leaving about 340,000 outer sectors unmeasured. The range is now 2%–96% (25.29–56.91 mm), and the constant-pitch residual is about 2.9° peak to peak beyond 44 mm, with about 2.0° of variation at 25–31 mm too (one 56-rung run on one drive and one disc).
 - Preset export fitted ideal constant-pitch points rather than measurements, so the cubic coefficient always stayed near 0. The fit now uses the measured unwrapped angles directly, lowering the whole-disc residual RMS from 0.715° to 0.402°.
 - The default total sector count was 2,298,496, which is 3,392 more than a DVD-R's actual 2,295,104 and makes the outer diameter about 0.035 mm too large. It now holds the actual value.
 - Burned discs with no file system could not be opened because the exclusive lock was unavailable (0xE00002D5). Reads now go through `/dev/rdiskN` with `F_NOCACHE`, which needs no exclusive access.

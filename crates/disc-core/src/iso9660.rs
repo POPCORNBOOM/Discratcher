@@ -9,6 +9,7 @@ use crate::rng::SplitMix64;
 use std::io::Write;
 use std::path::Path;
 
+/// Source: the volume label in discprobe `randomdisc.py`.
 pub const CALIBRATION_VOLUME: &str = "DISCPROBE_RANDOM";
 pub const FS_LAST_LBA: usize = 19;
 
