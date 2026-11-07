@@ -96,13 +96,13 @@ To add a language, copy `zh-CN.json`, rename it to the language code (for exampl
 
 ## Technical notes
 
-We built Discratcher to address two difficulties with DiscImageStudio: calibrating a disc is hard, and it is not cross-platform. The measuring method comes from the published approaches of [disc-probe](https://github.com/Ashley-QwQ/disc-probe) and [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos).
+We built Discratcher to make calibration simpler for DVD-R image burning, with the same graphical app on macOS, Windows and Linux. The measuring method comes from the published approaches of [disc-probe](https://github.com/Ashley-QwQ/disc-probe) and [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos).
 
 <details>
 <summary><strong>Problems we solved while measuring discs</strong></summary>
 
 - On macOS, some USB drives (such as the LG GUD1N) reject the MMC interface and cannot be opened. We fall back to loading SCSITaskLib directly.
-- The default range covered only 3%–85% of the disc, leaving about 340,000 outer sectors unmeasured, with a fixed 40 sample points. We now measure 2%–96% (25.29–56.91 mm) with an adjustable point count, and confirmed that the outer tracks do show pitch distortion, about 2.9° peak to peak.
+- The default range covered only 3%–85% of the disc, leaving about 340,000 outer sectors unmeasured. We now measure 2%–96% (25.29–56.91 mm), and confirmed that the outer tracks do show pitch distortion, about 2.9° peak to peak.
 - Preset export fitted ideal constant-pitch points rather than measurements, so the cubic coefficient always stayed near 0. We now fit the measured unwrapped angles directly, lowering the whole-disc residual RMS from 0.715° to 0.402°.
 - The default total sector count was 2,298,496, which is 3,392 more than a DVD-R's actual 2,295,104 and makes the outer diameter about 0.035 mm too large. We corrected it.
 - Burned discs with no file system could not be opened because the exclusive lock was unavailable (0xE00002D5). We now read `/dev/rdiskN` with `F_NOCACHE`, which needs no exclusive access.

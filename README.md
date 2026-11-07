@@ -96,13 +96,13 @@ cargo test -p disc-core --release
 
 ## 技术笔记
 
-我们做 Discratcher，是为了解决 DiscImageStudio 的两个难处：盘片标定很难做，以及不能跨平台。测量原理来自 [disc-probe](https://github.com/Ashley-QwQ/disc-probe) 和 [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos) 公开的做法。
+我们做 Discratcher，是为了让 DVD-R 刻图的标定更简单，并在 macOS、Windows 和 Linux 上提供统一的图形界面。测量原理来自 [disc-probe](https://github.com/Ashley-QwQ/disc-probe) 和 [discprobe-macos](https://github.com/NaiveTomcat/discprobe-macos) 公开的做法。
 
 <details>
 <summary><strong>我们在测盘片时解决的问题</strong></summary>
 
 - 部分 USB 光驱（如 LG GUD1N）在 macOS 上拒绝 MMC 接口，导致设备无法打开。我们回退为直接加载 SCSITaskLib 进行绑定。
-- 原默认测量范围仅为盘面的 3%–85%，最外圈约 34 万个扇区未被覆盖，采样点数也固定为 40。我们将范围扩大到 2%–96%（25.29–56.91 mm），采样点数可配置，并确认外圈存在轨距畸变，峰峰值约 2.9°。
+- 原默认测量范围仅为盘面的 3%–85%，最外圈约 34 万个扇区未被覆盖。我们将范围扩大到 2%–96%（25.29–56.91 mm），并确认外圈存在轨距畸变，峰峰值约 2.9°。
 - 原导出流程拟合的是理想恒定轨距点而非实测点，导致三次系数始终接近 0。我们改为直接拟合实测解包裹角，整盘残差 RMS 从 0.715° 降至 0.402°。
 - 原默认总扇区数为 2,298,496，比 DVD-R 实际的 2,295,104 多 3,392，使外径偏大约 0.035 mm。我们已修正为实际值。
 - 已刻录且没有文件系统的光盘，会因无法取得独占锁而打开失败（0xE00002D5）。我们改为读取 `/dev/rdiskN` 并启用 `F_NOCACHE`，无需独占访问。
