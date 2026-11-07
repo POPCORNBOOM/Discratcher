@@ -1,0 +1,18 @@
+name: 贡献标定数据
+description: 由 Discratcher 在标定完成后自动填写，直接提交即可。
+title: "[标定] "
+labels: ["calibration"]
+body:
+  - type: textarea
+    id: data
+    attributes:
+      label: 标定数据
+      description: 请勿修改。
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: images
+    attributes:
+      label: 原图和效果图（选填）
+      description: 把刻录用的原图和刻出来的实物效果图直接拖进这里，方便别人判断这份标定准不准。

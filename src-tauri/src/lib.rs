@@ -1,0 +1,308 @@
+//! Tauri shell: thin commands over disc-core. Long jobs run on blocking threads and report
+//! through events, so the window stays live.
+
+use disc_core::artwork::{self, ArtworkAnalysis, GrayField};
+use disc_core::calib::ladder::{self, CalibrationResult, LadderConfig};
+use disc_core::carver::{self, CarveJobConfig, CarveJobSummary, IsoAudit, Tone};
+use disc_core::drive::{self, burner, OpticalDriveInfo};
+use disc_core::iso9660;
+use disc_core::preset::{builtin_presets, DiscGeometryPreset};
+use disc_core::preview::{self, PreviewInput};
+use disc_core::spiral::Spiral;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+#[derive(Default)]
+struct Studio {
+    cancel: Arc<AtomicBool>,
+    preview_field: Mutex<Option<(String, Arc<GrayField>)>>,
+}
+
+const PREVIEW_FIELD_SIZE: u32 = 1400;
+
+fn data_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join(name))
+}
+
+fn presets_path(app: &AppHandle) -> Result<PathBuf, String> {
+    data_file(app, "presets.json")
+}
+
+/// Temp file then rename: a crash mid-write must not cost hours of measuring.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+fn user_presets(app: &AppHandle) -> Result<Vec<DiscGeometryPreset>, String> {
+    match std::fs::read(presets_path(app)?) {
+        Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("预设文件已损坏：{e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn write_presets(app: &AppHandle, v: &[DiscGeometryPreset]) -> Result<(), String> {
+    let text = serde_json::to_vec_pretty(v).map_err(|e| e.to_string())?;
+    write_atomic(&presets_path(app)?, &text)
+}
+
+fn calibration_log(app: &AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    match std::fs::read(data_file(app, "calibrations.json")?) {
+        Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("标定记录已损坏：{e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Newest first. The shape belongs to the page that writes it; this only keeps it safe.
+#[tauri::command]
+fn get_calibration_log(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    let mut log = calibration_log(&app)?;
+    log.reverse();
+    Ok(log)
+}
+
+#[tauri::command]
+fn add_calibration_record(app: AppHandle, record: serde_json::Value) -> Result<(), String> {
+    let mut log = calibration_log(&app)?;
+    log.push(record);
+    let text = serde_json::to_vec_pretty(&log).map_err(|e| e.to_string())?;
+    write_atomic(&data_file(&app, "calibrations.json")?, &text)
+}
+
+#[tauri::command]
+fn list_optical_drives() -> Vec<OpticalDriveInfo> {
+    drive::list_drives()
+}
+
+#[tauri::command]
+fn get_presets(app: AppHandle) -> Result<Vec<DiscGeometryPreset>, String> {
+    let mut v = builtin_presets();
+    v.extend(user_presets(&app)?);
+    Ok(v)
+}
+
+#[tauri::command]
+fn save_preset(app: AppHandle, preset: DiscGeometryPreset) -> Result<(), String> {
+    if preset.builtin || builtin_presets().iter().any(|b| b.id == preset.id) {
+        return Err("内置预设不能修改".into());
+    }
+    // Downloaded presets arrive from outside: unusable geometry stops here.
+    Spiral::new(preset.spiral_params())?;
+    let mut v = user_presets(&app)?;
+    match v.iter_mut().find(|p| p.id == preset.id) {
+        Some(p) => *p = preset,
+        None => v.push(preset),
+    }
+    write_presets(&app, &v)
+}
+
+#[tauri::command]
+fn delete_preset(app: AppHandle, id: String) -> Result<(), String> {
+    let mut v = user_presets(&app)?;
+    v.retain(|p| p.id != id);
+    write_presets(&app, &v)
+}
+
+#[tauri::command]
+fn cancel_job(state: State<Studio>) {
+    state.cancel.store(true, Ordering::Relaxed);
+}
+
+fn fresh_cancel(state: &State<Studio>) -> Arc<AtomicBool> {
+    state.cancel.store(false, Ordering::Relaxed);
+    state.cancel.clone()
+}
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+}
+
+fn iso_cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("burn");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// Where a full-disc image lives between composing and burning.
+#[tauri::command]
+fn cache_iso_path(app: AppHandle, name: String) -> Result<String, String> {
+    let file = Path::new(&name).file_name().ok_or("镜像文件名无效")?;
+    Ok(iso_cache_dir(&app)?.join(file).to_string_lossy().into_owned())
+}
+
+/// A 4.7 GB leftover is worth removing, but only ever from our own cache folder.
+#[tauri::command]
+fn remove_cached_iso(app: AppHandle, path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if path.parent() != Some(iso_cache_dir(&app)?.as_path()) {
+        return Err("只能删除缓存目录里的镜像".into());
+    }
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+        _ => Ok(()),
+    }
+}
+
+#[tauri::command]
+async fn generate_calibration_iso(output_path: String, total_sectors: u32) -> Result<(), String> {
+    blocking(move || iso9660::generate_calibration_iso(Path::new(&output_path), total_sectors)).await
+}
+
+#[tauri::command]
+async fn start_calibration(
+    app: AppHandle,
+    state: State<'_, Studio>,
+    drive_id: String,
+    max_targets: usize,
+    reps: usize,
+    range_pct: (f64, f64),
+) -> Result<CalibrationResult, String> {
+    let cancel = fresh_cancel(&state);
+    blocking(move || {
+        let mut d = drive::open_timed(&drive_id, true)?;
+        let cfg = LadderConfig { max_targets, reps, range_pct, ..Default::default() };
+        let a = app.clone();
+        ladder::run_ladder(
+            d.as_mut(),
+            &cfg,
+            &cancel,
+            &mut |e| {
+                let _ = a.emit("calib://rung-progress", e);
+            },
+            &mut |m| {
+                let _ = app.emit("calib://status", m);
+            },
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn analyze_artwork(image_path: String) -> Result<ArtworkAnalysis, String> {
+    blocking(move || artwork::analyze(Path::new(&image_path))).await
+}
+
+fn field_for(state: &Studio, cfg: &CarveJobConfig) -> Result<Arc<GrayField>, String> {
+    let key = format!("{}|{:?}|{}|{}", cfg.source_image_path, cfg.crop_mode, cfg.contrast, cfg.invert_image);
+    let mut slot = state.preview_field.lock().unwrap();
+    if let Some((k, f)) = slot.as_ref() {
+        if *k == key {
+            return Ok(f.clone());
+        }
+    }
+    let f = Arc::new(artwork::load_field(
+        Path::new(&cfg.source_image_path),
+        cfg.crop_mode,
+        Some(PREVIEW_FIELD_SIZE),
+        cfg.contrast,
+        cfg.invert_image,
+    )?);
+    *slot = Some((key, f.clone()));
+    Ok(f)
+}
+
+#[tauri::command]
+async fn simulate_disc_preview(
+    app: AppHandle,
+    config: CarveJobConfig,
+    preview_size: u32,
+) -> Result<String, String> {
+    blocking(move || {
+        let state = app.state::<Studio>();
+        let field = field_for(&state, &config)?;
+        let spiral = Spiral::new(config.preset.spiral_params())?;
+        let tone = Tone::from_duty(config.servo_safe_dither, config.max_dark_duty_cycle);
+        preview::render_data_url(&PreviewInput {
+            design: &spiral,
+            actual: &spiral,
+            field: &field,
+            rotation_rad: config.rotation_deg.to_radians(),
+            offset_x: config.offset_x / 100.0,
+            offset_y: config.offset_y / 100.0,
+            scale: config.scale,
+            min_luma: if tone.servo_safe { tone.min_luma } else { 0.0 },
+            size: preview_size.clamp(128, 2048),
+        })
+    })
+    .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BuiltIso {
+    summary: CarveJobSummary,
+    audit: IsoAudit,
+}
+
+#[tauri::command]
+async fn build_carved_iso(app: AppHandle, state: State<'_, Studio>, config: CarveJobConfig) -> Result<BuiltIso, String> {
+    let cancel = fresh_cancel(&state);
+    blocking(move || {
+        let summary = carver::build_iso(&config, &cancel, &|p| {
+            let _ = app.emit("carve://progress", p);
+        })?;
+        let audit = carver::audit_iso(Path::new(&summary.output_iso_path))?;
+        Ok(BuiltIso { summary, audit })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn burn_iso_to_drive(
+    app: AppHandle,
+    state: State<'_, Studio>,
+    drive_id: String,
+    iso_path: String,
+    speed: u8,
+    verify: bool,
+    test_only: bool,
+) -> Result<(), String> {
+    let cancel = fresh_cancel(&state);
+    blocking(move || {
+        if drive_id.starts_with("sim://") {
+            // Nothing here touches a disc or a drive: it only plays the progress.
+            return burner::burn_simulated(std::time::Duration::from_millis(60), &cancel, &mut |p| {
+                let _ = app.emit("burn://progress", p);
+            });
+        }
+        let argv = burner::burn_command(&drive_id, &iso_path, speed, verify, test_only)?;
+        burner::burn(&argv, &cancel, &mut |p| {
+            let _ = app.emit("burn://progress", p);
+        })
+    })
+    .await
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .manage(Studio::default())
+        .invoke_handler(tauri::generate_handler![
+            list_optical_drives,
+            get_presets,
+            save_preset,
+            delete_preset,
+            get_calibration_log,
+            add_calibration_record,
+            cancel_job,
+            generate_calibration_iso,
+            start_calibration,
+            analyze_artwork,
+            simulate_disc_preview,
+            build_carved_iso,
+            burn_iso_to_drive,
+            cache_iso_path,
+            remove_cached_iso,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

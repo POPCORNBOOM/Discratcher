@@ -1,0 +1,84 @@
+name: Release
+
+# Push a tag such as v0.1.0 to build installers and publish a release.
+# The notes are the tag's message (git tag -a v0.2.0 -m "..."), or else the commits
+# since the previous tag. If any platform fails, the release stays a draft.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --target aarch64-apple-darwin
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            args: --target x86_64-apple-darwin
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            args: ''
+            target: ''
+          - os: ubuntu-22.04
+            args: ''
+            target: ''
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: pnpm install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Discratcher ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Checkout flattens the pushed tag; fetch it again to read its message.
+      - run: git fetch --force --tags origin
+      - name: Publish with notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          if [ "$(git cat-file -t "$tag")" = tag ]; then
+            notes="$(git tag -l --format='%(contents)' "$tag")"
+          else
+            prev="$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || true)"
+            notes="$(git log --pretty='- %s' "${prev:+$prev..}$tag")"
+          fi
+          printf '%s\n\n---\n\nmacOS 版未签名，首次打开请右键选择“打开”。\n' "$notes" > notes.md
+          gh release edit "$tag" --draft=false --latest --notes-file notes.md

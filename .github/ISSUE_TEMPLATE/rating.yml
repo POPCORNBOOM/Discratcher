@@ -1,0 +1,18 @@
+name: 标定评分
+description: 由 Discratcher 在刻录完成后自动填写，直接提交即可。
+title: "[评分] "
+labels: ["rating"]
+body:
+  - type: textarea
+    id: data
+    attributes:
+      label: 评分数据
+      description: 请勿修改。
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: comment
+    attributes:
+      label: 效果与说明（选填）
+      description: 写几句刻出来的效果，也可以把原图和效果图直接拖进这里。

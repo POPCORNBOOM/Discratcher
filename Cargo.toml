@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/disc-core", "src-tauri"]
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.disc-core]
+opt-level = 3
+
+[profile.test]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
