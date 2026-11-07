@@ -17,14 +17,14 @@ export function setMockDisc(state: 'none' | 'blank' | 'written') {
 }
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const preset = {
-  id: 'builtin-lg-gud1n-cmc-mag-am3-0237-l110', name: 'LG GUD1N + CMC MAG. AM3（模具 0237 L110，56 阶）',
+  id: 'mock-reference', name: 'HL-DT-ST GUD1N + CMC MAG. AM3（模具 0237 L110，56 阶）',
   driveModel: 'HL-DT-ST DVDRAM GUD1N 1.01', mediaId: 'CMC MAG. AM3', stamperCode: 'CMDR47G-CFMWMO3-0237 L110',
   totalSectors: 2295104, channelBitLengthNm: 133.3, innerRadiusMm: 24.173325346, outerRadiusMm: 57.878686008,
   pitchLinear: -1.85716e-5, pitchQuadratic: 1.191945e-4, pitchCubic: -1.373621e-4, basePitchUm: 0.7340606,
-  rmsResidualDeg: 0.402, measuredSpanMm: [25.292, 56.914], createdAt: '2026-11-06T21:53:00+08:00', builtin: true,
+  rmsResidualDeg: 0.402, measuredSpanMm: [25.292, 56.914], createdAt: '2026-11-06T21:53:00+08:00',
 }
 let saved: { id: string }[] = []
-const log: { id: string }[] = []
+let log: { id: string }[] = []
 let stop = false
 const disc = (size: number, dark: number) => {
   const c = document.createElement('canvas')
@@ -50,7 +50,7 @@ const contributed: CatalogEntry[] = []
 export async function catalog() {
   await wait(300)
   if (globalThis.__mockOffline) throw new Error('offline')
-  return [{ preset: { ...preset, id: 'issue-1', name: '演示盘（模具 TEST-0001）', mediaId: 'DEMO', brand: 'Verbatim', basePitchUm: 0.7401, stamperCode: 'TEST-0001 A', builtin: false, measuredSpanMm: [25.3, 56.9] as [number, number] }, contributor: 'demo-user', verified: false, rating: { average: 4.5, count: 6 } }, ...contributed]
+  return [{ preset: { ...preset, id: 'issue-1', name: '演示盘（模具 TEST-0001）', mediaId: 'DEMO', brand: 'Verbatim', basePitchUm: 0.7401, stamperCode: 'TEST-0001 A', measuredSpanMm: [25.3, 56.9] as [number, number] }, contributor: 'demo-user', verified: true, rating: { average: 4.5, count: 6 } }, ...contributed]
 }
 declare global { var __mockOpened: string | undefined }
 export const openUrl = (url: string) => {
@@ -63,7 +63,7 @@ export const openUrl = (url: string) => {
     const data = JSON.parse(raw)
     if ('score' in data) return
     if (contributed.some((e) => e.preset.stamperCode === data.stamperCode)) return
-    contributed.push({ preset: { ...data, id: `issue-mock-${contributed.length + 1}`, builtin: false } as DiscGeometryPreset, contributor: 'you', verified: false, rating: null })
+    contributed.push({ preset: { ...data, id: `issue-mock-${contributed.length + 1}` } as DiscGeometryPreset, contributor: 'you', verified: true, rating: null })
   } catch {
     // A malformed form is the caller's bug; the flow itself still succeeded.
   }
@@ -72,7 +72,7 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
   switch (cmd) {
     case 'list_optical_drives':
       return [{ id: '', vendor: 'HL-DT-ST', product: 'DVDRAM GUD1N', revision: '1.01', mediaPresent: media() !== 'none', mediaType: media() === 'none' ? 'None' : 'DVD-R', mediaId: media() === 'none' ? '' : 'CMC MAG. AM3', totalSectors: 2295104, isBlank: media() === 'blank', simulated: false }]
-    case 'get_presets': return [preset, ...saved]
+    case 'get_presets': return saved
     case 'save_preset': saved = [...saved.filter((p) => p.id !== a.preset.id), a.preset]; return null
     case 'delete_preset': saved = saved.filter((p) => p.id !== a.id); return null
     case 'analyze_artwork':
@@ -95,10 +95,11 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
         rungs.push(e); emit('calib://rung-progress', e); emit('calib://status', `第 ${i + 1} / ${a.maxTargets} 阶`); await wait(40)
       }
       rungs.forEach((r, i) => (r.cubicPitchResidualDeg = Math.sin(i * 2.1) * 0.35))
-      return { preset: { ...preset, id: '', name: '', builtin: false }, rungs, constantRmsDeg: 0.715, cubicRmsDeg: 0.402, spindlePeriodMs: 25.474, suspect: false }
+      return { preset: { ...preset, id: '', name: '' }, rungs, constantRmsDeg: 0.715, cubicRmsDeg: 0.402, spindlePeriodMs: 25.474, suspect: false }
     }
     case 'get_calibration_log': return [...log].reverse()
     case 'add_calibration_record': log.push(a.record); return null
+    case 'delete_calibration_record': log = log.filter((r) => r.id !== a.id); return null
     case 'cancel_job': stop = true; return null
     case 'cache_iso_path': return `/cache/${a.name}`
     case 'burn_iso_to_drive':

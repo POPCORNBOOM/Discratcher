@@ -1,16 +1,13 @@
 import type { DiscGeometryPreset } from './types'
 
-/** Calibration data lives in this repository's issues. Closing an issue withdraws it. */
+/** Calibration data lives in this repository's issues. A workflow publishes open ones as one file. */
 const REPOSITORY = 'POPCORNBOOM/Discratcher'
 export const REPOSITORY_URL = `https://github.com/${REPOSITORY}`
-const LABEL = 'calibration'
-const RATING_LABEL = 'rating'
 const RATING_TEMPLATE = 'rating.yml'
 /** A maintainer adds this after checking a submission. */
 const VERIFIED_LABEL = 'verified'
 const TEMPLATE = 'calibration.yml'
-const PAGE_SIZE = 100
-const MAX_PAGES = 5
+const CATALOG_URL = `https://raw.githubusercontent.com/${REPOSITORY}/catalog/catalog.json`
 const TIMEOUT_MS = 8000
 /** Shorter queries match nearly everything. */
 export const MIN_QUERY = 3
@@ -88,7 +85,6 @@ export function parseIssue(issue: Issue): CatalogEntry | null {
     burnedAt: '',
     driveModel: String(data.driveModel ?? ''),
     createdAt: String(data.createdAt ?? ''),
-    builtin: false,
   } as DiscGeometryPreset
   return {
     preset,
@@ -123,21 +119,11 @@ export function parseRatings(issues: Issue[]): Map<string, Rating> {
   return new Map([...sums].map(([target, { total, count }]) => [target, { average: total / count, count }]))
 }
 
-async function listIssues(label: string): Promise<Issue[]> {
-  const all: Issue[] = []
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const url = `https://api.github.com/repos/${REPOSITORY}/issues?labels=${label}&state=open&per_page=${PAGE_SIZE}&page=${page}`
-    const r = await fetch(url, { headers: { Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(TIMEOUT_MS) })
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    const issues: Issue[] = await r.json()
-    all.push(...issues)
-    if (issues.length < PAGE_SIZE) break
-  }
-  return all
-}
-
+/** The whole library, submissions still under review included: those stay out of search. */
 export async function fetchCatalog(): Promise<CatalogEntry[]> {
-  const [calibrations, ratingIssues] = await Promise.all([listIssues(LABEL), listIssues(RATING_LABEL).catch(() => [])])
+  const r = await fetch(CATALOG_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) })
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  const { calibrations, ratings: ratingIssues }: { calibrations: Issue[]; ratings: Issue[] } = await r.json()
   const ratings = parseRatings(ratingIssues)
   return calibrations.flatMap((i) => {
     const entry = parseIssue(i)
@@ -151,8 +137,11 @@ export function byRating(a: CatalogEntry, b: CatalogEntry) {
 }
 
 /** A pre-filled issue form. Nothing is sent until the user submits it on GitHub. */
+/** The GitHub page of a calibration from the library. */
+export const issueUrl = (preset: DiscGeometryPreset) => `${REPOSITORY_URL}/issues/${issueOf(preset.id)}`
+
 export function contributionUrl(preset: DiscGeometryPreset) {
-  const { id: _id, builtin: _builtin, burnedAt: _burnedAt, ...fields } = preset
+  const { id: _id, burnedAt: _burnedAt, ...fields } = preset
   const data = JSON.stringify(fields, null, 2)
   const query = new URLSearchParams({ template: TEMPLATE, title: `[标定] ${preset.stamperCode}`, data })
   return `${REPOSITORY_URL}/issues/new?${query}`

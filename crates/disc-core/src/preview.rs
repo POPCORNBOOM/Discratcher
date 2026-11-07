@@ -82,7 +82,7 @@ pub fn render_data_url(p: &PreviewInput) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preset::builtin_presets;
+    use crate::preset::reference_preset;
 
     /// Half black, half white across x, so edge position is easy to measure.
     fn split_field() -> GrayField {
@@ -96,7 +96,7 @@ mod tests {
 
     #[test]
     fn offset_shifts_the_art() {
-        let s = Spiral::new(builtin_presets()[0].spiral_params()).unwrap();
+        let s = Spiral::new(reference_preset().spiral_params()).unwrap();
         let f = split_field();
         // Shift image right by 20% (0.2)
         let img = render(&PreviewInput { design: &s, actual: &s, field: &f, rotation_rad: 0.0, offset_x: 0.2, offset_y: 0.0, scale: 1.0, min_luma: 0.0, size: 256 });
@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn same_geometry_reproduces_the_art() {
-        let s = Spiral::new(builtin_presets()[0].spiral_params()).unwrap();
+        let s = Spiral::new(reference_preset().spiral_params()).unwrap();
         let f = split_field();
         let img = setup(&s, &s, &f);
         let px = |x: usize, y: usize| img[(y * 256 + x) * 4];
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn wrong_stamper_distorts() {
-        let s = Spiral::new(builtin_presets()[0].spiral_params()).unwrap();
+        let s = Spiral::new(reference_preset().spiral_params()).unwrap();
         let f = split_field();
         let good = setup(&s, &s, &f);
         let other = Spiral::new(crate::spiral::SpiralParams { ro: s.params.ro + 0.02, ..s.params }).unwrap();

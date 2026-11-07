@@ -29,7 +29,6 @@
             <div class="badges">
               <span v-if="r.preset.brand" class="badge">{{ r.preset.brand }}</span>
               <span class="badge">{{ sizeLabel(r.preset) }}</span>
-              <span v-if="!r.local && !r.verified" class="badge warn">{{ t('models.unverified') }}</span>
               <span v-if="!r.local && r.contributor" class="small muted ellipsis">{{ t('models.by', { name: r.contributor }) }}</span>
             </div>
           </div>
@@ -74,7 +73,6 @@ interface Result {
   preset: DiscGeometryPreset
   local: boolean
   contributor?: string
-  verified?: boolean
   rating?: Rating | null
 }
 
@@ -116,7 +114,7 @@ async function search() {
   const local = s.presets.filter((p) => matches(p, q) && fits(p))
   let remote: CatalogEntry[] = []
   try {
-    remote = (await loadCatalog()).filter((e) => matches(e.preset, q) && fits(e.preset))
+    remote = (await loadCatalog()).filter((e) => e.verified && matches(e.preset, q) && fits(e.preset))
   } catch {
     unreachable.value = true
   }

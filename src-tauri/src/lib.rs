@@ -6,7 +6,7 @@ use disc_core::calib::ladder::{self, CalibrationResult, LadderConfig};
 use disc_core::carver::{self, CarveJobConfig, CarveJobSummary, IsoAudit, Tone};
 use disc_core::drive::{self, burner, OpticalDriveInfo};
 use disc_core::iso9660;
-use disc_core::preset::{builtin_presets, DiscGeometryPreset};
+use disc_core::preset::DiscGeometryPreset;
 use disc_core::preview::{self, PreviewInput};
 use disc_core::spiral::Spiral;
 use std::path::{Path, PathBuf};
@@ -60,6 +60,11 @@ fn calibration_log(app: &AppHandle) -> Result<Vec<serde_json::Value>, String> {
     }
 }
 
+fn write_calibration_log(app: &AppHandle, log: &[serde_json::Value]) -> Result<(), String> {
+    let text = serde_json::to_vec_pretty(log).map_err(|e| e.to_string())?;
+    write_atomic(&data_file(app, "calibrations.json")?, &text)
+}
+
 /// Newest first. The shape belongs to the page that writes it; this only keeps it safe.
 #[tauri::command]
 fn get_calibration_log(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
@@ -72,8 +77,14 @@ fn get_calibration_log(app: AppHandle) -> Result<Vec<serde_json::Value>, String>
 fn add_calibration_record(app: AppHandle, record: serde_json::Value) -> Result<(), String> {
     let mut log = calibration_log(&app)?;
     log.push(record);
-    let text = serde_json::to_vec_pretty(&log).map_err(|e| e.to_string())?;
-    write_atomic(&data_file(&app, "calibrations.json")?, &text)
+    write_calibration_log(&app, &log)
+}
+
+#[tauri::command]
+fn delete_calibration_record(app: AppHandle, id: String) -> Result<(), String> {
+    let mut log = calibration_log(&app)?;
+    log.retain(|r| r["id"].as_str() != Some(id.as_str()));
+    write_calibration_log(&app, &log)
 }
 
 /// Probing a drive costs tens of milliseconds, and the page asks every three
@@ -85,16 +96,11 @@ async fn list_optical_drives() -> Vec<OpticalDriveInfo> {
 
 #[tauri::command]
 fn get_presets(app: AppHandle) -> Result<Vec<DiscGeometryPreset>, String> {
-    let mut v = builtin_presets();
-    v.extend(user_presets(&app)?);
-    Ok(v)
+    user_presets(&app)
 }
 
 #[tauri::command]
 fn save_preset(app: AppHandle, preset: DiscGeometryPreset) -> Result<(), String> {
-    if preset.builtin || builtin_presets().iter().any(|b| b.id == preset.id) {
-        return Err("内置预设不能修改".into());
-    }
     // Downloaded presets arrive from outside: unusable geometry stops here.
     Spiral::new(preset.spiral_params())?;
     let mut v = user_presets(&app)?;
@@ -319,6 +325,7 @@ pub fn run() {
             delete_preset,
             get_calibration_log,
             add_calibration_record,
+            delete_calibration_record,
             cancel_job,
             generate_calibration_iso,
             start_calibration,

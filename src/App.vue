@@ -2,8 +2,8 @@
   <div class="shell">
     <TitleBar />
     <div class="body">
-      <nav class="rail" :aria-label="t('nav.label')" data-tooltip-placement="right" data-tooltip-anchor="target" data-tooltip-group>
-        <button v-for="n in nav" :key="n.id" type="button" :class="{ on: n.id === active }" :aria-label="n.label" :aria-current="n.id === active ? 'page' : undefined" :data-tooltip="n.hint" @click="s.view = n.id">
+      <nav class="rail" :aria-label="t('nav.label')" data-tooltip-placement="right" data-tooltip-group>
+        <button v-for="n in nav" :key="n.id" type="button" :class="{ on: n.id === active }" :aria-label="n.label" :aria-current="n.id === active ? 'page' : undefined" :data-tooltip="n.label" @click="s.view = n.id">
           <UiIcon :path="n.icon" :size="20" />
         </button>
       </nav>
@@ -39,11 +39,11 @@ const DRIVE_POLL_MS = 3000
 
 const s = useStudio()
 const process = useProcess()
-const nav = computed<{ id: View; label: string; hint: string; icon: string }[]>(() => [
-  { id: 'home', label: t('nav.home'), hint: t('nav.home'), icon: mdiHomeOutline },
-  { id: 'models', label: t('nav.models'), hint: t('nav.models.hint'), icon: mdiDisc },
-  { id: 'calibrate', label: t('nav.calibrate'), hint: t('nav.calibrate.hint'), icon: mdiCrosshairsGps },
-  { id: 'carve', label: t('nav.carve'), hint: t('nav.carve.hint'), icon: mdiImageEditOutline },
+const nav = computed<{ id: View; label: string; icon: string }[]>(() => [
+  { id: 'home', label: t('nav.home'), icon: mdiHomeOutline },
+  { id: 'models', label: t('nav.models'), icon: mdiDisc },
+  { id: 'calibrate', label: t('nav.calibrate'), icon: mdiCrosshairsGps },
+  { id: 'carve', label: t('nav.carve'), icon: mdiImageEditOutline },
 ])
 // The process page belongs to whichever page started it.
 const active = computed(() => (s.view === 'process' ? s.origin : s.view))

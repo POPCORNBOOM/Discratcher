@@ -17,7 +17,7 @@
           <div v-if="analysis?.suggestInvert && !c.invertImage" class="notice warn">
             <UiIcon :path="mdiAlertOutline" />
             <div class="grow">
-              {{ t('carve.darkWarn', { pct: pct(analysis.darkRatio) }) }}
+              {{ t('carve.darkWarn') }}
               <a role="button" tabindex="0" @click="c.invertImage = true" @keydown.enter="c.invertImage = true">{{ t('carve.invertWhite') }}</a>
             </div>
           </div>
@@ -44,12 +44,10 @@
 
           <UiSwitch v-model="c.servoSafeDither">{{ t('carve.servoSafe') }}</UiSwitch>
           <UiSlider v-model="c.maxDarkDutyCycle" :label="t('carve.maxDuty')" :min="0.5" :max="0.85" :step="0.01" :disabled="!c.servoSafeDither" :format="(v) => `${Math.round(v * 100)}%`" />
-          <p class="small muted">{{ t('carve.dutyNote') }}</p>
           <div v-if="c.servoSafeDither && c.maxDarkDutyCycle > MAX_SECTOR_DARK" class="notice danger">
             <UiIcon :path="mdiAlertOctagonOutline" />
-            <div>{{ t('carve.dutyWarn', { pct: pct(c.maxDarkDutyCycle) }) }}</div>
+            <div>{{ t('carve.dutyWarn') }}</div>
           </div>
-          <p class="small muted">{{ t('carve.servoNote') }}</p>
           <div v-if="!c.servoSafeDither" class="notice danger">
             <UiIcon :path="mdiAlertOctagonOutline" />
             <div>{{ t('carve.servoWarn') }}</div>
@@ -101,7 +99,6 @@ const crops = computed(() => [
   { value: 'stretch', label: t('carve.cropStretch') },
   { value: 'custom', label: t('carve.cropCustom') },
 ])
-const pct = (v: number) => `${(v * 100).toFixed(1)}%`
 /** The servo safety line the build measures against; going past it is allowed but warned. */
 const MAX_SECTOR_DARK = 0.7
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p
@@ -176,13 +173,12 @@ async function compose(path: string, ctx?: StepContext) {
   if (r.audit.foreignBytes) throw t('carve.selfCheckFail', { n: r.audit.foreignBytes, lba: r.audit.worstLba })
   // An over-dark image is a risk the user is allowed to take: warn, then obey.
   if (!r.summary.limitOk) {
-    const question = t('carve.riskBody', { pct: pct(r.summary.maxSectorDarkRatio) })
+    const question = t('carve.riskBody')
     if (!(await ctx?.ask(question, t('carve.riskContinue')))) throw t('carve.riskDeclined')
   }
 }
 /** A real burn finished with these parameters: only now may they be shared. */
 async function markBurned(preset: DiscGeometryPreset) {
-  if (preset.builtin) return
   try {
     await call('save_preset', { preset: { ...preset, burnedAt: new Date().toISOString() } })
     await s.refreshPresets()

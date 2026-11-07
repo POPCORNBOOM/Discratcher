@@ -126,15 +126,15 @@ impl Spiral {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preset::builtin_presets;
+    use crate::preset::reference_preset;
 
-    fn builtin() -> Spiral {
-        Spiral::new(builtin_presets()[0].spiral_params()).unwrap()
+    fn reference() -> Spiral {
+        Spiral::new(reference_preset().spiral_params()).unwrap()
     }
 
     #[test]
-    fn reproduces_builtin_base_pitch_and_span() {
-        let s = builtin();
+    fn reproduces_reference_base_pitch_and_span() {
+        let s = reference();
         assert!((s.p0 * 1000.0 - 0.73406).abs() < 2e-5, "{}", s.p0 * 1000.0);
         let bits = 2_295_104f64 * 38688.0;
         assert!((s.locate(bits * 0.02).0 - 25.292).abs() < 0.01);
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn locate_and_at_radius_round_trip() {
-        let s = builtin();
+        let s = reference();
         for r in [24.5, 31.0, 44.4, 57.5] {
             let (n, th) = s.at_radius(r);
             let (r2, th2) = s.locate(n);

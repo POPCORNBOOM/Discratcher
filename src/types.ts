@@ -12,7 +12,7 @@ export interface DiscGeometryPreset {
   burnedAt?: string
   totalSectors: number; channelBitLengthNm: number; innerRadiusMm: number; outerRadiusMm: number
   pitchLinear: number; pitchQuadratic: number; pitchCubic: number; basePitchUm: number
-  rmsResidualDeg: number; measuredSpanMm: [number, number]; createdAt: string; builtin: boolean
+  rmsResidualDeg: number; measuredSpanMm: [number, number]; createdAt: string
 }
 export interface CalibRungEvent {
   rungIndex: number; totalRungs: number; lba: number; radiusMm: number; phaseDeg: number

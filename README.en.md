@@ -40,7 +40,7 @@
       <h3>Community calibration library</h3>
       <p>Enter the code printed on the disc's inner ring to download someone else's measurements, or share your own with people using the same disc.</p>
     </td>
-    <td width="60%"><img src="docs/feature-library.en.webp" alt="Model search page" width="100%"></td>
+    <td width="60%"><img src="docs/feature-library.en.webp" alt="Library page" width="100%"></td>
   </tr>
   <tr>
     <td width="40%" valign="top">
@@ -65,7 +65,7 @@ The core logic does not depend on a window framework, and drive access is implem
 | --- | --- |
 | macOS + LG GUD1N | Tested |
 | Other drives on macOS | Unverified |
-| Windows 11 + LG GUD1N (USB) | Drive detection, burning and progress tested |
+| Windows 11 + LG GUD1N | Tested |
 | Linux | Implemented, not tested on hardware |
 
 ## Build from source
@@ -82,11 +82,11 @@ The core logic lives in `crates/disc-core` and does not depend on Tauri; `src-ta
 
 ## Calibration library
 
-Calibration data is the set of issues labelled `calibration` in this repository. The app reads them directly, with no account needed.
+Calibration data comes from issues labelled `calibration` in this repository. When they change, a workflow publishes them to the `catalog` branch, and the app reads that file with no account needed.
 
 - **Contribute**: you must burn a real disc with your calibration before sharing it. The app opens a pre-filled issue form, you confirm the submission on GitHub, and the app stores no token. You can drop the source image and a photo of the result into the form.
 - **Rate**: after burning with someone else's calibration, you can give it 1–5 stars, also through a pre-filled issue (label `rating`). Only an account's latest vote on each calibration counts.
-- **Review**: adding the `verified` label removes the "unverified" badge in the app; closing the issue withdraws the calibration.
+- **Review**: adding the `verified` label makes a calibration searchable within minutes; closing the issue withdraws it.
 
 ## Translation
 

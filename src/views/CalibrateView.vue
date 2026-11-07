@@ -52,9 +52,11 @@
                 <div v-if="r.preset"><dt>{{ t('cal.pitch') }}</dt><dd class="mono">{{ r.preset.basePitchUm.toFixed(6) }} µm</dd></div>
               </dl>
               <p v-if="r.message" class="small muted selectable">{{ r.message }}</p>
-              <div v-if="r.status === 'success' && r.preset" class="row">
-                <UiButton :disabled="!usable(r)" @click="useRecord(r)">{{ t('cal.useCarve') }}</UiButton>
-                <UiButton variant="ghost" :disabled="!burned(r)" :data-tooltip="burned(r) ? undefined : t('cal.shareTip')" @click="share(r)">{{ t('cal.share') }}</UiButton>
+              <div class="row">
+                <UiButton v-if="r.status === 'success' && r.preset" :disabled="!usable(r)" @click="useRecord(r)">{{ t('cal.useCarve') }}</UiButton>
+                <UiButton v-if="sharedAs(r)" variant="ghost" @click="viewContribution(r)">{{ t('cal.viewShared') }}</UiButton>
+                <UiButton v-else-if="r.status === 'success' && r.preset" variant="ghost" :disabled="!burned(r)" :data-tooltip="burned(r) ? undefined : t('cal.shareTip')" @click="share(r)">{{ t('cal.share') }}</UiButton>
+                <UiButton variant="ghost" @click="deleteId = r.id">{{ t('common.delete') }}</UiButton>
               </div>
             </div>
           </div>
@@ -63,16 +65,25 @@
     </div>
 
     <ContributeDialog v-if="shareTarget" :preset="shareTarget" @close="shareTarget = null" />
+    <UiDialog v-if="deleteId" :title="t('cal.deleteTitle')" @close="deleteId = ''">
+      <p>{{ t('cal.deleteBody') }}</p>
+      <template #actions>
+        <UiButton variant="ghost" @click="deleteId = ''">{{ t('common.cancel') }}</UiButton>
+        <UiButton variant="danger" @click="removeRecord">{{ t('common.delete') }}</UiButton>
+      </template>
+    </UiDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { mdiAlertOutline, mdiCheckCircleOutline, mdiCloseCircleOutline, mdiInformationOutline, mdiMinusCircleOutline } from '@mdi/js'
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
-import { call, CANCELLED, isMock, loadCatalog, mockDev, on } from '../api'
+import { call, CANCELLED, isMock, loadCatalog, mockDev, on, openInBrowser } from '../api'
+import { issueUrl } from '../catalog'
 import { calibrationSeconds, CalibrationPlan, REFERENCE_SHARE } from '../etaModel'
 import { t } from '../i18n'
 import ContributeDialog from '../components/ContributeDialog.vue'
+import UiDialog from '../components/UiDialog.vue'
 import DrivePicker from '../components/DrivePicker.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiButton from '../components/UiButton.vue'
@@ -96,6 +107,7 @@ const hi = ref(96)
 const awaitingDisc = ref(false)
 /** The calibration being shared; sharing opens only for one that has really been burned. */
 const shareTarget = ref<DiscGeometryPreset | null>(null)
+const deleteId = ref('')
 const log = shallowRef<CalibrationRecord[]>([])
 const openId = ref('')
 /** A successful calibration is told apart by how far it has been taken: measured, burned, shared. */
@@ -107,10 +119,12 @@ const shared = shallowRef<DiscGeometryPreset[]>([])
 const same = (a: DiscGeometryPreset, b: DiscGeometryPreset) =>
   [a.basePitchUm - b.basePitchUm, a.pitchLinear - b.pitchLinear, a.pitchQuadratic - b.pitchQuadratic, a.pitchCubic - b.pitchCubic].every((d) => Math.abs(d) < 1e-9)
 
+const sharedAs = (r: CalibrationRecord) => (r.preset ? shared.value.find((p) => same(p, r.preset!)) : undefined)
+
 function state(r: CalibrationRecord): LogState {
   if (r.status !== 'success') return r.status
   const mine = r.preset && s.presets.find((p) => p.id === r.preset!.id)
-  if (r.preset && shared.value.some((p) => same(p, r.preset!))) return 'contributed'
+  if (sharedAs(r)) return 'contributed'
   return mine?.burnedAt ? 'tested' : 'unverified'
 }
 const when = (iso: string) => new Date(iso).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -125,8 +139,23 @@ function useRecord(r: CalibrationRecord) {
 const current = (r: CalibrationRecord) => s.presets.find((p) => p.id === r.preset?.id)
 const burned = (r: CalibrationRecord) => !!current(r)?.burnedAt
 
+function viewContribution(r: CalibrationRecord) {
+  openInBrowser(issueUrl(sharedAs(r)!)).catch((e) => notifyError(String(e)))
+}
+
 function share(r: CalibrationRecord) {
   shareTarget.value = current(r) ?? null
+}
+
+async function removeRecord() {
+  const id = deleteId.value
+  deleteId.value = ''
+  try {
+    await call('delete_calibration_record', { id })
+    await loadLog()
+  } catch (e) {
+    notifyError(String(e))
+  }
 }
 
 async function loadLog() {

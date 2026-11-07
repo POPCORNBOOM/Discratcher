@@ -367,10 +367,10 @@ pub fn audit_iso(path: &Path) -> Result<IsoAudit, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preset::builtin_presets;
+    use crate::preset::reference_preset;
 
     fn ctx_parts(field: GrayField) -> (Spiral, GrayField, Box<ScramblerLut>) {
-        (Spiral::new(builtin_presets()[0].spiral_params()).unwrap(), field, build_scrambler_lut())
+        (Spiral::new(reference_preset().spiral_params()).unwrap(), field, build_scrambler_lut())
     }
 
     fn safe() -> Tone {
@@ -445,13 +445,13 @@ mod tests {
             "preset":{"id":"x","name":"n","driveModel":"","mediaId":"","stamperCode":"","totalSectors":2295104,
             "channelBitLengthNm":133.3,"innerRadiusMm":24.1,"outerRadiusMm":57.9,"pitchLinear":0,
             "pitchQuadratic":0,"pitchCubic":0,"basePitchUm":0.73,"rmsResidualDeg":0.4,
-            "measuredSpanMm":[25.2,56.9],"createdAt":"","builtin":false}}"#,
+            "measuredSpanMm":[25.2,56.9],"createdAt":""}}"#,
         )
         .unwrap();
         assert_eq!(cfg.crop_mode, CropMode::SquareCenter);
         assert_eq!(cfg.scale, 1.0, "an older config without a scale still carves at 100%");
         assert_eq!(cfg.preset.measured_span_mm, (25.2, 56.9));
-        let back = serde_json::to_value(&builtin_presets()[0]).unwrap();
+        let back = serde_json::to_value(&reference_preset()).unwrap();
         assert!(back.get("basePitchUm").is_some() && back["measuredSpanMm"].is_array());
     }
 
@@ -461,7 +461,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("disc-core-carve-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("t.iso");
-        let mut preset = builtin_presets()[0].clone();
+        let mut preset = reference_preset().clone();
         preset.total_sectors = 16 * 400;
         let spiral = Spiral::new(preset.spiral_params()).unwrap();
         let field = GrayField { size: 2, data: vec![0, 255, 255, 0] };

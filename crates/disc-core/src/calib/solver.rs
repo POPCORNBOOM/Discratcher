@@ -441,7 +441,7 @@ mod tests {
         let p = f.params;
         eprintln!("cubic ro {:.6} c {:.4e} {:.4e} {:.4e} p0 {:.6} rms {:.3}", p.ro, p.c1, p.c2, p.c3, f.p0_um, f.rms_deg);
 
-        let golden = Spiral::new(crate::preset::builtin_presets()[0].spiral_params()).unwrap();
+        let golden = Spiral::new(crate::preset::reference_preset().spiral_params()).unwrap();
         let mine = Spiral::new(p).unwrap();
         let (gb, mb) = (golden.theta_at_bit(n_ref), mine.theta_at_bit(n_ref));
         let mut worst = 0.0f64;

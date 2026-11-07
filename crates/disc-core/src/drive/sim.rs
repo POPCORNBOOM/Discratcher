@@ -4,7 +4,7 @@
 use super::{OpticalDriveInfo, TimedDrive, TimedRead, SIM_DRIVE_ID};
 use crate::calib::solver::completion_bit;
 use crate::ecma267::DEFAULT_TOTAL_SECTORS;
-use crate::preset::builtin_presets;
+use crate::preset::reference_preset;
 use crate::rng::SplitMix64;
 use crate::spiral::{Spiral, SpiralParams};
 use std::f64::consts::TAU;
@@ -56,7 +56,7 @@ impl SimDrive {
 
     /// Disc that matches the shipped preset, so a demo run lands somewhere recognisable.
     pub fn demo(paced: bool) -> Self {
-        let mut d = Self::new(builtin_presets()[0].spiral_params(), 0x5EED);
+        let mut d = Self::new(reference_preset().spiral_params(), 0x5EED);
         d.pace_us = if paced { 25 } else { 0 };
         d
     }

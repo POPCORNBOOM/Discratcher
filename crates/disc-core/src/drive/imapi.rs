@@ -568,7 +568,7 @@ pub fn burn(
         return Err("这台刻录机不受 Windows 刻录接口支持".into());
     }
     if !bool_of(format.call("IsCurrentMediaSupported", vec![Variant::from_unknown(recorder.0)])?)? {
-        return Err("这张盘不能写入".into());
+        return Err("这张光盘不能写入".into());
     }
 
     let wide: Vec<u16> = iso.encode_utf16().chain(std::iter::once(0)).collect();

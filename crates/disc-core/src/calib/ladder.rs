@@ -125,7 +125,6 @@ impl Session<'_> {
     }
 
     fn measure(&mut self, reference: u32, target: u32, reps: usize) -> Result<Measurement, String> {
-        let mut last = String::new();
         for _ in 0..RETRIES {
             self.check()?;
             let (mut refs, mut tgts) = (Vec::with_capacity(reps), Vec::with_capacity(reps));
@@ -136,7 +135,6 @@ impl Session<'_> {
             }
             let fit = refine_period(&refs, self.period_ns, 0.05);
             if fit.coherence < MIN_COHERENCE {
-                last = format!("coherence {:.3}", fit.coherence);
                 self.settle(reference)?;
                 continue;
             }
@@ -144,7 +142,7 @@ impl Session<'_> {
             let phases: Vec<f64> = tgts.iter().map(|t| phase_deg(*t, &fit)).collect();
             return Ok(Measurement { stats: circular_stats(&phases), period_ns: fit.period_ns });
         }
-        Err(format!("主轴不稳定，放弃 LBA {target}（{last}）"))
+        Err("这个位置读取不稳定，已跳过".into())
     }
 
     /// Waits for the spindle by reading, never by idling: the GUD1N slows down after
@@ -153,7 +151,6 @@ impl Session<'_> {
         // No period known yet: draw waits from one slowest-plausible turn.
         self.period_ns = 60e9 / 1200.0;
         let mut previous: Option<f64> = None;
-        let mut coherence = 0.0;
         for _ in 0..SETTLE_ROUNDS {
             let mut ts = Vec::with_capacity(SETTLE_READS);
             for _ in 0..SETTLE_READS {
@@ -161,7 +158,6 @@ impl Session<'_> {
                 ts.push(self.read(lba)?);
             }
             let fit = estimate_period(&ts, 1500.0, 12_000.0);
-            coherence = fit.coherence;
             if fit.coherence <= SETTLED_COHERENCE {
                 previous = None;
                 continue;
@@ -172,7 +168,7 @@ impl Session<'_> {
             }
             previous = Some(fit.period_ns);
         }
-        Err(format!("光驱转速一直稳定不下来（coherence {coherence:.3}）。这台光驱可能不是 CAV，或缓存未被绕过"))
+        Err("光驱转速一直不稳定，无法标定。请重试，或换一台光驱。".into())
     }
 }
 
@@ -202,7 +198,7 @@ pub fn run_ladder(
 ) -> Result<CalibrationResult, String> {
     let total = drive.capacity()?;
     if total < 500_000 {
-        return Err(format!("这张盘只有 {total} 个扇区，无法标定，先刻入校准镜像"));
+        return Err(format!("这张光盘只有 {total} 个扇区，无法标定，先刻入校准镜像"));
     }
     let lo = align((total as f64 * cfg.range_pct.0) as u32);
     let hi = align((total as f64 * cfg.range_pct.1) as u32);
@@ -245,7 +241,7 @@ pub fn run_ladder(
             let Some(l) = pick_next(&grid, &points, &rejected, model.as_ref(), reference) else { break };
             l
         };
-        on_status(&format!("第 {} / {} 阶，LBA {lba}", rows.len() + 1, cfg.max_targets));
+        on_status(&format!("第 {} / {} 阶", rows.len() + 1, cfg.max_targets));
         let m = match s.measure(reference, lba, cfg.reps) {
             Ok(m) => m,
             Err(e) if e == "已取消" => return Err(e),
@@ -253,7 +249,7 @@ pub fn run_ladder(
                 on_status(&e);
                 rejected.push(lba);
                 if rejected.len() > cfg.max_targets {
-                    return Err("被放弃的阶梯太多，光驱对这张盘读取不稳定".into());
+                    return Err("被放弃的阶梯太多，光驱对这张光盘读取不稳定".into());
                 }
                 continue;
             }
@@ -277,9 +273,9 @@ pub fn run_ladder(
         if residual.abs() > 45.0 && points.len() > 4 {
             points.pop();
             rejected.push(lba);
-            on_status(&format!("LBA {lba} 的整圈数不可靠，已跳过"));
+            on_status("跳过一个不可靠的测量点");
             if rejected.len() > cfg.max_targets {
-                return Err("被放弃的阶梯太多，光驱对这张盘读取不稳定".into());
+                return Err("被放弃的阶梯太多，光驱对这张光盘读取不稳定".into());
             }
             continue;
         }
@@ -308,7 +304,7 @@ pub fn run_ladder(
         return Err(format!("只测到 {} 阶，不足以拟合", points.len()));
     }
     on_status("拟合三次轨距");
-    let fin = finish_fit(&mut points, n_ref, (u, v), total, on_status)?;
+    let fin = finish_fit(&mut points, n_ref, (u, v), total)?;
     let (c, cubic) = (&fin.constant, &fin.cubic);
     let noise = fin.noise_deg;
 
@@ -339,7 +335,6 @@ pub fn run_ladder(
         rms_residual_deg: cubic.rms_deg,
         measured_span_mm: span,
         created_at: String::new(),
-        builtin: false,
     };
     let suspect = is_suspect(cubic.rms_deg, noise);
     Ok(CalibrationResult {
@@ -369,7 +364,6 @@ pub fn finish_fit(
     n_ref: f64,
     init: (f64, f64),
     total: u32,
-    on_status: &mut dyn FnMut(&str),
 ) -> Result<FinalFit, String> {
     points.sort_by(|a, b| a.n.total_cmp(&b.n));
     let c = fit_constant(points, n_ref, init, None)?;
@@ -414,7 +408,6 @@ pub fn finish_fit(
         let Some((i, k, f)) = best else { break };
         points[i].theta_deg += k;
         turn_repairs += 1;
-        on_status(&format!("LBA {} 的整圈数已修正", points[i].lba));
         cubic = f;
     }
     Ok(FinalFit { constant: c, cubic, noise_deg: noise, turn_repairs })
@@ -490,11 +483,11 @@ fn pick_next(
 mod tests {
     use super::*;
     use crate::drive::sim::SimDrive;
-    use crate::preset::builtin_presets;
+    use crate::preset::reference_preset;
     use crate::spiral::SpiralParams;
 
     fn run(mut d: SimDrive) -> Result<(CalibrationResult, Spiral), String> {
-        let truth = Spiral::new(builtin_presets()[0].spiral_params()).unwrap();
+        let truth = Spiral::new(reference_preset().spiral_params()).unwrap();
         let cfg = LadderConfig::default();
         let r = run_ladder(&mut d, &cfg, &AtomicBool::new(false), &mut |_| {}, &mut |_| {})?;
         Ok((r, truth))
@@ -517,7 +510,7 @@ mod tests {
 
     #[test]
     fn recovers_geometry_on_simulated_disc() {
-        let d = SimDrive::new(builtin_presets()[0].spiral_params(), 7);
+        let d = SimDrive::new(reference_preset().spiral_params(), 7);
         let (r, truth) = run(d).unwrap();
         assert_eq!(r.rungs.len(), 56);
         let span = r.preset.measured_span_mm;
@@ -548,7 +541,7 @@ mod tests {
 
     #[test]
     fn works_without_fua_via_distant_eviction() {
-        let mut d = SimDrive::new(builtin_presets()[0].spiral_params(), 11);
+        let mut d = SimDrive::new(reference_preset().spiral_params(), 11);
         d.fua = false;
         let (r, truth) = run(d).unwrap();
         assert!(worst_error(&truth, r.preset.spiral_params()) < 1.0);
@@ -574,12 +567,12 @@ mod tests {
             })
             .collect();
         let n_ref = completion_bit(1_124_544);
-        let f = finish_fit(&mut pts, n_ref, (24.17 / BIT_MM, 0.734e-3 / BIT_MM), 2_295_104, &mut |_| {}).unwrap();
+        let f = finish_fit(&mut pts, n_ref, (24.17 / BIT_MM, 0.734e-3 / BIT_MM), 2_295_104).unwrap();
         eprintln!("noise {:.3}, rms {:.3}, repairs {}, ri {:.6}", f.noise_deg, f.cubic.rms_deg, f.turn_repairs, f.cubic.params.ri);
         assert_eq!(f.turn_repairs, 0);
         assert!((f.cubic.params.ri - 24.173325).abs() < 1e-5, "{}", f.cubic.params.ri);
         assert!(!is_suspect(f.cubic.rms_deg, f.noise_deg));
-        let truth = Spiral::new(builtin_presets()[0].spiral_params()).unwrap();
+        let truth = Spiral::new(reference_preset().spiral_params()).unwrap();
         let err = worst_error(&truth, f.cubic.params);
         eprintln!("worst angle error to golden {err:.3}");
         assert!(err < 0.1, "{err}");
@@ -587,7 +580,7 @@ mod tests {
 
     #[test]
     fn cancels_promptly() {
-        let mut d = SimDrive::new(builtin_presets()[0].spiral_params(), 1);
+        let mut d = SimDrive::new(reference_preset().spiral_params(), 1);
         let cfg = LadderConfig::default();
         let e = run_ladder(&mut d, &cfg, &AtomicBool::new(true), &mut |_| {}, &mut |_| {}).unwrap_err();
         assert_eq!(e, "已取消");

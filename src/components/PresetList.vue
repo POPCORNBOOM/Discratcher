@@ -3,7 +3,7 @@
     <div class="title">{{ t('presets.title') }}</div>
     <div class="row">
       <UiSelect class="grow" filterable :label="t('presets.label')" :placeholder="t('presets.none')" :model-value="s.preset?.id ?? ''" :options="options" :disabled="!!s.job" @update:model-value="s.presetId = $event" @preview="preview" />
-      <UiButton v-if="s.preset && !s.preset.builtin" icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('presets.delete', { name: s.preset.name })" :disabled="!!s.job" @click="confirmId = s.preset.id" />
+      <UiButton v-if="s.preset" icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('presets.delete', { name: s.preset.name })" :disabled="!!s.job" @click="confirmId = s.preset.id" />
     </div>
     <div v-if="matched" class="small muted">{{ t('presets.matched') }}</div>
     <a role="button" tabindex="0" class="small" @click="s.view = 'calibrate'" @keydown.enter="s.view = 'calibrate'">{{ t('presets.missing') }}</a>

@@ -120,7 +120,7 @@ impl TimedDrive for MacDrive {
                     libc::ioctl(f.as_raw_fd(), COUNT, &mut bytes) | libc::ioctl(f.as_raw_fd(), SIZE, &mut block)
                 };
                 if rc != 0 {
-                    return Err("读不到盘片容量".into());
+                    return Err("读不到光盘容量".into());
                 }
                 Ok((bytes * block.max(512) as u64 / 2048) as u32)
             }

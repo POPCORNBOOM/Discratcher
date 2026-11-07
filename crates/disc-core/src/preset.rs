@@ -27,8 +27,6 @@ pub struct DiscGeometryPreset {
     pub rms_residual_deg: f64,
     pub measured_span_mm: (f64, f64),
     pub created_at: String,
-    #[serde(default)]
-    pub builtin: bool,
 }
 
 impl DiscGeometryPreset {
@@ -45,10 +43,11 @@ impl DiscGeometryPreset {
     }
 }
 
-pub fn builtin_presets() -> Vec<DiscGeometryPreset> {
-    vec![DiscGeometryPreset {
-        id: "builtin-lg-gud1n-cmc-mag-am3-0237-l110".into(),
-        name: "LG GUD1N + CMC MAG. AM3（模具 0237 L110，56 阶）".into(),
+/// A measured disc for the virtual drive and the tests. Users never see it listed.
+pub fn reference_preset() -> DiscGeometryPreset {
+    DiscGeometryPreset {
+        id: "reference-gud1n-cmc-mag-am3-0237-l110".into(),
+        name: "HL-DT-ST GUD1N + CMC MAG. AM3（模具 0237 L110，56 阶）".into(),
         drive_model: "HL-DT-ST DVDRAM GUD1N 1.01".into(),
         media_id: "CMC MAG. AM3".into(),
         stamper_code: "CMDR47G-CFMWMO3-0237 L110".into(),
@@ -65,6 +64,5 @@ pub fn builtin_presets() -> Vec<DiscGeometryPreset> {
         rms_residual_deg: 0.402,
         measured_span_mm: (25.292, 56.914),
         created_at: "2026-11-06T21:53:00+08:00".into(),
-        builtin: true,
-    }]
+    }
 }
