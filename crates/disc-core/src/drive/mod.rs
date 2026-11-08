@@ -174,11 +174,13 @@ pub mod mmc {
         })
     }
 
-    /// Disc status from READ DISC INFORMATION: 0 empty, 1 appendable, 2 finalised.
+    /// Disc status from READ DISC INFORMATION: 0 empty, 1 appendable, 2 finalised, 3 other
+    /// (overwritable media). It is the low two bits of byte 2; bit 4 above it is the
+    /// erasable flag, which every RW disc sets whether or not anything is on it.
     /// A status nobody can read counts as finalised, so an unknown disc is never
     /// mistaken for a blank one.
     pub fn disc_status(b: &[u8]) -> u8 {
-        b.get(2).map_or(2, |v| (v >> 4) & 0x03)
+        b.get(2).map_or(2, |v| v & 0x03)
     }
 
     /// Sectors a blank medium of this type holds. Some drives answer READ CAPACITY
@@ -232,8 +234,12 @@ pub mod mmc {
         #[test]
         fn disc_status_reads_the_two_bit_field() {
             assert_eq!(disc_status(&[0, 0, 0x00]), 0);
-            assert_eq!(disc_status(&[0, 0, 0x10]), 1);
-            assert_eq!(disc_status(&[0, 0, 0x20]), 2);
+            assert_eq!(disc_status(&[0, 0, 0x01]), 1);
+            // A finalised DVD-R: last session complete (bits 3-2) and disc complete.
+            assert_eq!(disc_status(&[0, 0, 0x0E]), 2);
+            // A blank CD-RW or DVD-RW sets the erasable bit and is still empty.
+            assert_eq!(disc_status(&[0, 0, 0x10]), 0);
+            assert_eq!(disc_status(&[0, 0, 0x1E]), 2);
             // A reply too short to hold the field must not read as blank.
             assert_eq!(disc_status(&[]), 2);
         }
