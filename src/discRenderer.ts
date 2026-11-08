@@ -51,7 +51,9 @@ uniform float uDim;
 uniform float uFx;
 uniform float uEtchMix;
 uniform float uArtMix;
-uniform float uArtRange;
+uniform vec4 uArtGeo;
+uniform vec2 uArtShift;
+uniform vec3 uArtTone;
 uniform float uCodeLight;
 uniform vec3 uDye;
 uniform sampler2D uEtchA;
@@ -122,6 +124,29 @@ vec3 backdrop(vec2 p) {
   return c;
 }
 
+// What the carver writes under a point, as grey and coverage; mirrors trace() in
+// preview.rs. xy is in disc units with y up. uArtGeo holds the recorded band's inner and
+// outer radius, the rotation and the scale; uArtShift the offset as a share of the
+// diameter; uArtTone the contrast gain, invert and the guard's floor.
+vec2 carvedAt(vec2 xy) {
+  float r = length(xy) * DISC_MM;
+  vec2 p = vec2(xy.x, -xy.y) * DISC_MM / (2.0 * uArtGeo.y);
+  float c = cos(uArtGeo.z), s = sin(uArtGeo.z);
+  vec2 q = vec2(c * p.x + s * p.y, -s * p.x + c * p.y);
+  vec2 sh = vec2(c * uArtShift.x + s * uArtShift.y, -s * uArtShift.x + c * uArtShift.y);
+  vec2 uv = (q - sh) / uArtGeo.w + 0.5;
+  // Sampled before any branch, so the mipmap level is sound at every edge.
+  vec2 t = texture(uArt, uv).rg;
+  float y = clamp((t.r * 255.0 - 128.0) * uArtTone.x + 128.0, 0.0, 255.0) / 255.0;
+  y = mix(y, 1.0 - y, uArtTone.y);
+  // Outside the picture, and in its letterbox, the disc stays light.
+  float inside = step(0.0, uv.x) * step(0.0, uv.y) * step(uv.x, 1.0) * step(uv.y, 1.0);
+  float grey = max(mix(1.0, y, t.g * inside), uArtTone.z);
+  // Unrecorded mirror band and lead areas read as the bare disc.
+  float band = step(uArtGeo.x, r) * step(r, uArtGeo.y);
+  return vec2(mix(232.0 / 255.0, grey, band), step(15.0, r) * step(r, 59.0));
+}
+
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 
 void main() {
@@ -135,6 +160,7 @@ void main() {
   vec3 local = transpose(uRot) * (hit - uCenter) / uScale;
   float rr = length(local.xy) * DISC_MM;
   float aa = max(fwidth(rr), 0.02);
+  vec2 shownArt = carvedAt(local.xy);
 
   // Shadow thrown on the wall behind, offset away from the key light.
   vec3 wallHit = ro + rd * ((uCenter.z - 0.75 - ro.z) / rd.z);
@@ -205,9 +231,8 @@ void main() {
 
     // A carved image is the dark and light of the data layer, so it sits under the
     // rainbow and the lacquer. The image does not spin: a disc being composed is at rest.
-    vec4 art = texture(uArt, local.xy * DISC_MM / (2.0 * uArtRange) + 0.5);
-    float carved = data * art.a * uArtMix;
-    float ink = pow(art.r, 2.0);
+    float carved = data * shownArt.y * uArtMix;
+    float ink = pow(shownArt.x, 2.0);
     metalColor = mix(metalColor, metalColor * (0.2 + ink) + ink * 0.02, carved);
 
     // Clear hub: mostly what is behind it, tinted by the polycarbonate.
@@ -233,14 +258,13 @@ void main() {
     color = mix(color, surface * uDim, solid);
   }
 
-  vec4 shownArt = texture(uArt, local.xy * DISC_MM / (2.0 * uArtRange) + 0.5);
-  float plain = uArtMix * (1.0 - uFx) * shownArt.a * solid * smoothstep(22.7, 23.0, rr) * (1.0 - smoothstep(58.2, 58.5, rr));
+  float plain = uArtMix * (1.0 - uFx) * shownArt.y * solid * smoothstep(22.7, 23.0, rr) * (1.0 - smoothstep(58.2, 58.5, rr));
 
   float vignette = 1.0 - 0.34 * smoothstep(0.7, 2.3, length(p * vec2(0.8, 1.0)));
   color = aces(color * vignette * 1.05);
   color = pow(color, vec3(1.0 / 2.2));
   // With the lights off the preview must show the image's own grey levels, untouched.
-  color = mix(color, shownArt.rrr, plain);
+  color = mix(color, shownArt.xxx, plain);
   color += (hash(gl_FragCoord.xy + fract(uTime)) - 0.5) / 255.0;
   fragColor = vec4(color, 1.0);
 }`
@@ -295,7 +319,8 @@ export interface DiscState {
   seed: number
   etchMix: number
   artMix: number
-  artRange: number
+  /** Where the picture sits; see `artPlacement`. */
+  art: ArtPlacement
   /** 0 = ordinary light, 1 = the stamped code is lit for reading. */
   codeLight: number
   /** Centre x, y and half-size of the part of the scene to draw; the default is all of it. */
@@ -304,6 +329,35 @@ export interface DiscState {
   pointerY: number
   spin: number
   time: number
+}
+
+/** The picture before tone: per pixel its luma, then 255 inside the picture and 0 in the letterbox. */
+export interface ArtField {
+  size: number
+  data: Uint8Array
+}
+
+/** The picture's place and tone on the disc, as the carver reads them. */
+export interface ArtPlacement {
+  innerMm: number
+  outerMm: number
+  rotationRad: number
+  scale: number
+  /** Offset as a share of the disc's diameter, y down. */
+  shiftX: number
+  shiftY: number
+  contrast: number
+  invert: boolean
+  /** Lightest the guard lets a dark pixel be, 0 to 1. */
+  floor: number
+}
+
+export const NO_ART: ArtPlacement = { innerMm: 24, outerMm: 58, rotationRad: 0, scale: 1, shiftX: 0, shiftY: 0, contrast: 0, invert: false, floor: 0 }
+
+/** The gain of the carver's contrast curve (contrast_lut in artwork.rs). */
+function contrastGain(contrast: number) {
+  const c = Math.min(100, Math.max(-100, contrast)) * 2.55
+  return (259 * (c + 255)) / (255 * (259 - c))
 }
 
 function rotation(x: number, y: number) {
@@ -335,9 +389,21 @@ export function createDiscRenderer(canvas: HTMLCanvasElement) {
     gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_S, gl!.CLAMP_TO_EDGE)
     gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE)
   }
-  const blank = document.createElement('canvas')
-  blank.width = blank.height = 2
-  upload(2, blank)
+  /** Rows are top first, as the carver indexes them, so this one is not flipped. */
+  function uploadField(f: ArtField) {
+    gl!.activeTexture(gl!.TEXTURE2)
+    gl!.bindTexture(gl!.TEXTURE_2D, textures[2])
+    gl!.pixelStorei(gl!.UNPACK_FLIP_Y_WEBGL, false)
+    gl!.pixelStorei(gl!.UNPACK_ALIGNMENT, 1)
+    gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RG8, f.size, f.size, 0, gl!.RG, gl!.UNSIGNED_BYTE, f.data)
+    gl!.pixelStorei(gl!.UNPACK_FLIP_Y_WEBGL, true)
+    gl!.pixelStorei(gl!.UNPACK_ALIGNMENT, 4)
+    gl!.generateMipmap(gl!.TEXTURE_2D)
+    gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MIN_FILTER, gl!.LINEAR_MIPMAP_LINEAR)
+    gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_S, gl!.CLAMP_TO_EDGE)
+    gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE)
+  }
+  uploadField({ size: 2, data: new Uint8Array(8) })
 
   /** Which of the two etch textures is showing; the other holds the one fading in. */
   let front = 0
@@ -346,7 +412,7 @@ export function createDiscRenderer(canvas: HTMLCanvasElement) {
   const u = {
     res: at('uRes'), rot: at('uRot'), center: at('uCenter'), pointer: at('uPointer'), spin: at('uSpin'), time: at('uTime'),
     scale: at('uScale'), win: at('uWin'), pitch: at('uPitch'), seed: at('uSeed'), dim: at('uDim'), fx: at('uFx'), etchMix: at('uEtchMix'), artMix: at('uArtMix'),
-    artRange: at('uArtRange'), codeLight: at('uCodeLight'), dye: at('uDye'), etchA: at('uEtchA'), etchB: at('uEtchB'), art: at('uArt'),
+    artGeo: at('uArtGeo'), artShift: at('uArtShift'), artTone: at('uArtTone'), codeLight: at('uCodeLight'), dye: at('uDye'), etchA: at('uEtchA'), etchB: at('uEtchB'), art: at('uArt'),
   }
   gl.uniform1i(u.art, 2)
 
@@ -370,7 +436,10 @@ export function createDiscRenderer(canvas: HTMLCanvasElement) {
     gl!.uniform1f(u.seed, s.seed)
     gl!.uniform1f(u.etchMix, s.etchMix)
     gl!.uniform1f(u.artMix, s.artMix)
-    gl!.uniform1f(u.artRange, s.artRange)
+    const a = s.art
+    gl!.uniform4f(u.artGeo, a.innerMm, a.outerMm, a.rotationRad, a.scale > 0 ? a.scale : 1)
+    gl!.uniform2f(u.artShift, a.shiftX, a.shiftY)
+    gl!.uniform3f(u.artTone, contrastGain(a.contrast), a.invert ? 1 : 0, a.floor)
     gl!.uniform1f(u.codeLight, s.codeLight)
     gl!.uniform1i(u.etchA, front)
     gl!.uniform1i(u.etchB, 1 - front)
@@ -386,7 +455,7 @@ export function createDiscRenderer(canvas: HTMLCanvasElement) {
     /** The first call shows the code at once; later ones load it to fade in. */
     setEtch: (code: string, immediate: boolean) => upload(immediate ? front : 1 - front, etchCanvas(code)),
     swapEtch: () => (front = 1 - front),
-    setArt: (image: TexImageSource) => upload(2, image),
+    setArt: (field: ArtField) => uploadField(field),
     dispose: () => gl.getExtension('WEBGL_lose_context')?.loseContext(),
   }
 }

@@ -9,7 +9,7 @@
 // the disc to be, and the disc travels there.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { lookOf } from '../discLook'
-import { createDiscRenderer, type DiscState } from '../discRenderer'
+import { createDiscRenderer, NO_ART, type ArtPlacement, type DiscState } from '../discRenderer'
 import { useProcess } from '../stores/process'
 import { useStudio } from '../stores/studio'
 
@@ -48,7 +48,7 @@ const look = computed(() => lookOf(s.discPreview ?? s.preset))
 
 const state: DiscState = {
   x: 0, y: 0, scale: 1, dim: 1, fx: 1, tiltX: -0.42, tiltY: -0.52, pointerX: 0.3, pointerY: 0.5, spin: 0, time: 0,
-  dye: [...look.value.dye], pitch: look.value.pitch, seed: look.value.seed, etchMix: 0, artMix: 0, artRange: look.value.artRange, codeLight: 0,
+  dye: [...look.value.dye], pitch: look.value.pitch, seed: look.value.seed, etchMix: 0, artMix: 0, art: NO_ART, codeLight: 0,
 }
 let spinSpeed = IDLE_SPIN
 let leanX = 0
@@ -92,7 +92,25 @@ function updateLens() {
   lensRenderer.draw({ ...state, etchMix: 0, window: [(cx - box.width / 2) / unit, -(cy - box.height / 2) / unit, (LENS_FRAME * radius) / unit] })
 }
 
-let artShown = ''
+/** The carve settings as the carver reads them, so the disc can follow every change at once. */
+function placement(): ArtPlacement {
+  const c = s.config
+  const p = s.preset
+  if (!p) return NO_ART
+  // Tone::from_duty in carver.rs.
+  const duty = Math.min(0.85, Math.max(0.5, c.maxDarkDutyCycle))
+  return {
+    innerMm: p.innerRadiusMm,
+    outerMm: p.outerRadiusMm,
+    rotationRad: (c.rotationDeg * Math.PI) / 180,
+    scale: c.scale,
+    shiftX: c.offsetX / 100,
+    shiftY: c.offsetY / 100,
+    contrast: c.contrast,
+    invert: c.invertImage,
+    floor: c.servoSafeDither ? Math.round(255 * (1 - duty)) / 255 : 0,
+  }
+}
 
 function carvePose(fallback: Pose): Pose {
   const box = canvas.value!.getBoundingClientRect()
@@ -169,7 +187,7 @@ function advance(now: number, dt: number) {
   state.dye = state.dye.map((v, i) => v + (l.dye[i] - v) * kLook) as DiscState['dye']
   state.pitch += (l.pitch - state.pitch) * kLook
   state.seed += (l.seed - state.seed) * kLook
-  state.artRange = l.artRange
+  state.art = placement()
   state.artMix += ((s.discArt && s.view === 'carve' ? 1 : 0) - state.artMix) * kArt
   lensMix += ((lensWanted() ? 1 : 0) - lensMix) * (1 - Math.exp(-dt * LENS_RATE))
   if (fading) {
@@ -210,20 +228,13 @@ watch(() => look.value.code, (code) => {
   snap()
 })
 
-watch(() => s.discArt, (url) => {
-  if (!url) return
-  artShown = url
-  const image = new Image()
-  image.onload = () => {
-    // A newer preview may have finished decoding first.
-    if (artShown !== url) return
-    renderer?.setArt(image)
-    snap()
-  }
-  image.src = url
+watch(() => s.discArt, (field) => {
+  if (!field) return
+  renderer?.setArt(field)
+  snap()
 })
 
-watch(() => [s.view, s.codeFocus, s.discPreview, s.discZoom, s.discPan.x, s.discPan.y, look.value], snap)
+watch(() => [s.view, s.codeFocus, s.discPreview, s.discZoom, s.discPan.x, s.discPan.y, look.value, placement()], snap, { deep: true })
 
 onMounted(() => {
   renderer = createDiscRenderer(canvas.value!)

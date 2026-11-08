@@ -77,6 +77,19 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     case 'delete_preset': saved = saved.filter((p) => p.id !== a.id); return null
     case 'analyze_artwork':
       return { width: 2048, height: 2048, darkRatio: 0.41, suggestInvert: true, maxBlackRunPx: 86, thumbnail: disc(256, 30) }
+    case 'preview_texture': {
+      // An "F" over a gradient, so rotation and mirroring are easy to see; fit letterboxes it.
+      const n = 512, d = new Uint8Array(n * n * 2)
+      const box = a.cropMode === 'fit' || a.cropMode === 'custom' ? n / 4 : 0
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+        const i = (y * n + x) * 2, inside = y >= box && y < n - box
+        const f = (x > 120 && x < 180 && y > 100 && y < 420) || (x > 120 && x < 400 && y > 100 && y < 160) || (x > 120 && x < 330 && y > 240 && y < 290)
+        d[i] = !inside ? 255 : f ? 0 : 120 + (x / n) * 135
+        d[i + 1] = inside ? 255 : 0
+      }
+      await wait(30)
+      return d.buffer
+    }
     case 'simulate_disc_preview':
       await wait(60)
       return disc(a.previewSize, a.config.servoSafeDither ? 90 : 0)

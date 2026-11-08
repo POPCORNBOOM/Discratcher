@@ -247,6 +247,15 @@ async fn simulate_disc_preview(
     .await
 }
 
+/// The picture for the live preview as raw bytes (see `artwork::preview_texture`); the
+/// disc renderer places and tones it every frame.
+#[tauri::command]
+async fn preview_texture(image_path: String, crop_mode: artwork::CropMode) -> Result<tauri::ipc::Response, String> {
+    blocking(move || artwork::preview_texture(Path::new(&image_path), crop_mode, PREVIEW_FIELD_SIZE))
+        .await
+        .map(tauri::ipc::Response::new)
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BuiltIso {
@@ -333,6 +342,7 @@ pub fn run() {
             start_calibration,
             analyze_artwork,
             simulate_disc_preview,
+            preview_texture,
             build_carved_iso,
             burn_iso_to_drive,
             cache_iso_path,

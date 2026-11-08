@@ -63,7 +63,7 @@
 
     <div ref="viewport" class="viewport" data-disc-area @wheel.prevent="wheel" @pointerdown="dragStart" @pointermove="dragMove" @pointerup="drag = null" @dblclick="resetView">
       <img v-if="previewUrl && !s.discRendered" class="disc" :src="previewUrl" :alt="t('carve.previewAlt')" draggable="false" :style="{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }" />
-      <div v-if="!previewUrl" class="hint">{{ t('carve.hint') }}</div>
+      <div v-if="!c.sourceImagePath" class="hint">{{ t('carve.hint') }}</div>
       <div v-if="previewing" class="spin small muted">{{ t('carve.updating') }}</div>
       <div class="float mono muted">{{ Math.round(zoom * 100) }}%</div>
       <div v-if="hasTransform" class="float left mono muted">{{ t('carve.center', { x: formatOffset(c.offsetX), y: formatOffset(c.offsetY) }) }}<template v-if="c.cropMode === 'custom'"> · {{ Math.round(c.scale * 100) }}%</template></div>
@@ -124,24 +124,40 @@ async function choose() {
   }
 }
 
-const previewUrl = ref('')
 const previewing = ref(false)
 let ticket = 0
+/** Only a new picture or crop goes to the native side; the disc places and tones it itself. */
+watch([() => c.sourceImagePath, () => c.cropMode], loadArt, { immediate: true })
+async function loadArt() {
+  if (!c.sourceImagePath) return
+  const mine = ++ticket
+  previewing.value = true
+  try {
+    const raw = await call<ArrayBuffer>('preview_texture', { imagePath: c.sourceImagePath, cropMode: c.cropMode })
+    const data = new Uint8Array(raw)
+    if (mine === ticket) s.discArt = { size: Math.round(Math.sqrt(data.length / 2)), data }
+  } catch (e) {
+    notifyError(String(e))
+  } finally {
+    if (mine === ticket) previewing.value = false
+  }
+}
+
+/** Without WebGL the page falls back to a picture the native side renders. */
+const previewUrl = ref('')
 let timer: ReturnType<typeof setTimeout> | undefined
 watch([() => ({ ...c }), () => s.preset], () => {
+  if (s.discRendered) return
   clearTimeout(timer)
-  timer = setTimeout(refreshPreview, 120)
+  timer = setTimeout(refreshFallback, 120)
 })
-async function refreshPreview() {
+async function refreshFallback() {
   if (!c.sourceImagePath || !s.preset) return
   const mine = ++ticket
   previewing.value = true
   try {
-    const url = await call<string>('simulate_disc_preview', {
-      config: { ...c, preset: s.preset },
-      previewSize: 1024,
-    })
-    if (mine === ticket) previewUrl.value = s.discArt = url
+    const url = await call<string>('simulate_disc_preview', { config: { ...c, preset: s.preset }, previewSize: 1024 })
+    if (mine === ticket) previewUrl.value = url
   } catch (e) {
     notifyError(String(e))
   } finally {

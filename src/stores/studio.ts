@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { call, CANCELLED } from '../api'
 import { notifyError } from '../notices'
+import type { ArtField } from '../discRenderer'
 import type { CarveJobConfig, DiscGeometryPreset, OpticalDriveInfo } from '../types'
 
 export type View = 'home' | 'models' | 'calibrate' | 'carve' | 'process'
@@ -27,8 +28,8 @@ export const useStudio = defineStore('studio', () => {
   const pendingCode = ref('')
   /** A result being pointed at: the disc previews it before anything is chosen. */
   const discPreview = shallowRef<DiscGeometryPreset | null>(null)
-  /** The carve preview, shown on the disc itself. */
-  const discArt = ref('')
+  /** The picture being carved, drawn on the disc itself; DiscStage places it from `config`. */
+  const discArt = shallowRef<ArtField | null>(null)
   const discZoom = ref(1)
   const discPan = ref({ x: 0, y: 0 })
   /** The code field has focus: the disc comes forward and aims at its stamped code. */

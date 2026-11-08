@@ -121,6 +121,32 @@ mod tests {
         assert_eq!(px(186, 128), 255, "right is white");
     }
 
+    /// The live preview in discRenderer.ts skips the spiral: with one geometry on both
+    /// sides, tracing a point to its channel bit and back lands where it started, so the
+    /// picture is just rotated, shifted and scaled onto the disc. This pins that down.
+    #[test]
+    fn same_geometry_is_a_plain_placement() {
+        let s = Spiral::new(reference_preset().spiral_params()).unwrap();
+        let field = GrayField { size: 64, data: (0..64 * 64).map(|i| ((i * 37) % 251) as u8).collect() };
+        let (rot, ox, oy, k): (f64, f64, f64, f64) = (0.7, 0.12, -0.08, 1.3);
+        let p = PreviewInput { design: &s, actual: &s, field: &field, rotation_rad: rot, offset_x: ox, offset_y: oy, scale: k, min_luma: 0.0, size: 0 };
+        let (du, dv) = (ox * rot.cos() + oy * rot.sin(), -ox * rot.sin() + oy * rot.cos());
+        let ro2 = 2.0 * s.params.ro;
+        let mut checked = 0;
+        for i in 0..400 {
+            let r = s.params.ri + 0.2 + (s.params.ro - s.params.ri - 0.4) * (i as f64 / 399.0);
+            let phi = i as f64 * 2.399;
+            let traced = trace(&p, r, phi, du, dv).unwrap();
+            // What the shader does: undo the rotation, then the shift and the scale.
+            let (x, y) = (r * phi.cos() / ro2, r * phi.sin() / ro2);
+            let (qx, qy) = (rot.cos() * x + rot.sin() * y, -rot.sin() * x + rot.cos() * y);
+            let direct = field.bilinear((qx - du) / k + 0.5, (qy - dv) / k + 0.5);
+            assert!((traced - direct).abs() < 2.0, "r={r} phi={phi}: {traced} vs {direct}");
+            checked += 1;
+        }
+        assert_eq!(checked, 400);
+    }
+
     #[test]
     fn wrong_stamper_distorts() {
         let s = Spiral::new(reference_preset().spiral_params()).unwrap();

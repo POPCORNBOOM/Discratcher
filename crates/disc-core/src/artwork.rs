@@ -85,6 +85,36 @@ fn contrast_lut(contrast: f32, invert: bool) -> [u8; 256] {
 
 /// Load `path` onto a square raster of `size`, or the source's own long edge when `None`.
 pub fn load_field(path: &Path, crop: CropMode, size: Option<u32>, contrast: f32, invert: bool) -> Result<GrayField, String> {
+    let (s, ox, oy, rgba) = placed(path, crop, size)?;
+    let lut = contrast_lut(contrast, invert);
+    // Letterbox stays light whatever `invert` says: it must not add write load.
+    let mut data = vec![255u8; s * s];
+    for (x, y, p) in rgba.enumerate_pixels() {
+        data[(y + oy) as usize * s + (x + ox) as usize] = lut[composite_luma(p.0) as usize];
+    }
+    Ok(GrayField { size: s, data })
+}
+
+/// The field before tone, for the live preview: two bytes per pixel, luma then 255 where
+/// the picture is and 0 in the letterbox. The preview applies contrast, invert and the
+/// guard's floor itself, the way `load_field` and the carver do.
+pub fn preview_texture(path: &Path, crop: CropMode, size: u32) -> Result<Vec<u8>, String> {
+    let (s, ox, oy, rgba) = placed(path, crop, Some(size))?;
+    let mut data = vec![0u8; s * s * 2];
+    for i in 0..s * s {
+        data[i * 2] = 255;
+    }
+    for (x, y, p) in rgba.enumerate_pixels() {
+        let i = ((y + oy) as usize * s + (x + ox) as usize) * 2;
+        data[i] = composite_luma(p.0);
+        data[i + 1] = 255;
+    }
+    Ok(data)
+}
+
+/// The picture cropped and scaled for a square raster: its edge, the offset of the
+/// picture inside it, and the picture's pixels.
+fn placed(path: &Path, crop: CropMode, size: Option<u32>) -> Result<(usize, u32, u32, image::RgbaImage), String> {
     let img = image::open(path).map_err(|e| format!("无法读取图像 {}：{e}", path.display()))?;
     let (w, h) = img.dimensions();
     if w == 0 || h == 0 {
@@ -108,16 +138,7 @@ pub fn load_field(path: &Path, crop: CropMode, size: Option<u32>, contrast: f32,
         _ => (s, s),
     };
     let scaled = if (tw, th) == (cw, ch) { cropped } else { cropped.resize_exact(tw, th, filter) };
-    let (ox, oy) = ((s - tw) / 2, (s - th) / 2);
-    let s = s as usize;
-    let lut = contrast_lut(contrast, invert);
-    // Letterbox stays light whatever `invert` says: it must not add write load.
-    let mut data = vec![255u8; s * s];
-    let rgba = scaled.to_rgba8();
-    for (x, y, p) in rgba.enumerate_pixels() {
-        data[(y + oy) as usize * s + (x + ox) as usize] = lut[composite_luma(p.0) as usize];
-    }
-    Ok(GrayField { size: s, data })
+    Ok((s as usize, (s - tw) / 2, (s - th) / 2, scaled.to_rgba8()))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -218,6 +239,16 @@ mod tests {
         assert!((u - (0.5 - 0.1)).abs() < 1e-12);
         // A zero or nonsensical scale falls back to 1 instead of exploding.
         assert_eq!(to_field(0.2, 0.0, 0.0, 0.0, 0.0), (0.7, 0.5));
+    }
+
+    #[test]
+    fn preview_texture_marks_the_letterbox() {
+        let d = tmp("texture");
+        let p = write_png(&d, "a.png", 32, 16, |_, _| [0, 0, 0, 255]);
+        let t = preview_texture(&p, CropMode::Fit, 32).unwrap();
+        assert_eq!(t.len(), 32 * 32 * 2);
+        assert_eq!((t[0], t[1]), (255, 0), "letterbox");
+        assert_eq!((t[32 * 16 * 2], t[32 * 16 * 2 + 1]), (0, 255), "picture");
     }
 
     #[test]
