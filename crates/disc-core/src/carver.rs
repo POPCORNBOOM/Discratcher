@@ -1,6 +1,6 @@
 //! ISO synthesis: spiral sampling, servo-safe dithering, scrambler XOR.
 
-use crate::artwork::{load_field, to_field, CropMode, GrayField};
+use crate::artwork::{Composition, Layer};
 use crate::ecma267::*;
 use crate::preset::DiscGeometryPreset;
 use crate::spiral::Spiral;
@@ -21,26 +21,12 @@ pub const MAX_SECTOR_DARK_LIMIT: f64 = 0.70;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CarveJobConfig {
-    pub source_image_path: String,
+    /// Bottom first.
+    pub layers: Vec<Layer>,
     pub output_iso_path: String,
     pub preset: DiscGeometryPreset,
-    pub invert_image: bool,
-    pub rotation_deg: f64,
-    pub crop_mode: CropMode,
-    pub contrast: f32,
     pub servo_safe_dither: bool,
     pub max_dark_duty_cycle: f64,
-    #[serde(default)]
-    pub offset_x: f64,
-    #[serde(default)]
-    pub offset_y: f64,
-    /// Image scale about the disc centre; the custom crop mode drives this.
-    #[serde(default = "one")]
-    pub scale: f64,
-}
-
-fn one() -> f64 {
-    1.0
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -59,12 +45,8 @@ impl Tone {
 
 pub struct CarveCtx<'a> {
     pub spiral: &'a Spiral,
-    pub field: &'a GrayField,
+    pub art: &'a Composition,
     pub lut: &'a ScramblerLut,
-    pub rotation_rad: f64,
-    pub offset_u_rot: f64,
-    pub offset_v_rot: f64,
-    pub scale: f64,
     pub tone: Tone,
 }
 
@@ -95,16 +77,14 @@ fn sector_bytes(ctx: &CarveCtx, lba: u32, acc: &mut f32, out: &mut [u8]) {
     let ro2 = 2.0 * ctx.spiral.params.ro;
     // Phasor stepping: the angle moves a fraction of a radian per sector, and this loop
     // runs billions of times on a full disc, so no sin/cos per sample.
-    let start = th0 - ctx.rotation_rad;
-    let (mut s, mut c) = start.sin_cos();
+    let (mut s, mut c) = th0.sin_cos();
     let (ds, dc) = dth.sin_cos();
     let Tone { servo_safe, min_luma } = ctx.tone;
     for (i, chunk) in out.chunks_exact_mut(SAMPLE_EVERY_BYTES).enumerate() {
         let r = r0 + i as f64 * dr;
-        // Scale first, then rotation, then position: the offset is not multiplied by the zoom.
-        let (u, v) = to_field(r * c / ro2, r * s / ro2, ctx.offset_u_rot, ctx.offset_v_rot, ctx.scale);
+        let grey = ctx.art.sample(r * c / ro2, r * s / ro2);
         if servo_safe {
-            let p = ctx.field.bilinear(u, v).max(min_luma) / 255.0;
+            let p = grey.max(min_luma) / 255.0;
             for b in chunk {
                 *acc += p;
                 let white = *acc >= 0.5;
@@ -114,7 +94,7 @@ fn sector_bytes(ctx: &CarveCtx, lba: u32, acc: &mut f32, out: &mut [u8]) {
                 *b = if white { LIGHT_BYTE } else { DARK_BYTE };
             }
         } else {
-            let q = if ctx.field.nearest(u, v) >= 128 { LIGHT_BYTE } else { DARK_BYTE };
+            let q = if grey >= 128.0 { LIGHT_BYTE } else { DARK_BYTE };
             chunk.fill(q);
         }
         let (ns, nc) = (s * dc + c * ds, c * dc - s * ds);
@@ -231,20 +211,17 @@ pub fn build_iso(
     progress: &(dyn Fn(CarveProgress) + Sync),
 ) -> Result<CarveJobSummary, String> {
     let spiral = Spiral::new(cfg.preset.spiral_params())?;
-    let field = load_field(
-        Path::new(&cfg.source_image_path),
-        cfg.crop_mode,
-        None,
-        cfg.contrast,
-        cfg.invert_image,
-    )?;
-    build_iso_from_field(cfg, &spiral, &field, cancel, progress)
+    if cfg.layers.is_empty() {
+        return Err("没有图像".into());
+    }
+    let art = Composition::load(&cfg.layers, None)?;
+    build_iso_from(cfg, &spiral, &art, cancel, progress)
 }
 
-pub fn build_iso_from_field(
+pub fn build_iso_from(
     cfg: &CarveJobConfig,
     spiral: &Spiral,
-    field: &GrayField,
+    art: &Composition,
     cancel: &AtomicBool,
     progress: &(dyn Fn(CarveProgress) + Sync),
 ) -> Result<CarveJobSummary, String> {
@@ -254,21 +231,7 @@ pub fn build_iso_from_field(
     }
     let lut = build_scrambler_lut();
     let tone = Tone::from_duty(cfg.servo_safe_dither, cfg.max_dark_duty_cycle);
-    let (rot_sin, rot_cos) = cfg.rotation_deg.to_radians().sin_cos();
-    let off_u = cfg.offset_x / 100.0;
-    let off_v = cfg.offset_y / 100.0;
-    let offset_u_rot = off_u * rot_cos + off_v * rot_sin;
-    let offset_v_rot = -off_u * rot_sin + off_v * rot_cos;
-    let ctx = CarveCtx {
-        spiral,
-        field,
-        lut: &lut,
-        rotation_rad: cfg.rotation_deg.to_radians(),
-        offset_u_rot,
-        offset_v_rot,
-        scale: cfg.scale,
-        tone,
-    };
+    let ctx = CarveCtx { spiral, art, lut: &lut, tone };
     let bytes = total as u64 * SECTOR_BYTES as u64;
     let path = Path::new(&cfg.output_iso_path);
     let mut map = create_mapped(path, bytes)?;
@@ -367,10 +330,17 @@ pub fn audit_iso(path: &Path) -> Result<IsoAudit, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::artwork::Picture;
     use crate::preset::reference_preset;
+    use std::sync::Arc;
 
-    fn ctx_parts(field: GrayField) -> (Spiral, GrayField, Box<ScramblerLut>) {
-        (Spiral::new(reference_preset().spiral_params()).unwrap(), field, build_scrambler_lut())
+    fn ctx_parts(art: Composition) -> (Spiral, Composition, Box<ScramblerLut>) {
+        (Spiral::new(reference_preset().spiral_params()).unwrap(), art, build_scrambler_lut())
+    }
+
+    /// A 4×4 grey picture covering the disc.
+    fn flat(data: Vec<u8>) -> Composition {
+        crate::artwork::tests::whole(Picture::from_luma(4, 4, data))
     }
 
     fn safe() -> Tone {
@@ -387,9 +357,12 @@ mod tests {
     /// and no long uninterrupted dark run may survive.
     #[test]
     fn offset_shifts_carved_pixels() {
-        let (spiral, field, lut) = ctx_parts(GrayField { size: 4, data: vec![0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255] });
-        let ctx_center = CarveCtx { spiral: &spiral, field: &field, lut: &lut, rotation_rad: 0.0, offset_u_rot: 0.0, offset_v_rot: 0.0, scale: 1.0, tone: safe() };
-        let ctx_shifted = CarveCtx { spiral: &spiral, field: &field, lut: &lut, rotation_rad: 0.0, offset_u_rot: 0.2, offset_v_rot: 0.0, scale: 1.0, tone: safe() };
+        let half = Arc::new(Picture::from_luma(4, 4, vec![0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255]));
+        let at = |x| Composition::new([(Layer { path: String::new(), x, y: 0.0, size: 1.0, rotation_deg: 0.0, invert: false, contrast: 0.0 }, half.clone())]);
+        let (spiral, centred, lut) = ctx_parts(at(0.0));
+        let shifted = at(0.2);
+        let ctx_center = CarveCtx { spiral: &spiral, art: &centred, lut: &lut, tone: safe() };
+        let ctx_shifted = CarveCtx { spiral: &spiral, art: &shifted, lut: &lut, tone: safe() };
         let mut buf1 = vec![0u8; ECC_BLOCK_BYTES];
         let mut buf2 = vec![0u8; ECC_BLOCK_BYTES];
         let st1 = carve_block(&ctx_center, 100_000, &mut buf1);
@@ -400,8 +373,8 @@ mod tests {
 
     #[test]
     fn pure_black_stays_under_servo_limit() {
-        let (spiral, field, lut) = ctx_parts(GrayField { size: 4, data: vec![0; 16] });
-        let ctx = CarveCtx { spiral: &spiral, field: &field, lut: &lut, rotation_rad: 0.0, offset_u_rot: 0.0, offset_v_rot: 0.0, scale: 1.0, tone: safe() };
+        let (spiral, field, lut) = ctx_parts(flat(vec![0; 16]));
+        let ctx = CarveCtx { spiral: &spiral, art: &field, lut: &lut, tone: safe() };
         let mut buf = vec![0u8; ECC_BLOCK_BYTES];
         for block in [100_000u32, 100_001, 123_456] {
             let st = carve_block(&ctx, block, &mut buf);
@@ -414,9 +387,9 @@ mod tests {
 
     #[test]
     fn without_guard_black_reaches_full_duty() {
-        let (spiral, field, lut) = ctx_parts(GrayField { size: 4, data: vec![0; 16] });
+        let (spiral, field, lut) = ctx_parts(flat(vec![0; 16]));
         let tone = Tone::from_duty(false, 0.65);
-        let ctx = CarveCtx { spiral: &spiral, field: &field, lut: &lut, rotation_rad: 0.0, offset_u_rot: 0.0, offset_v_rot: 0.0, scale: 1.0, tone };
+        let ctx = CarveCtx { spiral: &spiral, art: &field, lut: &lut, tone };
         let mut buf = vec![0u8; ECC_BLOCK_BYTES];
         let st = carve_block(&ctx, 100_000, &mut buf);
         assert!(st.max_sector_dark >= 2040);
@@ -424,12 +397,12 @@ mod tests {
 
     #[test]
     fn white_stays_all_light_and_mean_tracks_gray() {
-        let (spiral, white, lut) = ctx_parts(GrayField { size: 4, data: vec![255; 16] });
-        let ctx = CarveCtx { spiral: &spiral, field: &white, lut: &lut, rotation_rad: 0.0, offset_u_rot: 0.0, offset_v_rot: 0.0, scale: 1.0, tone: safe() };
+        let (spiral, white, lut) = ctx_parts(flat(vec![255; 16]));
+        let ctx = CarveCtx { spiral: &spiral, art: &white, lut: &lut, tone: safe() };
         let mut buf = vec![0u8; ECC_BLOCK_BYTES];
         assert_eq!(carve_block(&ctx, 90_000, &mut buf).dark_bytes, 0);
-        let gray = GrayField { size: 4, data: vec![191; 16] };
-        let ctx = CarveCtx { spiral: &spiral, field: &gray, lut: &lut, rotation_rad: 0.0, offset_u_rot: 0.0, offset_v_rot: 0.0, scale: 1.0, tone: safe() };
+        let gray = flat(vec![191; 16]);
+        let ctx = CarveCtx { spiral: &spiral, art: &gray, lut: &lut, tone: safe() };
         let st = carve_block(&ctx, 90_000, &mut buf);
         let share = st.dark_bytes as f64 / ECC_BLOCK_BYTES as f64;
         assert!((share - 0.25).abs() < 0.01, "{share}");
@@ -440,16 +413,15 @@ mod tests {
     #[test]
     fn accepts_front_end_config_json() {
         let cfg: CarveJobConfig = serde_json::from_str(
-            r#"{"sourceImagePath":"/a.png","outputIsoPath":"/a.iso","invertImage":true,"rotationDeg":1.5,
-            "cropMode":"square-center","contrast":0,"servoSafeDither":true,"maxDarkDutyCycle":0.65,
+            r#"{"layers":[{"id":"a","path":"/a.png","x":0,"y":0,"size":1,"rotationDeg":1.5,"invert":true,"contrast":0,"width":4,"height":4}],
+            "outputIsoPath":"/a.iso","servoSafeDither":true,"maxDarkDutyCycle":0.65,
             "preset":{"id":"x","name":"n","driveModel":"","mediaId":"","stamperCode":"","totalSectors":2295104,
             "channelBitLengthNm":133.3,"innerRadiusMm":24.1,"outerRadiusMm":57.9,"pitchLinear":0,
             "pitchQuadratic":0,"pitchCubic":0,"basePitchUm":0.73,"rmsResidualDeg":0.4,
             "measuredSpanMm":[25.2,56.9],"createdAt":""}}"#,
         )
         .unwrap();
-        assert_eq!(cfg.crop_mode, CropMode::SquareCenter);
-        assert_eq!(cfg.scale, 1.0, "an older config without a scale still carves at 100%");
+        assert_eq!(cfg.layers[0].rotation_deg, 1.5);
         assert_eq!(cfg.preset.measured_span_mm, (25.2, 56.9));
         let back = serde_json::to_value(&reference_preset()).unwrap();
         assert!(back.get("basePitchUm").is_some() && back["measuredSpanMm"].is_array());
@@ -464,22 +436,9 @@ mod tests {
         let mut preset = reference_preset().clone();
         preset.total_sectors = 16 * 400;
         let spiral = Spiral::new(preset.spiral_params()).unwrap();
-        let field = GrayField { size: 2, data: vec![0, 255, 255, 0] };
-        let cfg = CarveJobConfig {
-            source_image_path: String::new(),
-            output_iso_path: out.to_string_lossy().into(),
-            preset,
-            invert_image: false,
-            rotation_deg: 0.0,
-            crop_mode: CropMode::SquareCenter,
-            contrast: 0.0,
-            servo_safe_dither: true,
-            max_dark_duty_cycle: 0.65,
-            offset_x: 0.0,
-            offset_y: 0.0,
-            scale: 1.0,
-        };
-        let s = build_iso_from_field(&cfg, &spiral, &field, &AtomicBool::new(false), &|_| {}).unwrap();
+        let art = crate::artwork::tests::whole(Picture::from_luma(2, 2, vec![0, 255, 255, 0]));
+        let cfg = CarveJobConfig { layers: Vec::new(), output_iso_path: out.to_string_lossy().into(), preset, servo_safe_dither: true, max_dark_duty_cycle: 0.65 };
+        let s = build_iso_from(&cfg, &spiral, &art, &AtomicBool::new(false), &|_| {}).unwrap();
         assert!(s.limit_ok);
         let a = audit_iso(&out).unwrap();
         assert_eq!(a.foreign_bytes, 0);
@@ -496,9 +455,11 @@ mod tests {
         let Some(root) = crate::probe_root() else { return };
         let (iso, art) = (root.join("carved_artwork.iso"), root.join("artwork_safe_dither.png"));
         let Ok(mut f) = std::fs::File::open(&iso) else { return };
-        let field = crate::artwork::load_field(&art, CropMode::SquareCenter, None, 0.0, false).unwrap();
-        let (spiral, field, lut) = ctx_parts(field);
-        let ctx = CarveCtx { spiral: &spiral, field: &field, lut: &lut, rotation_rad: 0.0, offset_u_rot: 0.0, offset_v_rot: 0.0, scale: 1.0, tone: Tone::from_duty(false, 0.65) };
+        // The source is square and was carved filling the disc.
+        let picture = Picture::load(&art, None).unwrap();
+        assert_eq!(picture.width, picture.height);
+        let (spiral, field, lut) = ctx_parts(crate::artwork::tests::whole(picture));
+        let ctx = CarveCtx { spiral: &spiral, art: &field, lut: &lut, tone: Tone::from_duty(false, 0.65) };
         use std::io::{Read, Seek, SeekFrom};
         let (mut mine, mut theirs) = (Vec::new(), Vec::new());
         let mut a = vec![0u8; ECC_BLOCK_BYTES];

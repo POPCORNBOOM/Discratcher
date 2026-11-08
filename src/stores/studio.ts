@@ -2,16 +2,21 @@ import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { call, CANCELLED } from '../api'
 import { notifyError } from '../notices'
-import type { ArtField } from '../discRenderer'
-import type { CarveJobConfig, DiscGeometryPreset, OpticalDriveInfo } from '../types'
+import { useComposition } from './composition'
+import type { DiscGeometryPreset, OpticalDriveInfo } from '../types'
 
 export type View = 'home' | 'models' | 'calibrate' | 'carve' | 'process'
 
 /** What the menu bar can ask of the carve page. */
 export interface CarveCommands {
+  /** Adds a picture to the composition. */
   choose: () => void
   exportIso: () => void
   burn: () => void
+  newComposition: () => void
+  openComposition: () => void
+  save: () => void
+  saveAs: () => void
 }
 
 export const useStudio = defineStore('studio', () => {
@@ -28,8 +33,6 @@ export const useStudio = defineStore('studio', () => {
   const pendingCode = ref('')
   /** A result being pointed at: the disc previews it before anything is chosen. */
   const discPreview = shallowRef<DiscGeometryPreset | null>(null)
-  /** The picture being carved, drawn on the disc itself; DiscStage places it from `config`. */
-  const discArt = shallowRef<ArtField | null>(null)
   const discZoom = ref(1)
   const discPan = ref({ x: 0, y: 0 })
   /** The code field has focus: the disc comes forward and aims at its stamped code. */
@@ -40,18 +43,10 @@ export const useStudio = defineStore('studio', () => {
   const drive = computed(() => drives.value.find((d) => keyOf(d) === driveKey.value) ?? null)
   const preset = computed(() => presets.value.find((p) => p.id === presetId.value) ?? presets.value[0] ?? null)
 
+  /** The burn settings; the pictures live in the composition store. */
   const config = ref({
-    sourceImagePath: '',
-    outputIsoPath: '',
-    invertImage: false,
-    rotationDeg: 0,
-    cropMode: 'square-center' as CarveJobConfig['cropMode'],
-    contrast: 0,
     servoSafeDither: true,
     maxDarkDutyCycle: 0.65,
-    offsetX: 0,
-    offsetY: 0,
-    scale: 1,
   })
 
   // A disc whose MID names exactly one configuration needs no choosing.
@@ -63,7 +58,8 @@ export const useStudio = defineStore('studio', () => {
     },
   )
 
-  const carveReady = computed(() => !!config.value.sourceImagePath && !!preset.value && !job.value)
+  const composition = useComposition()
+  const carveReady = computed(() => composition.layers.length > 0 && !!preset.value && !job.value)
 
   // Every route into a page is recorded, so one back button serves the whole app.
   const trail = ref<View[]>([])
@@ -123,5 +119,5 @@ export const useStudio = defineStore('studio', () => {
     }
   }
 
-  return { view, drives, presets, driveKey, presetId, drive, preset, config, error, job, carve, carveReady, canBack, origin, back, pendingCode, discPreview, discArt, discZoom, discPan, discRendered, codeFocus, keyOf, refreshDrives, refreshPresets, run }
+  return { view, drives, presets, driveKey, presetId, drive, preset, config, error, job, carve, carveReady, canBack, origin, back, pendingCode, discPreview, discZoom, discPan, discRendered, codeFocus, keyOf, refreshDrives, refreshPresets, run }
 })

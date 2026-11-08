@@ -42,6 +42,8 @@ export interface ProcessRequest {
   onBurned?: () => void
   cleanup?: () => Promise<unknown>
   onDone?: () => void
+  /** The step that writes the composition: as it runs, the picture appears on the disc. */
+  revealStep?: number
 }
 
 export interface BurnPlan {
@@ -55,6 +57,8 @@ export interface BurnPlan {
   shareable?: DiscGeometryPreset
   onBurned?: () => void
   onDone?: () => void
+  /** Show the composition growing on the disc while it burns. */
+  reveal?: boolean
 }
 
 /** The one screen every long job runs on, so it looks and stops the same everywhere. */
@@ -69,6 +73,8 @@ export const useProcess = defineStore('process', () => {
   const stopping = ref(false)
   /** The finished job really wrote a disc: a test burn or the virtual drive does not count. */
   const burned = ref(false)
+  /** Share of the disc written so far, 0 to 1; never goes back, like the dye. */
+  const written = ref(0)
   const burnSettings = reactive({ speed: 4, verify: false, testOnly: false })
   /** A question a running step cannot answer itself; the page renders it as a dialog. */
   const pendingAsk = ref<{ question: string; accept: string } | null>(null)
@@ -103,6 +109,7 @@ export const useProcess = defineStore('process', () => {
   function report(p: number | null, m?: string) {
     if (status.value !== 'running') return
     if (p != null) percent.value = p
+    if (p != null && stepIndex.value === request.value?.revealStep) written.value = Math.max(written.value, Math.min(1, p / 100))
     if (m) message.value = m
     publish()
   }
@@ -119,6 +126,7 @@ export const useProcess = defineStore('process', () => {
     failure.value = ''
     pendingAsk.value = null
     burned.value = false
+    written.value = 0
     s.view = 'process'
     if (!req.writes) void start()
   }
@@ -135,6 +143,7 @@ export const useProcess = defineStore('process', () => {
       rateIssue: plan.rateIssue,
       shareable: plan.shareable,
       onBurned: plan.onBurned,
+      revealStep: plan.reveal ? 1 : undefined,
       cleanup: () => (path ? call('remove_cached_iso', { path }) : Promise.resolve()),
       steps: [
         {
@@ -186,6 +195,7 @@ export const useProcess = defineStore('process', () => {
       notifySuccess(req.doneMessage ?? t('process.doneSuffix', { title: req.title }))
       status.value = 'done'
       percent.value = 100
+      if (req.revealStep != null) written.value = 1
       message.value = req.doneMessage ?? t('process.finished')
       if (req.autoClose || s.view !== 'process') close()
       burned.value = wrote && real
@@ -217,5 +227,5 @@ export const useProcess = defineStore('process', () => {
     on<BurnProgress>('burn://progress', (p) => report(p.percent, p.message))
   }
 
-  return { request, burned, status, stepIndex, percent, message, failure, stopping, burnSettings, dangerous, totalSeconds, stepSeconds, laterSeconds, open, openBurn, start, stop, close, listen, pendingAsk, answerAsk }
+  return { request, burned, written, status, stepIndex, percent, message, failure, stopping, burnSettings, dangerous, totalSeconds, stepSeconds, laterSeconds, open, openBurn, start, stop, close, listen, pendingAsk, answerAsk }
 })

@@ -8,8 +8,9 @@
 // The one disc in the app. It sits under every page; each page only says where it wants
 // the disc to be, and the disc travels there.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { lookOf } from '../discLook'
-import { createDiscRenderer, NO_ART, type ArtPlacement, type DiscState } from '../discRenderer'
+import { CARVE_FIT, lookOf } from '../discLook'
+import { createDiscRenderer, MAX_LAYERS, NO_ART, type ArtPlacement, type DiscState } from '../discRenderer'
+import { useComposition } from '../stores/composition'
 import { useProcess } from '../stores/process'
 import { useStudio } from '../stores/studio'
 
@@ -36,13 +37,15 @@ const IDLE_SPIN = 0.09
 const BURN_SPIN = 1.6
 /** Travelling across the window rolls the disc, like something with mass. */
 const ROLL_PER_UNIT = 0.9
-/** Room left round the disc on the carve page, as a share of the free height. */
-const CARVE_FIT = 0.94
+/** On the carve page the disc follows pan and zoom at once after arriving, so the
+ *  handles drawn over it stay on the picture. */
+const CARVE_SETTLE_MS = 700
 /** A blank disc on the carve page keeps a hint of light; a loaded image gets none. */
 const CARVE_FX = 0.25
 
 const s = useStudio()
 const process = useProcess()
+const comp = useComposition()
 const canvas = ref<HTMLCanvasElement | null>(null)
 const look = computed(() => lookOf(s.discPreview ?? s.preset))
 
@@ -92,25 +95,40 @@ function updateLens() {
   lensRenderer.draw({ ...state, etchMix: 0, window: [(cx - box.width / 2) / unit, -(cy - box.height / 2) / unit, (LENS_FRAME * radius) / unit] })
 }
 
+/** The layers the disc has pictures for, bottom first: the order setArt was given. */
+const shownLayers = computed(() => comp.layers.filter((l) => comp.fields.has(l.path)).slice(0, MAX_LAYERS))
+
 /** The carve settings as the carver reads them, so the disc can follow every change at once. */
 function placement(): ArtPlacement {
-  const c = s.config
   const p = s.preset
   if (!p) return NO_ART
+  // A burn writes from the hub outwards at an even density, so written area tracks progress.
+  const burning = revealing()
+  const [ri, ro] = [p.innerRadiusMm, p.outerRadiusMm]
+  const revealMm = burning ? (process.written > 0 ? Math.sqrt(ri * ri + process.written * (ro * ro - ri * ri)) : 0) : 100
   // Tone::from_duty in carver.rs.
-  const duty = Math.min(0.85, Math.max(0.5, c.maxDarkDutyCycle))
+  const duty = Math.min(0.85, Math.max(0.5, s.config.maxDarkDutyCycle))
   return {
     innerMm: p.innerRadiusMm,
     outerMm: p.outerRadiusMm,
-    rotationRad: (c.rotationDeg * Math.PI) / 180,
-    scale: c.scale,
-    shiftX: c.offsetX / 100,
-    shiftY: c.offsetY / 100,
-    contrast: c.contrast,
-    invert: c.invertImage,
-    floor: c.servoSafeDither ? Math.round(255 * (1 - duty)) / 255 : 0,
+    floor: s.config.servoSafeDither ? Math.round(255 * (1 - duty)) / 255 : 0,
+    layers: shownLayers.value.map((l) => {
+      const long = Math.max(l.width, l.height, 1)
+      return { x: l.x, y: l.y, width: (l.size * l.width) / long, height: (l.size * l.height) / long, rotationRad: (l.rotationDeg * Math.PI) / 180, contrast: l.contrast, invert: l.invert }
+    }),
+    turn: burning ? state.spin - spinAtBurn : 0,
+    revealMm,
   }
 }
+
+/** The burn page is writing this composition, so it shows on the spinning disc. */
+const revealing = () => s.view === 'process' && process.request?.revealStep != null
+let spinAtBurn = 0
+watch(revealing, (on) => on && (spinAtBurn = state.spin))
+
+let carveSince = 0
+watch(() => s.view, (v) => v === 'carve' && (carveSince = performance.now()))
+const hasArt = computed(() => shownLayers.value.length > 0)
 
 function carvePose(fallback: Pose): Pose {
   const box = canvas.value!.getBoundingClientRect()
@@ -124,8 +142,8 @@ function carvePose(fallback: Pose): Pose {
     tiltX: 0,
     tiltY: 0,
     dim: 1,
-    fx: s.discArt ? 0 : CARVE_FX,
-    lean: s.discArt ? 0 : 0.05,
+    fx: hasArt.value ? 0 : CARVE_FX,
+    lean: hasArt.value ? 0 : 0.05,
     spin: 0,
   }
 }
@@ -158,16 +176,18 @@ function advance(now: number, dt: number) {
   const box = canvas.value!.getBoundingClientRect()
   const pose = poseFor(box.width / Math.max(box.height, 1))
   // Frame-rate independent, so the glide feels the same on any display.
+  const settled = s.view === 'carve' && now - carveSince > CARVE_SETTLE_MS
   const k = 1 - Math.exp(-dt * POSE_RATE)
+  const kPlace = settled ? 1 : k
   const kLook = 1 - Math.exp(-dt * LOOK_RATE)
   const kArt = 1 - Math.exp(-dt * ART_RATE)
   const kSpin = 1 - Math.exp(-dt * SPIN_RATE)
 
-  const dx = (pose.x - state.x) * k
-  const dy = (pose.y - state.y) * k
+  const dx = (pose.x - state.x) * kPlace
+  const dy = (pose.y - state.y) * kPlace
   state.x += dx
   state.y += dy
-  state.scale += (pose.scale - state.scale) * k
+  state.scale += (pose.scale - state.scale) * kPlace
   state.dim += (pose.dim - state.dim) * k
   state.fx += (pose.fx - state.fx) * k
 
@@ -188,7 +208,7 @@ function advance(now: number, dt: number) {
   state.pitch += (l.pitch - state.pitch) * kLook
   state.seed += (l.seed - state.seed) * kLook
   state.art = placement()
-  state.artMix += ((s.discArt && s.view === 'carve' ? 1 : 0) - state.artMix) * kArt
+  state.artMix += ((hasArt.value && (s.view === 'carve' || revealing()) ? 1 : 0) - state.artMix) * kArt
   lensMix += ((lensWanted() ? 1 : 0) - lensMix) * (1 - Math.exp(-dt * LENS_RATE))
   if (fading) {
     state.etchMix += (1 - state.etchMix) * kLook
@@ -228,9 +248,8 @@ watch(() => look.value.code, (code) => {
   snap()
 })
 
-watch(() => s.discArt, (field) => {
-  if (!field) return
-  renderer?.setArt(field)
+watch(() => shownLayers.value.map((l) => l.path).join('\n') + comp.fields.size, () => {
+  renderer?.setArt(shownLayers.value.map((l) => comp.fields.get(l.path)!))
   snap()
 })
 

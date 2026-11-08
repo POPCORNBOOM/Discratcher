@@ -1,67 +1,181 @@
-//! Source image handling: load, map onto the disc square, tone adjust, analyse.
+//! Source pictures: load, lay them out on the disc as layers, analyse.
+//!
+//! Positions are shares of the disc's diameter measured from its centre, with y pointing
+//! down, so (0, 0) is the hub and ±0.5 the outer rim. The live preview in discRenderer.ts
+//! reads layers the same way; keep the two in step.
 
 use base64::Engine;
 use image::{imageops::FilterType, GenericImageView};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use std::path::Path;
+use std::sync::Arc;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum CropMode {
-    #[default]
-    SquareCenter,
-    Stretch,
-    Fit,
-    /// Fit, then let the user place and scale the picture themselves.
-    Custom,
+/// One picture placed on the disc. Layers are listed bottom first.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Layer {
+    pub path: String,
+    /// Centre, as a share of the diameter from the disc centre; y points down.
+    pub x: f64,
+    pub y: f64,
+    /// Long edge as a share of the diameter.
+    pub size: f64,
+    /// Clockwise as seen on screen.
+    pub rotation_deg: f64,
+    #[serde(default)]
+    pub invert: bool,
+    /// -100 ..= 100.
+    #[serde(default)]
+    pub contrast: f32,
 }
 
-/// Square grayscale raster covering the disc diameter. 255 is the light tone.
+/// A decoded picture: luma and coverage per pixel, rows top first.
 #[derive(Clone, Debug)]
-pub struct GrayField {
-    pub size: usize,
-    pub data: Vec<u8>,
+pub struct Picture {
+    pub width: usize,
+    pub height: usize,
+    pub luma: Vec<u8>,
+    pub alpha: Vec<u8>,
 }
 
-impl GrayField {
-    /// Nearest neighbour; `u`, `v` in [0, 1). Outside the raster is light.
-    #[inline]
-    pub fn nearest(&self, u: f64, v: f64) -> u8 {
-        let (x, y) = (u * self.size as f64, v * self.size as f64);
-        if x < 0.0 || y < 0.0 || x >= self.size as f64 || y >= self.size as f64 {
-            return 255;
+impl Picture {
+    /// `max_edge` caps the long edge; `None` keeps the source size.
+    pub fn load(path: &Path, max_edge: Option<u32>) -> Result<Self, String> {
+        let img = image::open(path).map_err(|e| format!("无法读取图像 {}：{e}", path.display()))?;
+        let (w, h) = img.dimensions();
+        if w == 0 || h == 0 {
+            return Err("图像是空的".into());
         }
-        self.data[y as usize * self.size + x as usize]
+        let img = match max_edge {
+            Some(m) if w.max(h) > m => img.resize(m, m, FilterType::Triangle),
+            _ => img,
+        };
+        Ok(Self::from_rgba(&img.to_rgba8()))
     }
 
-    /// Bilinear; `u`, `v` in [0, 1). Outside the raster is light.
-    #[inline]
-    pub fn bilinear(&self, u: f64, v: f64) -> f32 {
-        let s = self.size;
-        let (x, y) = (u * s as f64 - 0.5, v * s as f64 - 0.5);
-        if x < 0.0 || y < 0.0 || x >= (s - 1) as f64 || y >= (s - 1) as f64 {
-            return self.nearest(u, v) as f32;
+    fn from_rgba(rgba: &image::RgbaImage) -> Self {
+        let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+        let mut luma = Vec::with_capacity(w * h);
+        let mut alpha = Vec::with_capacity(w * h);
+        for p in rgba.pixels() {
+            let [r, g, b, a] = p.0;
+            // A fully clear pixel has no colour of its own; light keeps its edge from darkening.
+            luma.push(if a == 0 { 255 } else { (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round() as u8 });
+            alpha.push(a);
         }
-        let (ix, iy) = (x as usize, y as usize);
+        Self { width: w, height: h, luma, alpha }
+    }
+
+    /// An opaque picture from grey values, for tests and tools.
+    pub fn from_luma(width: usize, height: usize, luma: Vec<u8>) -> Self {
+        assert_eq!(luma.len(), width * height);
+        Self { width, height, alpha: vec![255; luma.len()], luma }
+    }
+
+    /// Luma and coverage, both 0 ..= 255, at `u`, `v` in [0, 1]. Edges clamp, as the GPU does.
+    #[inline]
+    fn bilinear(&self, u: f64, v: f64) -> (f32, f32) {
+        let (w, h) = (self.width, self.height);
+        let x = (u * w as f64 - 0.5).clamp(0.0, (w - 1) as f64);
+        let y = (v * h as f64 - 0.5).clamp(0.0, (h - 1) as f64);
+        let (ix, iy) = ((x as usize).min(w.saturating_sub(2)), (y as usize).min(h.saturating_sub(2)));
         let (fx, fy) = ((x - ix as f64) as f32, (y - iy as f64) as f32);
-        let i = iy * s + ix;
-        let d = &self.data;
-        let (a, b, c, e) = (d[i] as f32, d[i + 1] as f32, d[i + s] as f32, d[i + s + 1] as f32);
-        let top = a + (b - a) * fx;
-        let bot = c + (e - c) * fx;
-        top + (bot - top) * fy
+        let (dx, dy) = (usize::from(w > 1), if h > 1 { w } else { 0 });
+        let i = iy * w + ix;
+        let lerp = |d: &[u8]| {
+            let (a, b, c, e) = (d[i] as f32, d[i + dx] as f32, d[i + dy] as f32, d[i + dy + dx] as f32);
+            let top = a + (b - a) * fx;
+            top + (c + (e - c) * fx - top) * fy
+        };
+        (lerp(&self.luma), lerp(&self.alpha))
     }
 }
 
-/// Field coordinates of a point already rotated into image space. The image is placed
-/// scale first, then rotation, then position, so this undoes translate, rotation (done by
-/// the caller) and scale last. Undoing scale last is what keeps the position independent
-/// of the zoom: moving by 10% stays 10% at any scale.
-#[inline]
-pub fn to_field(rotated_u: f64, rotated_v: f64, offset_u: f64, offset_v: f64, scale: f64) -> (f64, f64) {
-    let k = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
-    ((rotated_u - offset_u) / k + 0.5, (rotated_v - offset_v) / k + 0.5)
+/// Gain of the standard contrast curve; `contrast` is -100 ..= 100.
+pub fn contrast_gain(contrast: f32) -> f32 {
+    let c = contrast.clamp(-100.0, 100.0) * 2.55;
+    259.0 * (c + 255.0) / (255.0 * (259.0 - c))
+}
+
+struct Placed {
+    picture: Arc<Picture>,
+    cx: f64,
+    cy: f64,
+    cos: f64,
+    sin: f64,
+    /// The picture's width and height as shares of the diameter.
+    w: f64,
+    h: f64,
+    gain: f32,
+    invert: bool,
+}
+
+/// Layers ready to sample.
+pub struct Composition {
+    layers: Vec<Placed>,
+}
+
+impl Composition {
+    pub fn new(layers: impl IntoIterator<Item = (Layer, Arc<Picture>)>) -> Self {
+        let layers = layers
+            .into_iter()
+            .map(|(l, picture)| {
+                let long = picture.width.max(picture.height) as f64;
+                let size = if l.size.is_finite() && l.size > 0.0 { l.size } else { 1.0 };
+                let (sin, cos) = l.rotation_deg.to_radians().sin_cos();
+                Placed {
+                    cx: l.x,
+                    cy: l.y,
+                    cos,
+                    sin,
+                    w: size * picture.width as f64 / long,
+                    h: size * picture.height as f64 / long,
+                    gain: contrast_gain(l.contrast),
+                    invert: l.invert,
+                    picture,
+                }
+            })
+            .collect();
+        Self { layers }
+    }
+
+    pub fn load(layers: &[Layer], max_edge: Option<u32>) -> Result<Self, String> {
+        let mut out = Vec::with_capacity(layers.len());
+        for l in layers {
+            out.push((l.clone(), Arc::new(Picture::load(Path::new(&l.path), max_edge)?)));
+        }
+        Ok(Self::new(out))
+    }
+
+    /// Grey, 0 ..= 255, at a disc position (see the module note). Where no picture covers
+    /// the disc it stays light, so empty space adds no write load.
+    #[inline]
+    pub fn sample(&self, x: f64, y: f64) -> f32 {
+        let mut grey = 255.0f32;
+        for l in &self.layers {
+            let (dx, dy) = (x - l.cx, y - l.cy);
+            // Undo the clockwise turn.
+            let u = (l.cos * dx + l.sin * dy) / l.w + 0.5;
+            let v = (-l.sin * dx + l.cos * dy) / l.h + 0.5;
+            if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+                continue;
+            }
+            let (luma, alpha) = l.picture.bilinear(u, v);
+            let t = ((luma - 128.0) * l.gain + 128.0).clamp(0.0, 255.0);
+            let t = if l.invert { 255.0 - t } else { t };
+            grey += (t - grey) * alpha / 255.0;
+        }
+        grey
+    }
+}
+
+/// The picture squeezed onto a `size` square for the live preview: per pixel its luma,
+/// then its coverage. The preview stretches it back to the picture's own shape.
+pub fn preview_texture(path: &Path, size: u32) -> Result<Vec<u8>, String> {
+    let img = image::open(path).map_err(|e| format!("无法读取图像 {}：{e}", path.display()))?;
+    let p = Picture::from_rgba(&img.resize_exact(size, size, FilterType::Triangle).to_rgba8());
+    Ok(p.luma.iter().zip(&p.alpha).flat_map(|(&l, &a)| [l, a]).collect())
 }
 
 fn composite_luma(rgba: [u8; 4]) -> u8 {
@@ -69,76 +183,6 @@ fn composite_luma(rgba: [u8; 4]) -> u8 {
     let y = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
     let a = a as f32 / 255.0;
     (y * a + 255.0 * (1.0 - a)).round().clamp(0.0, 255.0) as u8
-}
-
-/// Standard contrast curve. `contrast` is -100 ..= 100.
-fn contrast_lut(contrast: f32, invert: bool) -> [u8; 256] {
-    let c = contrast.clamp(-100.0, 100.0) * 2.55;
-    let k = 259.0 * (c + 255.0) / (255.0 * (259.0 - c));
-    let mut lut = [0u8; 256];
-    for (i, v) in lut.iter_mut().enumerate() {
-        let y = ((i as f32 - 128.0) * k + 128.0).round().clamp(0.0, 255.0) as u8;
-        *v = if invert { 255 - y } else { y };
-    }
-    lut
-}
-
-/// Load `path` onto a square raster of `size`, or the source's own long edge when `None`.
-pub fn load_field(path: &Path, crop: CropMode, size: Option<u32>, contrast: f32, invert: bool) -> Result<GrayField, String> {
-    let (s, ox, oy, rgba) = placed(path, crop, size)?;
-    let lut = contrast_lut(contrast, invert);
-    // Letterbox stays light whatever `invert` says: it must not add write load.
-    let mut data = vec![255u8; s * s];
-    for (x, y, p) in rgba.enumerate_pixels() {
-        data[(y + oy) as usize * s + (x + ox) as usize] = lut[composite_luma(p.0) as usize];
-    }
-    Ok(GrayField { size: s, data })
-}
-
-/// The field before tone, for the live preview: two bytes per pixel, luma then 255 where
-/// the picture is and 0 in the letterbox. The preview applies contrast, invert and the
-/// guard's floor itself, the way `load_field` and the carver do.
-pub fn preview_texture(path: &Path, crop: CropMode, size: u32) -> Result<Vec<u8>, String> {
-    let (s, ox, oy, rgba) = placed(path, crop, Some(size))?;
-    let mut data = vec![0u8; s * s * 2];
-    for i in 0..s * s {
-        data[i * 2] = 255;
-    }
-    for (x, y, p) in rgba.enumerate_pixels() {
-        let i = ((y + oy) as usize * s + (x + ox) as usize) * 2;
-        data[i] = composite_luma(p.0);
-        data[i + 1] = 255;
-    }
-    Ok(data)
-}
-
-/// The picture cropped and scaled for a square raster: its edge, the offset of the
-/// picture inside it, and the picture's pixels.
-fn placed(path: &Path, crop: CropMode, size: Option<u32>) -> Result<(usize, u32, u32, image::RgbaImage), String> {
-    let img = image::open(path).map_err(|e| format!("无法读取图像 {}：{e}", path.display()))?;
-    let (w, h) = img.dimensions();
-    if w == 0 || h == 0 {
-        return Err("图像是空的".into());
-    }
-    let s = size.unwrap_or(w.max(h)).max(16);
-    let filter = if s == w.max(h) { FilterType::Nearest } else { FilterType::Triangle };
-    let (cx, cy, cw, ch) = match crop {
-        CropMode::SquareCenter => {
-            let m = w.min(h);
-            ((w - m) / 2, (h - m) / 2, m, m)
-        }
-        _ => (0, 0, w, h),
-    };
-    let cropped = img.crop_imm(cx, cy, cw, ch);
-    let (tw, th) = match crop {
-        CropMode::Fit | CropMode::Custom => {
-            let k = s as f64 / w.max(h) as f64;
-            (((w as f64 * k).round() as u32).max(1), ((h as f64 * k).round() as u32).max(1))
-        }
-        _ => (s, s),
-    };
-    let scaled = if (tw, th) == (cw, ch) { cropped } else { cropped.resize_exact(tw, th, filter) };
-    Ok((s as usize, (s - tw) / 2, (s - th) / 2, scaled.to_rgba8()))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -173,7 +217,7 @@ pub fn analyze(path: &Path) -> Result<ArtworkAnalysis, String> {
         max_run = max_run.max(run);
     }
     let dark_ratio = dark as f64 / (width as u64 * height as u64).max(1) as f64;
-    let thumb = img.thumbnail(512, 512).to_rgb8();
+    let thumb = img.thumbnail(512, 512).to_rgba8();
     let mut buf = Vec::new();
     thumb
         .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
@@ -189,7 +233,7 @@ pub fn analyze(path: &Path) -> Result<ArtworkAnalysis, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn write_png(dir: &Path, name: &str, w: u32, h: u32, f: impl Fn(u32, u32) -> [u8; 4]) -> std::path::PathBuf {
@@ -204,6 +248,16 @@ mod tests {
         d
     }
 
+    /// A layer of `picture` covering the disc, centred and upright.
+    pub(crate) fn whole(picture: Picture) -> Composition {
+        let l = Layer { path: String::new(), x: 0.0, y: 0.0, size: 1.0, rotation_deg: 0.0, invert: false, contrast: 0.0 };
+        Composition::new([(l, Arc::new(picture))])
+    }
+
+    fn layer(x: f64, y: f64, size: f64, rotation_deg: f64) -> Layer {
+        Layer { path: String::new(), x, y, size, rotation_deg, invert: false, contrast: 0.0 }
+    }
+
     #[test]
     fn dark_image_suggests_invert() {
         let d = tmp("dark");
@@ -215,46 +269,74 @@ mod tests {
     }
 
     #[test]
-    fn transparency_composites_to_light_and_fit_letterboxes_light() {
+    fn empty_disc_and_clear_pixels_stay_light() {
+        assert_eq!(Composition::new([]).sample(0.1, 0.2), 255.0);
         let d = tmp("alpha");
-        let p = write_png(&d, "a.png", 8, 4, |_, _| [0, 0, 0, 0]);
-        let f = load_field(&p, CropMode::Stretch, Some(8), 0.0, false).unwrap();
-        assert!(f.data.iter().all(|&v| v == 255));
-        let p = write_png(&d, "b.png", 32, 16, |_, _| [0, 0, 0, 255]);
-        let f = load_field(&p, CropMode::Fit, Some(32), 0.0, true).unwrap();
-        assert_eq!(f.data[0], 255, "letterbox");
-        assert_eq!(f.data[32 * 16], 255, "inverted black");
-        let f = load_field(&p, CropMode::Fit, Some(32), 0.0, false).unwrap();
-        assert_eq!(f.data[0], 255, "letterbox ignores invert");
-        assert_eq!(f.data[32 * 16], 0);
+        let p = write_png(&d, "a.png", 8, 8, |_, _| [0, 0, 0, 0]);
+        let mut l = layer(0.0, 0.0, 1.0, 0.0);
+        l.path = p.to_string_lossy().into();
+        l.invert = true;
+        // Inverting does not turn a clear pixel dark: it is not part of the picture.
+        assert_eq!(Composition::load(&[l], None).unwrap().sample(0.0, 0.0), 255.0);
     }
 
     #[test]
-    fn position_is_not_scaled_with_the_image() {
-        // The image's own scale divides the residual, never the offset: a 10% move is 10%
-        // at 200% zoom and at 50% zoom alike.
-        let (u, v) = to_field(0.1, 0.0, 0.1, 0.0, 2.0);
-        assert!((u - 0.5).abs() < 1e-12 && (v - 0.5).abs() < 1e-12);
-        let (u, _) = to_field(0.0, 0.0, 0.2, 0.0, 2.0);
-        assert!((u - (0.5 - 0.1)).abs() < 1e-12);
-        // A zero or nonsensical scale falls back to 1 instead of exploding.
-        assert_eq!(to_field(0.2, 0.0, 0.0, 0.0, 0.0), (0.7, 0.5));
+    fn wide_picture_keeps_its_shape() {
+        // 2:1, so at size 1 it spans the whole width but only half the height.
+        let c = Composition::new([(layer(0.0, 0.0, 1.0, 0.0), Arc::new(Picture::from_luma(2, 1, vec![0, 0])))]);
+        assert_eq!(c.sample(0.45, 0.0), 0.0);
+        assert_eq!(c.sample(0.0, 0.3), 255.0, "below the picture");
     }
 
     #[test]
-    fn preview_texture_marks_the_letterbox() {
+    fn upper_layer_covers_lower() {
+        let black = Arc::new(Picture::from_luma(1, 1, vec![0]));
+        let grey = Arc::new(Picture::from_luma(1, 1, vec![100]));
+        let c = Composition::new([(layer(0.0, 0.0, 1.0, 0.0), black), (layer(0.2, 0.0, 0.2, 0.0), grey)]);
+        assert_eq!(c.sample(0.2, 0.0), 100.0);
+        assert_eq!(c.sample(-0.2, 0.0), 0.0);
+    }
+
+    #[test]
+    fn placement_moves_turns_and_scales() {
+        // Left half black, right half white.
+        let p = Arc::new(Picture::from_luma(2, 2, vec![0, 255, 0, 255]));
+        let at = |l: Layer, x, y| Composition::new([(l, p.clone())]).sample(x, y);
+        assert_eq!(at(layer(0.0, 0.0, 0.5, 0.0), -0.2, 0.0), 0.0);
+        // Moved right by 0.2: its black half now sits where its centre was.
+        assert_eq!(at(layer(0.2, 0.0, 0.5, 0.0), 0.05, 0.0), 0.0);
+        // A quarter turn clockwise takes the left (black) half to the top, y < 0.
+        assert_eq!(at(layer(0.0, 0.0, 0.5, 90.0), 0.0, -0.2), 0.0);
+        assert_eq!(at(layer(0.0, 0.0, 0.5, 90.0), 0.0, 0.2), 255.0);
+        // Twice the size reaches twice as far.
+        assert_eq!(at(layer(0.0, 0.0, 0.5, 0.0), -0.4, 0.0), 255.0);
+        assert_eq!(at(layer(0.0, 0.0, 1.0, 0.0), -0.4, 0.0), 0.0);
+    }
+
+    #[test]
+    fn tone_follows_the_layer() {
+        let p = Arc::new(Picture::from_luma(1, 1, vec![64]));
+        let mut l = layer(0.0, 0.0, 1.0, 0.0);
+        l.invert = true;
+        assert_eq!(Composition::new([(l.clone(), p.clone())]).sample(0.0, 0.0), 191.0);
+        l.invert = false;
+        l.contrast = 100.0;
+        assert_eq!(Composition::new([(l, p)]).sample(0.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn preview_texture_interleaves_luma_and_coverage() {
         let d = tmp("texture");
-        let p = write_png(&d, "a.png", 32, 16, |_, _| [0, 0, 0, 255]);
-        let t = preview_texture(&p, CropMode::Fit, 32).unwrap();
-        assert_eq!(t.len(), 32 * 32 * 2);
-        assert_eq!((t[0], t[1]), (255, 0), "letterbox");
-        assert_eq!((t[32 * 16 * 2], t[32 * 16 * 2 + 1]), (0, 255), "picture");
+        let p = write_png(&d, "a.png", 4, 4, |x, _| if x < 2 { [0, 0, 0, 255] } else { [0, 0, 0, 0] });
+        let t = preview_texture(&p, 4).unwrap();
+        assert_eq!(t.len(), 4 * 4 * 2);
+        assert_eq!((t[0], t[1]), (0, 255));
+        assert_eq!((t[6], t[7]), (255, 0), "clear");
     }
 
     #[test]
-    fn bilinear_outside_is_light() {
-        let f = GrayField { size: 2, data: vec![0; 4] };
-        assert_eq!(f.bilinear(-0.1, 0.5), 255.0);
-        assert_eq!(f.nearest(1.2, 0.5), 255);
+    fn layer_json_is_what_the_front_end_sends() {
+        let l: Layer = serde_json::from_str(r#"{"id":"a","path":"/a.png","x":0.1,"y":-0.2,"size":0.8,"rotationDeg":15,"invert":true,"contrast":10,"width":10,"height":20}"#).unwrap();
+        assert_eq!(l, Layer { path: "/a.png".into(), x: 0.1, y: -0.2, size: 0.8, rotation_deg: 15.0, invert: true, contrast: 10.0 });
     }
 }

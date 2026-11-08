@@ -1,7 +1,8 @@
 //! Tauri shell: thin commands over disc-core. Long jobs run on blocking threads and report
 //! through events, so the window stays live.
 
-use disc_core::artwork::{self, ArtworkAnalysis, GrayField};
+use disc_core::artwork::{self, ArtworkAnalysis, Composition, Picture};
+use disc_core::composition;
 use disc_core::calib::ladder::{self, CalibrationResult, LadderConfig};
 use disc_core::carver::{self, CarveJobConfig, CarveJobSummary, IsoAudit, Tone};
 use disc_core::drive::{self, burner, OpticalDriveInfo};
@@ -17,10 +18,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 #[derive(Default)]
 struct Studio {
     cancel: Arc<AtomicBool>,
-    preview_field: Mutex<Option<(String, Arc<GrayField>)>>,
+    /// Pictures decoded for the fallback preview, by path.
+    pictures: Mutex<std::collections::HashMap<String, Arc<Picture>>>,
 }
 
-const PREVIEW_FIELD_SIZE: u32 = 1400;
+/// Long edge of the pictures the previews work from.
+const PREVIEW_EDGE: u32 = 1024;
 
 fn data_file(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -202,25 +205,25 @@ async fn analyze_artwork(image_path: String) -> Result<ArtworkAnalysis, String> 
     blocking(move || artwork::analyze(Path::new(&image_path))).await
 }
 
-fn field_for(state: &Studio, cfg: &CarveJobConfig) -> Result<Arc<GrayField>, String> {
-    let key = format!("{}|{:?}|{}|{}", cfg.source_image_path, cfg.crop_mode, cfg.contrast, cfg.invert_image);
-    let mut slot = state.preview_field.lock().unwrap();
-    if let Some((k, f)) = slot.as_ref() {
-        if *k == key {
-            return Ok(f.clone());
-        }
+fn preview_art(state: &Studio, cfg: &CarveJobConfig) -> Result<Composition, String> {
+    let mut cache = state.pictures.lock().unwrap();
+    cache.retain(|path, _| cfg.layers.iter().any(|l| &l.path == path));
+    let mut layers = Vec::with_capacity(cfg.layers.len());
+    for l in &cfg.layers {
+        let picture = match cache.get(&l.path) {
+            Some(p) => p.clone(),
+            None => {
+                let p = Arc::new(Picture::load(Path::new(&l.path), Some(PREVIEW_EDGE))?);
+                cache.insert(l.path.clone(), p.clone());
+                p
+            }
+        };
+        layers.push((l.clone(), picture));
     }
-    let f = Arc::new(artwork::load_field(
-        Path::new(&cfg.source_image_path),
-        cfg.crop_mode,
-        Some(PREVIEW_FIELD_SIZE),
-        cfg.contrast,
-        cfg.invert_image,
-    )?);
-    *slot = Some((key, f.clone()));
-    Ok(f)
+    Ok(Composition::new(layers))
 }
 
+/// The native preview, for where the window has no WebGL.
 #[tauri::command]
 async fn simulate_disc_preview(
     app: AppHandle,
@@ -229,17 +232,13 @@ async fn simulate_disc_preview(
 ) -> Result<String, String> {
     blocking(move || {
         let state = app.state::<Studio>();
-        let field = field_for(&state, &config)?;
+        let art = preview_art(&state, &config)?;
         let spiral = Spiral::new(config.preset.spiral_params())?;
         let tone = Tone::from_duty(config.servo_safe_dither, config.max_dark_duty_cycle);
         preview::render_data_url(&PreviewInput {
             design: &spiral,
             actual: &spiral,
-            field: &field,
-            rotation_rad: config.rotation_deg.to_radians(),
-            offset_x: config.offset_x / 100.0,
-            offset_y: config.offset_y / 100.0,
-            scale: config.scale,
+            art: &art,
             min_luma: if tone.servo_safe { tone.min_luma } else { 0.0 },
             size: preview_size.clamp(128, 2048),
         })
@@ -247,13 +246,34 @@ async fn simulate_disc_preview(
     .await
 }
 
-/// The picture for the live preview as raw bytes (see `artwork::preview_texture`); the
-/// disc renderer places and tones it every frame.
+/// A picture for the live preview as raw bytes (see `artwork::preview_texture`); the disc
+/// renderer places and tones it every frame.
 #[tauri::command]
-async fn preview_texture(image_path: String, crop_mode: artwork::CropMode) -> Result<tauri::ipc::Response, String> {
-    blocking(move || artwork::preview_texture(Path::new(&image_path), crop_mode, PREVIEW_FIELD_SIZE))
+async fn preview_texture(image_path: String) -> Result<tauri::ipc::Response, String> {
+    blocking(move || artwork::preview_texture(Path::new(&image_path), PREVIEW_EDGE))
         .await
         .map(tauri::ipc::Response::new)
+}
+
+#[tauri::command]
+async fn save_composition(path: String, layers: Vec<serde_json::Map<String, serde_json::Value>>) -> Result<(), String> {
+    blocking(move || {
+        let bytes = composition::pack(&layers)?;
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())
+    })
+    .await
+}
+
+/// The pictures are copied into the app's own folder, so the layers stay valid after
+/// the composition file moves.
+#[tauri::command]
+async fn open_composition(app: AppHandle, path: String) -> Result<Vec<serde_json::Map<String, serde_json::Value>>, String> {
+    let images = app.path().app_data_dir().map_err(|e| e.to_string())?.join("images");
+    blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        composition::unpack(&bytes, &images)
+    })
+    .await
 }
 
 #[derive(serde::Serialize)]
@@ -343,6 +363,8 @@ pub fn run() {
             analyze_artwork,
             simulate_disc_preview,
             preview_texture,
+            save_composition,
+            open_composition,
             build_carved_iso,
             burn_iso_to_drive,
             cache_iso_path,

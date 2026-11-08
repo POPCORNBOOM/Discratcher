@@ -3,6 +3,7 @@
 pub mod artwork;
 pub mod calib;
 pub mod carver;
+pub mod composition;
 pub mod drive;
 pub mod ecma267;
 pub mod iso9660;

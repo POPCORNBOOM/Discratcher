@@ -34,13 +34,23 @@ export interface CalibrationRecord {
   rungs: number; reads: number; rangePct: [number, number]; rungsMeasured: number
   rmsDeg: number | null; preset: DiscGeometryPreset | null; points: CalibrationRungRecord[]
 }
-export type CropMode = 'square-center' | 'stretch' | 'fit' | 'custom'
+/** One picture on the disc; the native side reads it as artwork::Layer. */
+export interface Layer {
+  id: string; path: string; name: string
+  /** The picture's own pixel size. */
+  width: number; height: number
+  /** Centre as a share of the disc's diameter from its centre, y down. */
+  x: number; y: number
+  /** Long edge as a share of the diameter. */
+  size: number
+  /** Clockwise as seen. */
+  rotationDeg: number
+  invert: boolean; contrast: number
+}
 export interface CarveJobConfig {
-  sourceImagePath: string; outputIsoPath: string; preset: DiscGeometryPreset
-  invertImage: boolean; rotationDeg: number; cropMode: CropMode; contrast: number
+  /** Bottom first. */
+  layers: Layer[]; outputIsoPath: string; preset: DiscGeometryPreset
   servoSafeDither: boolean; maxDarkDutyCycle: number
-  offsetX: number; offsetY: number
-  scale: number
 }
 export interface ArtworkAnalysis {
   width: number; height: number; darkRatio: number; suggestInvert: boolean

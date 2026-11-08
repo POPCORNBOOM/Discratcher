@@ -26,6 +26,7 @@ const preset = {
 let saved: { id: string }[] = []
 let log: { id: string }[] = []
 let stop = false
+const compositions = new Map<string, unknown>()
 const disc = (size: number, dark: number) => {
   const c = document.createElement('canvas')
   c.width = c.height = size
@@ -76,19 +77,24 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     case 'save_preset': saved = [...saved.filter((p) => p.id !== a.preset.id), a.preset]; return null
     case 'delete_preset': saved = saved.filter((p) => p.id !== a.id); return null
     case 'analyze_artwork':
-      return { width: 2048, height: 2048, darkRatio: 0.41, suggestInvert: true, maxBlackRunPx: 86, thumbnail: disc(256, 30) }
+      return { width: 2048, height: String(a.imagePath).includes('wide') ? 1024 : 2048, darkRatio: 0.41, suggestInvert: true, maxBlackRunPx: 86, thumbnail: disc(256, 30) }
     case 'preview_texture': {
-      // An "F" over a gradient, so rotation and mirroring are easy to see; fit letterboxes it.
-      const n = 512, d = new Uint8Array(n * n * 2)
-      const box = a.cropMode === 'fit' || a.cropMode === 'custom' ? n / 4 : 0
+      // An "F" over a gradient, so turns and mirroring are easy to see; "wide" pictures are 2:1.
+      const n = 512, d = new Uint8Array(n * n * 2), wide = String(a.imagePath).includes('wide')
       for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-        const i = (y * n + x) * 2, inside = y >= box && y < n - box
+        const i = (y * n + x) * 2
         const f = (x > 120 && x < 180 && y > 100 && y < 420) || (x > 120 && x < 400 && y > 100 && y < 160) || (x > 120 && x < 330 && y > 240 && y < 290)
-        d[i] = !inside ? 255 : f ? 0 : 120 + (x / n) * 135
-        d[i + 1] = inside ? 255 : 0
+        d[i] = f ? 0 : wide ? 255 - (x / n) * 135 : 120 + (x / n) * 135
+        d[i + 1] = wide && Math.hypot(x - 256, y - 256) > 250 ? 0 : 255
       }
       await wait(30)
       return d.buffer
+    }
+    case 'save_composition': compositions.set(a.path, JSON.stringify(a.layers)); return null
+    case 'open_composition': {
+      const c = compositions.get(a.path)
+      if (!c) throw '不是 Discratcher 构图文件'
+      return JSON.parse(c as string)
     }
     case 'simulate_disc_preview':
       await wait(60)

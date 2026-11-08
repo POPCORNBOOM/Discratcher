@@ -57,14 +57,15 @@
 </template>
 
 <script setup lang="ts">
-import { mdiUpdate, mdiArrowLeft, mdiCheck, mdiClose, mdiTranslate, mdiCrosshairsGps, mdiExportVariant, mdiFire, mdiFolderOpenOutline, mdiGithub, mdiHomeOutline, mdiImageEditOutline, mdiMagnify, mdiMessageAlertOutline, mdiWindowMaximize, mdiWindowMinimize, mdiWindowRestore } from '@mdi/js'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { mdiUpdate, mdiArrowLeft, mdiCheck, mdiClose, mdiContentSaveOutline, mdiImagePlusOutline, mdiTranslate, mdiCrosshairsGps, mdiExportVariant, mdiFire, mdiFolderOpenOutline, mdiGithub, mdiHomeOutline, mdiImageEditOutline, mdiMagnify, mdiMessageAlertOutline, mdiWindowMaximize, mdiWindowMinimize, mdiWindowRestore } from '@mdi/js'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isWindowMaximized, openInBrowser, windowControl } from '../api'
 import { REPOSITORY_URL } from '../catalog'
 import { locale, locales, setLocale, t } from '../i18n'
 import { notices } from '../notices'
 import { useProcess } from '../stores/process'
-import { useStudio } from '../stores/studio'
+import { useComposition } from '../stores/composition'
+import { useStudio, type CarveCommands } from '../stores/studio'
 import { overallProgress, tasks } from '../tasks'
 import { appVersion, checkForUpdate, checking, installUpdate, update } from '../updater'
 import BrandMark from './BrandMark.vue'
@@ -81,6 +82,7 @@ const PANEL_CLOSE_DELAY_MS = 120
 const mac = navigator.userAgent.includes('Mac')
 
 const s = useStudio()
+const comp = useComposition()
 const p = useProcess()
 const updateDialog = ref(false)
 const taskPanel = ref(false)
@@ -120,6 +122,14 @@ function closeTasks() {
   closeTimer = window.setTimeout(() => (taskPanel.value = false), PANEL_CLOSE_DELAY_MS)
 }
 
+/** Menu actions that belong to the carve page open it first. */
+async function onCarve(run: (c: CarveCommands) => void) {
+  s.view = 'carve'
+  await nextTick()
+  if (s.carve) run(s.carve)
+}
+const modKey = mac ? '⌘' : 'Ctrl+'
+
 const menus = computed<Menu[]>(() => [
   {
     key: 'file',
@@ -127,8 +137,12 @@ const menus = computed<Menu[]>(() => [
     actions: [
       { key: 'home', title: t('menu.home'), icon: mdiHomeOutline, run: () => (s.view = 'home') },
       { key: 'd1', divider: true },
-      { key: 'new', title: t('menu.new'), icon: mdiImageEditOutline, run: () => (s.view = 'carve') },
-      { key: 'open', title: t('menu.open'), icon: mdiFolderOpenOutline, disabled: !s.carve, run: () => { s.view = 'carve'; s.carve?.choose() } },
+      { key: 'new', title: t('menu.new'), icon: mdiImageEditOutline, run: () => onCarve((c) => c.newComposition()) },
+      { key: 'open', title: t('menu.open'), icon: mdiFolderOpenOutline, run: () => onCarve((c) => c.openComposition()) },
+      { key: 'save', title: t('menu.save'), icon: mdiContentSaveOutline, shortcut: `${modKey}S`, disabled: !comp.layers.length, run: () => onCarve((c) => c.save()) },
+      { key: 'saveAs', title: t('menu.saveAs'), disabled: !comp.layers.length, run: () => onCarve((c) => c.saveAs()) },
+      { key: 'd2', divider: true },
+      { key: 'add', title: t('menu.addImage'), icon: mdiImagePlusOutline, disabled: comp.full, run: () => onCarve((c) => c.choose()) },
       { key: 'export', title: t('menu.export'), icon: mdiExportVariant, disabled: !s.carveReady, run: () => s.carve?.exportIso() },
     ],
   },

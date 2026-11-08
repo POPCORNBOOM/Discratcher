@@ -1,5 +1,8 @@
 import type { DiscGeometryPreset } from './types'
 
+/** Room left round the disc on the carve page, as a share of the free height. */
+export const CARVE_FIT = 0.94
+
 export interface DiscLook {
   dye: [number, number, number]
   pitch: number

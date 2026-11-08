@@ -50,13 +50,29 @@ export async function openInBrowser(url: string) {
   else await openUrl(url)
 }
 
+let mockPicks = 0
+
 export async function pickImage(): Promise<string | null> {
-  if (mock) return '/Users/demo/artwork.png'
+  if (mock) return ['/Users/demo/artwork.png', '/Users/demo/wide.png'][mockPicks++ % 2]
   const r = await open({
     multiple: false,
     filters: [{ name: t('dialog.imageFilter'), extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tiff'] }],
   })
   return typeof r === 'string' ? r : null
+}
+
+let mockSaved = '/Users/demo/flowers.discratch'
+const COMPOSITION = { name: '', extensions: ['discratch'] }
+
+export async function pickComposition(): Promise<string | null> {
+  if (mock) return mockSaved
+  const r = await open({ multiple: false, filters: [{ ...COMPOSITION, name: t('dialog.compositionFilter') }] })
+  return typeof r === 'string' ? r : null
+}
+
+export async function pickCompositionSave(defaultPath: string): Promise<string | null> {
+  if (mock) return (mockSaved = `/Users/demo/${defaultPath}`)
+  return save({ defaultPath, filters: [{ ...COMPOSITION, name: t('dialog.compositionFilter') }] })
 }
 
 export async function pickSavePath(defaultPath: string): Promise<string | null> {
