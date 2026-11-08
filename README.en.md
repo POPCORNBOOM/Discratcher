@@ -25,6 +25,9 @@
   <sub>Left: the preview in the app. Right: the result after a single automatic calibration.</sub>
 </p>
 
+> [!NOTE]
+> Discratcher is at an early stage and **supports DVD discs only** for now; CD and Blu-ray are not supported yet. The combinations tested so far are under [Platform support](#platform-support), and [issues](https://github.com/POPCORNBOOM/Discratcher/issues) are welcome. To draw on a CD, try [DiscImageStudio](https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio) for now.
+
 ## Features
 
 <table>
@@ -71,6 +74,13 @@ The app looks for a new version at startup, or you can use Help → Check for up
 | Other drives on macOS | Unverified |
 | Windows 11 + LG GUD1N | Tested |
 | Linux | Implemented, not tested on hardware |
+
+| Disc | Status |
+| --- | --- |
+| DVD-R | Tested (CMC MAG. AM3) |
+| DVD+R, DVD-RW | Should work, unverified |
+| CD-R, CD-RW | Not supported yet: calibration and carving follow the DVD format |
+| Blu-ray, DVD-RAM, dual-layer DVD | Not supported |
 
 ## Build from source
 

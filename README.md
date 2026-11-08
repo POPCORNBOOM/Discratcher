@@ -25,6 +25,9 @@
   <sub>左：软件里的预览。右：单次自动标定后刻录的结果。</sub>
 </p>
 
+> [!NOTE]
+> Discratcher 还在早期阶段，目前**只支持 DVD 光盘**，暂不支持 CD 和蓝光。实测过的组合见下方[支持情况](#平台支持)，遇到问题欢迎[提 Issue](https://github.com/POPCORNBOOM/Discratcher/issues)。想在 CD 上刻图可以先用 [DiscImageStudio](https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio)。
+
 ## 特性
 
 <table>
@@ -71,6 +74,13 @@
 | 其他 macOS 光驱 | 未验证 |
 | Windows 11 + LG GUD1N | 已实测 |
 | Linux | 代码已写，未经真机验证 |
+
+| 光盘 | 状态 |
+| --- | --- |
+| DVD-R | 已实测（CMC MAG. AM3） |
+| DVD+R、DVD-RW | 应该可用，未验证 |
+| CD-R、CD-RW | 暂不支持：标定和刻图都按 DVD 规格计算 |
+| 蓝光、DVD-RAM、双层 DVD | 暂不支持 |
 
 ## 从源码构建
 
