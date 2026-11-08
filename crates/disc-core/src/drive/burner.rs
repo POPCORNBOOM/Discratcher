@@ -35,10 +35,10 @@ pub fn parse_hdiutil_line(line: &str) -> Option<BurnProgress> {
 
 /// Command line for the platforms that burn with an external tool. Windows burns in process
 /// through IMAPI2 instead, so this is only reached from macOS and Linux.
-pub fn burn_command(drive_id: &str, iso: &str, speed: u8, verify: bool, test_only: bool) -> Result<Vec<String>, String> {
+pub fn burn_command(drive_id: &str, iso: &str, speed: u8, verify: bool) -> Result<Vec<String>, String> {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        let _ = (drive_id, iso, speed, verify, test_only);
+        let _ = (drive_id, iso, speed, verify);
         return Err("这个平台没有刻录后端".into());
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -49,17 +49,11 @@ pub fn burn_command(drive_id: &str, iso: &str, speed: u8, verify: bool, test_onl
         if !verify {
             a.push("-noverifyburn".into());
         }
-        if test_only {
-            a.push("-testburn".into());
-        }
         return Ok(a);
     }
     #[cfg(target_os = "linux")]
     {
         let mut a = vec!["growisofs".to_string(), "-dvd-compat".into(), format!("-speed={speed}")];
-        if test_only {
-            a.push("-dry-run".into());
-        }
         let _ = verify;
         a.push("-Z".into());
         a.push(format!("{drive_id}={iso}"));

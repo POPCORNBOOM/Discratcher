@@ -304,7 +304,6 @@ async fn burn_iso_to_drive(
     iso_path: String,
     speed: u8,
     verify: bool,
-    test_only: bool,
 ) -> Result<(), String> {
     let cancel = fresh_cancel(&state);
     blocking(move || {
@@ -319,9 +318,6 @@ async fn burn_iso_to_drive(
         // arrives from the drive and no window or helper process is involved.
         #[cfg(target_os = "windows")]
         {
-            if test_only {
-                return Err("Windows 的刻录接口不支持试刻".into());
-            }
             let _ = verify;
             let drive = disc_core::drive::windows::drive_letter(&drive_id)
                 .ok_or_else(|| format!("{drive_id} 没有盘符，无法交给刻录机"))?;
@@ -333,7 +329,7 @@ async fn burn_iso_to_drive(
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let argv = burner::burn_command(&drive_id, &iso_path, speed, verify, test_only)?;
+            let argv = burner::burn_command(&drive_id, &iso_path, speed, verify)?;
             burner::burn(&argv, &cancel, &mut |p| {
                 let _ = app.emit("burn://progress", p);
             })

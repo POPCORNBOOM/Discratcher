@@ -75,7 +75,7 @@ export const useProcess = defineStore('process', () => {
   const burned = ref(false)
   /** Share of the disc written so far, 0 to 1; never goes back, like the dye. */
   const written = ref(0)
-  const burnSettings = reactive({ speed: 4, verify: false, testOnly: false })
+  const burnSettings = reactive({ speed: 4, verify: false })
   /** A question a running step cannot answer itself; the page renders it as a dialog. */
   const pendingAsk = ref<{ question: string; accept: string } | null>(null)
   let askResolve: ((yes: boolean) => void) | null = null
@@ -157,8 +157,8 @@ export const useProcess = defineStore('process', () => {
         {
           label: t('process.writeDisc'),
           estimate: () => burnSeconds(burnSettings.speed, burnSettings.verify),
-          dangerous: () => !burnSettings.testOnly,
-          run: () => call('burn_iso_to_drive', { driveId: s.drive!.id, isoPath: path, speed: burnSettings.speed, verify: burnSettings.verify, testOnly: burnSettings.testOnly }),
+          dangerous: () => true,
+          run: () => call('burn_iso_to_drive', { driveId: s.drive!.id, isoPath: path, speed: burnSettings.speed, verify: burnSettings.verify }),
         },
       ],
     })

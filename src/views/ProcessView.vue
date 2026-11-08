@@ -26,9 +26,8 @@
             />
           </div>
           <UiSwitch v-model="b.verify">{{ t('burn.verify') }}</UiSwitch>
-          <UiSwitch v-model="b.testOnly">{{ t('burn.testOnly') }}</UiSwitch>
         </UiAdvanced>
-        <div class="actions"><UiButton variant="solid" size="lg" :icon="mdiFire" :disabled="!usable" @click="p.start()">{{ t(b.testOnly ? 'burn.startTest' : 'burn.start') }}</UiButton></div>
+        <div class="actions"><UiButton variant="solid" size="lg" :icon="mdiFire" :disabled="!usable" @click="p.start()">{{ t('burn.start') }}</UiButton></div>
       </template>
 
       <template v-else>
@@ -133,7 +132,7 @@ async function rate(score: number) {
 const eta = useEta({ running: () => p.status === 'running', step: () => p.stepIndex, percent: () => p.percent, stepSeconds: p.stepSeconds, laterSeconds: p.laterSeconds })
 const minutes = computed(() => Math.ceil(p.totalSeconds / 60))
 
-const usable = computed(() => !!s.drive?.mediaPresent && !!s.drive.supported && (s.drive.isBlank || s.drive.simulated || b.testOnly) && speedOptions.value.length > 0)
+const usable = computed(() => !!s.drive?.mediaPresent && !!s.drive.supported && (s.drive.isBlank || s.drive.simulated) && speedOptions.value.length > 0)
 const warning = computed(() => {
   if (!s.drive) return t('burn.warnNoDrive')
   if (s.drive.simulated) return t('burn.warnSim')
