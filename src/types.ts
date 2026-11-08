@@ -2,7 +2,7 @@ export interface OpticalDriveInfo {
   id: string; vendor: string; product: string; revision: string
   mediaPresent: boolean; mediaType: string; mediaId: string
   totalSectors: number; isBlank: boolean; simulated: boolean
-  writeSpeeds?: number[]; maxWriteSpeed?: number
+  writeSpeeds?: number[]; maxWriteSpeed?: number; supported?: boolean
 }
 export interface DiscGeometryPreset {
   id: string; name: string; driveModel: string; mediaId: string; stamperCode: string

@@ -314,6 +314,7 @@ async fn burn_iso_to_drive(
                 let _ = app.emit("burn://progress", p);
             });
         }
+        disc_core::drive::check_burnable(&drive_id)?;
         // Windows burns inside the app: IMAPI2 is called straight from Rust, so progress
         // arrives from the drive and no window or helper process is involved.
         #[cfg(target_os = "windows")]

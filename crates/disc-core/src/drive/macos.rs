@@ -269,6 +269,7 @@ pub fn parse_drutil(text: &str) -> Option<OpticalDriveInfo> {
         simulated: false,
         write_speeds,
         max_write_speed,
+        supported: false,
     })
 }
 

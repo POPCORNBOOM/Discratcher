@@ -16,6 +16,7 @@ const status = computed(() => {
   const d = s.drive
   if (!d) return t('drive.none')
   if (!d.mediaPresent) return t('drive.noDisc')
+  if (!d.supported) return t('drive.unsupported', { type: d.mediaType })
   return t(d.isBlank ? 'drive.blank' : 'drive.written')
 })
 </script>

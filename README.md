@@ -78,7 +78,7 @@
 | 光盘 | 状态 |
 | --- | --- |
 | DVD-R | 已实测（CMC MAG. AM3） |
-| DVD+R、DVD-RW | 应该可用，未验证 |
+| DVD+R、DVD-RW、DVD+RW | 应该可用，未验证 |
 | CD-R、CD-RW | 暂不支持：标定和刻图都按 DVD 规格计算 |
 | 蓝光、DVD-RAM、双层 DVD | 暂不支持 |
 

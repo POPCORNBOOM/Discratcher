@@ -29,6 +29,7 @@
   "burn.warnNoDisc": "Insert a blank disc.",
   "burn.warnNoDrive": "No drive found.",
   "burn.warnNoSpeed": "No burn speed supported by this disc and drive was found.",
+  "drive.unsupported": "Only DVD discs are supported for now; this one is {type}",
   "burn.warnNotBlank": "This disc is not blank and may not accept data.",
   "burn.warnSim": "Virtual drive: the burn is only simulated and nothing is written to any disc.",
   "cal.autosave": "The calibration is saved automatically when done.",

@@ -29,6 +29,7 @@
   "burn.warnNoDisc": "放入一张空白光盘。",
   "burn.warnNoDrive": "没有检测到光驱。",
   "burn.warnNoSpeed": "未检测到此光盘和光驱支持的刻录速度。",
+  "drive.unsupported": "目前只支持 DVD 光盘，这张是 {type}",
   "burn.warnNotBlank": "这张光盘不是空白光盘，可能写不进去。",
   "burn.warnSim": "虚拟光驱：只模拟刻录进度，不会写入任何光盘。",
   "cal.autosave": "完成后标定自动保存。",

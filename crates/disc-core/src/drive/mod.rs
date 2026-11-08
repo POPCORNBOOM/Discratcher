@@ -35,6 +35,29 @@ pub struct OpticalDriveInfo {
     pub write_speeds: Vec<u8>,
     #[serde(default)]
     pub max_write_speed: u8,
+    /// The loaded disc is one Discratcher can calibrate and carve. Filled in by
+    /// `list_drives`, so no backend can forget it.
+    #[serde(default)]
+    pub supported: bool,
+}
+
+/// Single-layer DVD only: calibration and carving count 38,688 channel bits a sector,
+/// and a CD or Blu-ray disc would take the burn and come out as noise. Anything not
+/// named here, including a type nobody could read, is refused.
+pub fn is_supported_media(media_type: &str) -> bool {
+    matches!(media_type.trim(), "DVD-R" | "DVD+R" | "DVD-RW" | "DVD+RW")
+}
+
+/// Refuses a burn on anything but a DVD the app supports, whatever the page allowed.
+pub fn check_burnable(id: &str) -> Result<(), String> {
+    let d = list_drives().into_iter().find(|d| d.id == id).ok_or_else(|| format!("找不到光驱 {id}"))?;
+    if !d.media_present {
+        return Err("光驱里没有光盘".into());
+    }
+    if !d.supported {
+        return Err(format!("目前只支持 DVD 光盘，这张是 {}", d.media_type));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -61,6 +84,9 @@ pub fn list_drives() -> Vec<OpticalDriveInfo> {
     // Development only: a user must never mistake the simulator for hardware.
     if cfg!(debug_assertions) {
         v.push(sim::drive_info());
+    }
+    for d in &mut v {
+        d.supported = d.media_present && is_supported_media(&d.media_type);
     }
     v
 }
@@ -257,6 +283,16 @@ pub mod mmc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_single_layer_dvd_is_supported() {
+        for m in ["DVD-R", "DVD+R", "DVD-RW", "DVD+RW", " DVD-R "] {
+            assert!(is_supported_media(m), "{m}");
+        }
+        for m in ["CD-R", "CD-RW", "BD-R", "BD-RE", "DVD+R DL", "DVD-RAM", "DVD-ROM", "None", ""] {
+            assert!(!is_supported_media(m), "{m}");
+        }
+    }
 
     #[test]
     fn write_speeds_are_guessed_low_when_nothing_was_reported() {

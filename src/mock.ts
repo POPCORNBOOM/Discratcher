@@ -12,7 +12,7 @@ export function on(e: string, cb: (p: unknown) => void) {
 declare global { var __mockDisc: string | undefined }
 const media = () => globalThis.__mockDisc ?? 'none'
 /** Browser-only: put a disc in the mock drive so the whole flow can run. */
-export function setMockDisc(state: 'none' | 'blank' | 'written') {
+export function setMockDisc(state: 'none' | 'blank' | 'written' | 'cd') {
   globalThis.__mockDisc = state
 }
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -72,7 +72,7 @@ export const openUrl = (url: string) => {
 export async function call(cmd: string, a: Record<string, any>): Promise<unknown> {
   switch (cmd) {
     case 'list_optical_drives':
-      return [{ id: '', vendor: 'HL-DT-ST', product: 'DVDRAM GUD1N', revision: '1.01', mediaPresent: media() !== 'none', mediaType: media() === 'none' ? 'None' : 'DVD-R', mediaId: media() === 'none' ? '' : 'CMC MAG. AM3', totalSectors: 2295104, isBlank: media() === 'blank', simulated: false }]
+      return [{ id: '', vendor: 'HL-DT-ST', product: 'DVDRAM GUD1N', revision: '1.01', mediaPresent: media() !== 'none', mediaType: media() === 'none' ? 'None' : media() === 'cd' ? 'CD-R' : 'DVD-R', mediaId: media() === 'none' ? '' : 'CMC MAG. AM3', totalSectors: 2295104, isBlank: media() === 'blank' || media() === 'cd', simulated: false, supported: media() === 'blank' || media() === 'written' }]
     case 'get_presets': return saved
     case 'save_preset': saved = [...saved.filter((p) => p.id !== a.preset.id), a.preset]; return null
     case 'delete_preset': saved = saved.filter((p) => p.id !== a.id); return null

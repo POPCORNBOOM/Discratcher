@@ -133,11 +133,12 @@ async function rate(score: number) {
 const eta = useEta({ running: () => p.status === 'running', step: () => p.stepIndex, percent: () => p.percent, stepSeconds: p.stepSeconds, laterSeconds: p.laterSeconds })
 const minutes = computed(() => Math.ceil(p.totalSeconds / 60))
 
-const usable = computed(() => !!s.drive?.mediaPresent && (s.drive.isBlank || s.drive.simulated || b.testOnly) && speedOptions.value.length > 0)
+const usable = computed(() => !!s.drive?.mediaPresent && !!s.drive.supported && (s.drive.isBlank || s.drive.simulated || b.testOnly) && speedOptions.value.length > 0)
 const warning = computed(() => {
   if (!s.drive) return t('burn.warnNoDrive')
   if (s.drive.simulated) return t('burn.warnSim')
   if (!s.drive.mediaPresent) return t('burn.warnNoDisc')
+  if (!s.drive.supported) return t('drive.unsupported', { type: s.drive.mediaType })
   if (!s.drive.isBlank) return t('burn.warnNotBlank')
   if (!speedOptions.value.length) return t('burn.warnNoSpeed')
   return ''

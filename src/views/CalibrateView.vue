@@ -193,7 +193,8 @@ let referenceLba = 0
 let points: CalibrationRungRecord[] = []
 let rungClock = 0
 
-const hasDisc = computed(() => !!s.drive?.mediaPresent)
+// A CD or Blu-ray disc counts as no disc: neither burning nor measuring means anything on it.
+const hasDisc = computed(() => !!s.drive?.mediaPresent && !!s.drive.supported)
 const blank = computed(() => hasDisc.value && !!s.drive?.isBlank)
 const discSectors = computed(() => s.drive?.totalSectors || CALIBRATION_SECTORS)
 const range = computed<[number, number]>(() => [lo.value / 100, hi.value / 100])

@@ -78,7 +78,7 @@ The app looks for a new version at startup, or you can use Help → Check for up
 | Disc | Status |
 | --- | --- |
 | DVD-R | Tested (CMC MAG. AM3) |
-| DVD+R, DVD-RW | Should work, unverified |
+| DVD+R, DVD-RW, DVD+RW | Should work, unverified |
 | CD-R, CD-RW | Not supported yet: calibration and carving follow the DVD format |
 | Blu-ray, DVD-RAM, dual-layer DVD | Not supported |
 
