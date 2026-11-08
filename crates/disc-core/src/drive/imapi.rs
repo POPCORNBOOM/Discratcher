@@ -11,7 +11,7 @@ use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use windows_sys::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+use windows_sys::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, EXCEPINFO};
 
 type HResult = i32;
 type BStr = *const u16;
@@ -173,6 +173,7 @@ struct ConnectionContainer {
 #[link(name = "oleaut32")]
 extern "system" {
     fn SysAllocString(src: *const u16) -> BStr;
+    fn SysFreeString(b: BStr);
     fn VariantClear(v: *mut Variant) -> HResult;
     fn SafeArrayGetLBound(array: *mut c_void, dim: u32, out: *mut i32) -> HResult;
     fn SafeArrayGetUBound(array: *mut c_void, dim: u32, out: *mut i32) -> HResult;
@@ -233,12 +234,20 @@ impl Object {
             named_count: named.as_ref().map_or(0, |n| n.len() as u32),
         };
         let mut result = Variant::empty();
+        let mut fault: EXCEPINFO = unsafe { std::mem::zeroed() };
         let hr = unsafe {
             let d = self.dispatch();
-            ((*d.vtbl).invoke)(self.0, id, &IID_NULL, 0x0409, flags, &mut params, &mut result, null_mut(), null_mut())
+            let fault_ptr = &mut fault as *mut EXCEPINFO as *mut c_void;
+            ((*d.vtbl).invoke)(self.0, id, &IID_NULL, 0x0409, flags, &mut params, &mut result, fault_ptr, null_mut())
         };
+        let raised = unsafe { Fault::take(&mut fault) };
         if hr < 0 {
-            return Err(format!("0x{:08X}", hr as u32));
+            // IMAPI raises its errors as exceptions: the HRESULT is then only
+            // DISP_E_EXCEPTION, and the real code and text are in the EXCEPINFO.
+            return Err(match raised {
+                Some(f) if hr == DISP_E_EXCEPTION => f.text(),
+                _ => describe(hr, ""),
+            });
         }
         Ok(result)
     }
@@ -310,6 +319,64 @@ impl Drop for Object {
 }
 
 const IID_NULL: Guid = guid(0, 0, 0, [0; 8]);
+const DISP_E_EXCEPTION: HResult = 0x8002_0009u32 as i32;
+
+/// What an IDispatch call raised, read out of its EXCEPINFO.
+struct Fault {
+    code: HResult,
+    description: String,
+}
+
+impl Fault {
+    /// Fills in a deferred EXCEPINFO, reads it, and frees its strings. None when nothing
+    /// was raised.
+    unsafe fn take(info: &mut EXCEPINFO) -> Option<Fault> {
+        if let Some(fill) = info.pfnDeferredFillIn {
+            fill(info);
+            info.pfnDeferredFillIn = None;
+        }
+        let description = read_bstr(info.bstrDescription).trim().to_string();
+        for b in [info.bstrSource, info.bstrDescription, info.bstrHelpFile] {
+            if !b.is_null() {
+                SysFreeString(b);
+            }
+        }
+        info.bstrSource = null();
+        info.bstrDescription = null();
+        info.bstrHelpFile = null();
+        let code = if info.scode != 0 { info.scode } else { info.wCode as i32 };
+        (code != 0 || !description.is_empty()).then_some(Fault { code, description })
+    }
+
+    fn text(&self) -> String {
+        describe(self.code, &self.description)
+    }
+}
+
+/// An IMAPI error as the page shows it: our own words for the ones a user can act on,
+/// then Windows' text, then the code, so a report always carries the code.
+fn describe(code: HResult, windows_text: &str) -> String {
+    let ours = match code as u32 {
+        0xC0AA_0402 => "光盘状态不允许写入",
+        0xC0AA_0404 => "镜像比光盘的剩余空间大",
+        0xC0AA_0405 => "光盘不是空白的",
+        0xC0AA_0406 => "刻录机不支持这种光盘",
+        _ => "",
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    if !ours.is_empty() {
+        parts.push(ours);
+    }
+    if !windows_text.is_empty() && windows_text != ours {
+        parts.push(windows_text);
+    }
+    let code = format!("0x{:08X}", code as u32);
+    if parts.is_empty() {
+        code
+    } else {
+        format!("{}（{code}）", parts.join("："))
+    }
+}
 
 unsafe fn read_bstr(b: BStr) -> String {
     if b.is_null() {
@@ -570,6 +637,14 @@ pub fn burn(
     if !bool_of(format.call("IsCurrentMediaSupported", vec![Variant::from_unknown(recorder.0)])?)? {
         return Err("这张光盘不能写入".into());
     }
+    // IMAPI refuses an image larger than the free space only once Write starts, and then
+    // as a bare exception; saying it here names both sizes.
+    let image_sectors = std::fs::metadata(iso).map(|m| m.len().div_ceil(2048)).unwrap_or(0) as i64;
+    if let Ok(free) = format.number("FreeSectorsOnMedia") {
+        if free > 0 && image_sectors > free {
+            return Err(format!("镜像有 {image_sectors} 个扇区，光盘只剩 {free} 个"));
+        }
+    }
 
     let wide: Vec<u16> = iso.encode_utf16().chain(std::iter::once(0)).collect();
     let mut stream: *mut c_void = null_mut();
@@ -605,7 +680,7 @@ pub fn burn(
     if cancel.load(Ordering::Relaxed) {
         return Err("已取消".into());
     }
-    written.map_err(|e| format!("刻录失败：0x{e}"))?;
+    written.map_err(|e| format!("刻录失败：{e}"))?;
     reporter(100.0, "刻录完成");
     Ok(())
 }
