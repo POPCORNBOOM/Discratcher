@@ -799,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "disc-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "base64 0.22.1",
  "cc",
@@ -814,7 +814,7 @@ dependencies = [
 
 [[package]]
 name = "discratcher"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "disc-core",
  "serde",
