@@ -48,14 +48,30 @@ pub fn is_supported_media(media_type: &str) -> bool {
     matches!(media_type.trim(), "DVD-R" | "DVD+R" | "DVD-RW" | "DVD+RW")
 }
 
-/// Refuses a burn on anything but a DVD the app supports, whatever the page allowed.
-pub fn check_burnable(id: &str) -> Result<(), String> {
+/// Refuses a burn on anything but a DVD the app supports, whatever the page allowed, and
+/// an image that does not fit the disc. Every image Discratcher makes covers the whole
+/// disc, so one much smaller than the disc was made for another disc (issue #8).
+pub fn check_burnable(id: &str, iso: &str) -> Result<(), String> {
     let d = list_drives().into_iter().find(|d| d.id == id).ok_or_else(|| format!("找不到光驱 {id}"))?;
     if !d.media_present {
         return Err("光驱里没有光盘".into());
     }
     if !d.supported {
         return Err(format!("目前只支持 DVD 光盘，这张是 {}", d.media_type));
+    }
+    let image = std::fs::metadata(iso).map_err(|e| format!("读不到镜像：{e}"))?.len().div_ceil(2048);
+    image_fits(image, d.total_sectors as u64)
+}
+
+pub fn image_fits(image: u64, disc: u64) -> Result<(), String> {
+    if disc == 0 {
+        return Ok(());
+    }
+    if image > disc {
+        return Err(format!("镜像有 {image} 个扇区，光盘只有 {disc} 个，放不下"));
+    }
+    if image < disc / 100 * 99 {
+        return Err(format!("镜像只有 {image} 个扇区，这张盘有 {disc} 个：镜像是按别的光盘生成的，请重新生成"));
     }
     Ok(())
 }
@@ -71,6 +87,9 @@ pub trait TimedDrive: Send {
     /// transport supports it.
     fn read_timed(&mut self, lba: u32, fua: bool) -> Result<TimedRead, String>;
     fn capacity(&mut self) -> Result<u32, String>;
+    /// Read one sector's 2048 user bytes. Used to check a calibration disc before it is
+    /// timed, never on the timing path.
+    fn read_sector(&mut self, lba: u32, buf: &mut [u8; 2048]) -> Result<(), String>;
     /// False when the transport cannot bypass the drive's own cache; callers then have to
     /// evict it with a distant read.
     fn supports_fua(&self) -> bool;
@@ -283,6 +302,16 @@ pub mod mmc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_image_must_fill_the_disc_it_is_burned_to() {
+        assert!(image_fits(2_295_104, 2_295_104).is_ok());
+        assert!(image_fits(2_295_104, 2_297_888).is_ok());
+        assert!(image_fits(2_295_104, 0).is_ok());
+        assert!(image_fits(2_295_105, 2_295_104).unwrap_err().contains("放不下"));
+        // Issue #8: a CD-sized calibration image on a DVD.
+        assert!(image_fits(359_849, 2_295_104).unwrap_err().contains("别的光盘"));
+    }
 
     #[test]
     fn only_single_layer_dvd_is_supported() {

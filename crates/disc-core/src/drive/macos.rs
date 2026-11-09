@@ -103,6 +103,16 @@ impl TimedDrive for MacDrive {
         }
     }
 
+    fn read_sector(&mut self, lba: u32, buf: &mut [u8; 2048]) -> Result<(), String> {
+        match &mut self.t {
+            Transport::Scsi(s) => s.exec(&mmc::read12(lba, 1, false), Some(&mut buf[..])).map(|_| ()),
+            Transport::Raw(f) => {
+                use std::os::unix::fs::FileExt;
+                f.read_exact_at(buf, lba as u64 * 2048).map_err(|e| format!("读取 LBA {lba} 失败：{e}"))
+            }
+        }
+    }
+
     fn capacity(&mut self) -> Result<u32, String> {
         match &mut self.t {
             Transport::Scsi(s) => {

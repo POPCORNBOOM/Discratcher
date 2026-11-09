@@ -73,6 +73,10 @@ impl TimedDrive for LinuxDrive {
         Ok(TimedRead { t_end_ns: self.epoch.elapsed().as_nanos() as f64 })
     }
 
+    fn read_sector(&mut self, lba: u32, buf: &mut [u8; 2048]) -> Result<(), String> {
+        self.exec(&mmc::read12(lba, 1, false), Some(&mut buf[..]))
+    }
+
     fn capacity(&mut self) -> Result<u32, String> {
         let mut b = [0u8; 8];
         self.exec(&mmc::read_capacity(), Some(&mut b))?;

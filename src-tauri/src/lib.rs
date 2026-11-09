@@ -3,6 +3,7 @@
 
 use disc_core::artwork::{self, ArtworkAnalysis, Composition, Picture};
 use disc_core::composition;
+use disc_core::calib::disc_check::{self, DiscCheck, DiscKind};
 use disc_core::calib::ladder::{self, CalibrationResult, LadderConfig};
 use disc_core::carver::{self, CarveJobConfig, CarveJobSummary, IsoAudit, Tone};
 use disc_core::drive::{self, burner, OpticalDriveInfo};
@@ -200,6 +201,25 @@ async fn start_calibration(
     .await
 }
 
+/// What the drive holds, for deciding whether calibrating starts with a burn.
+#[tauri::command]
+async fn inspect_disc(drive_id: String) -> Result<DiscKind, String> {
+    blocking(move || disc_check::inspect(&drive_id)).await
+}
+
+/// Reads a burned calibration disc back before it is timed. Only reads.
+#[tauri::command]
+async fn check_calibration_disc(app: AppHandle, state: State<'_, Studio>, drive_id: String) -> Result<DiscCheck, String> {
+    let cancel = fresh_cancel(&state);
+    blocking(move || {
+        let mut d = drive::open_timed(&drive_id, false)?;
+        disc_check::check_calibration_disc(d.as_mut(), &cancel, &mut |p| {
+            let _ = app.emit("calib://check", p);
+        })
+    })
+    .await
+}
+
 #[tauri::command]
 async fn analyze_artwork(image_path: String) -> Result<ArtworkAnalysis, String> {
     blocking(move || artwork::analyze(Path::new(&image_path))).await
@@ -313,7 +333,7 @@ async fn burn_iso_to_drive(
                 let _ = app.emit("burn://progress", p);
             });
         }
-        disc_core::drive::check_burnable(&drive_id)?;
+        disc_core::drive::check_burnable(&drive_id, &iso_path)?;
         // Windows burns inside the app: IMAPI2 is called straight from Rust, so progress
         // arrives from the drive and no window or helper process is involved.
         #[cfg(target_os = "windows")]
@@ -357,6 +377,8 @@ pub fn run() {
             cancel_job,
             generate_calibration_iso,
             start_calibration,
+            inspect_disc,
+            check_calibration_disc,
             analyze_artwork,
             simulate_disc_preview,
             preview_texture,

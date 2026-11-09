@@ -4,6 +4,8 @@ export interface OpticalDriveInfo {
   totalSectors: number; isBlank: boolean; simulated: boolean
   writeSpeeds?: number[]; maxWriteSpeed?: number; supported?: boolean
 }
+export type DiscKind = 'none' | 'unsupported' | 'blank' | 'calibration' | 'other'
+export interface DiscCheck { sectors: number; foreign: boolean }
 export interface DiscGeometryPreset {
   id: string; name: string; driveModel: string; mediaId: string; stamperCode: string
   /** Disc brand, filled in by whoever shares the calibration. */
@@ -21,7 +23,7 @@ export interface CalibRungEvent {
 }
 export interface CalibrationResult {
   preset: DiscGeometryPreset; rungs: CalibRungEvent[]; constantRmsDeg: number
-  cubicRmsDeg: number; spindlePeriodMs: number; suspect: boolean
+  cubicRmsDeg: number; spindlePeriodMs: number; suspect: boolean; specProblem?: string | null
 }
 export type CalibrationStatus = 'success' | 'suspect' | 'failed' | 'cancelled'
 export interface CalibrationRungRecord {

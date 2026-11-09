@@ -424,11 +424,21 @@ struct Sink {
     vtbl: *const SinkVtbl,
     refs: std::sync::atomic::AtomicU32,
     on_progress: Arc<dyn Fn(f64, &str) + Send + Sync>,
+    reached: Arc<Reached>,
+}
+
+/// How far the burn got, from the progress events: an error after the last sector is
+/// judged by this, not by the error alone.
+#[derive(Default)]
+struct Reached {
+    action: std::sync::atomic::AtomicI64,
+    last_lba: std::sync::atomic::AtomicI64,
+    sectors: std::sync::atomic::AtomicI64,
 }
 
 impl Sink {
-    fn new(on_progress: Arc<dyn Fn(f64, &str) + Send + Sync>) -> Box<Sink> {
-        Box::new(Sink { vtbl: &SINK_VTBL, refs: std::sync::atomic::AtomicU32::new(1), on_progress })
+    fn new(on_progress: Arc<dyn Fn(f64, &str) + Send + Sync>, reached: Arc<Reached>) -> Box<Sink> {
+        Box::new(Sink { vtbl: &SINK_VTBL, refs: std::sync::atomic::AtomicU32::new(1), on_progress, reached })
     }
 }
 
@@ -520,7 +530,13 @@ unsafe extern "system" fn sink_invoke(
     let total = progress.number("SectorCount").unwrap_or(0);
     trace(&format!("event: total={total}"));
     // CurrentAction is IMAPI_FORMAT2_DATA_WRITE_ACTION, an integer, not a string.
-    let action = progress.number("CurrentAction").map(phase_name).unwrap_or("写入中");
+    let action_code = progress.number("CurrentAction").ok();
+    let action = action_code.map(phase_name).unwrap_or("写入中");
+    if let Some(code) = action_code {
+        sink.reached.action.fetch_max(code, Ordering::SeqCst);
+    }
+    sink.reached.last_lba.fetch_max(written, Ordering::SeqCst);
+    sink.reached.sectors.fetch_max(total, Ordering::SeqCst);
     trace(&format!("event: action={action}"));
     if total > 0 {
         let percent = (written as f64 * 100.0 / total as f64).clamp(0.0, 99.0);
@@ -653,7 +669,8 @@ pub fn burn(
         return Err(format!("无法打开镜像 (0x{:08X})", hr as u32));
     }
 
-    let sink = Box::into_raw(Sink::new(reporter.clone()));
+    let reached = Arc::new(Reached { action: (-1).into(), ..Default::default() });
+    let sink = Box::into_raw(Sink::new(reporter.clone(), reached.clone()));
     advice(&format, unsafe { &*sink })?;
 
     let shared = Arc::new(format);
@@ -680,7 +697,16 @@ pub fn burn(
     if cancel.load(Ordering::Relaxed) {
         return Err("已取消".into());
     }
-    written.map_err(|e| format!("刻录失败：{e}"))?;
+    if let Err(e) = written {
+        let (action, last, sectors) =
+            (reached.action.load(Ordering::SeqCst), reached.last_lba.load(Ordering::SeqCst), reached.sectors.load(Ordering::SeqCst));
+        trace(&format!("write failed: action={action} last={last} sectors={sectors} {e}"));
+        if !super::burner::wrote_everything(action, last, sectors) {
+            return Err(format!("刻录失败：{e}"));
+        }
+        reporter(100.0, &format!("数据已全部写入，光驱收尾时报告：{e}"));
+        return Ok(());
+    }
     reporter(100.0, "刻录完成");
     Ok(())
 }
@@ -748,7 +774,7 @@ pub fn probe_burn_setup(drive: &str, iso: &str, speed: u8) -> Result<String, Str
     let mut stream: *mut c_void = null_mut();
     let hr = unsafe { SHCreateStreamOnFileEx(wide.as_ptr(), 0, 0x80, 0, null_mut(), &mut stream) };
     trace("setup: advice");
-    let sink = Box::into_raw(Sink::new(Arc::new(|_p: f64, _a: &str| {})));
+    let sink = Box::into_raw(Sink::new(Arc::new(|_p: f64, _a: &str| {}), Arc::default()));
     let events = advice(&format, unsafe { &*sink });
     Ok(format!(
         "media_type={media} speed={sectors} current={current} supported={supported} media_ok={media_ok} stream_hr=0x{hr:08X} events={}",
@@ -766,7 +792,7 @@ pub fn probe(drive: &str) -> Result<String, String> {
     let total = format.number("TotalSectorsOnMedia").unwrap_or(0);
     // Attaching the event sink needs no media, so this part of the burn is checked here
     // rather than discovered halfway through a disc.
-    let sink = Sink::new(Arc::new(|_percent: f64, _phase: &str| {}));
+    let sink = Sink::new(Arc::new(|_percent: f64, _phase: &str| {}), Arc::default());
     let events = match advice(&format, &sink) {
         Ok(()) => "ok".to_string(),
         Err(e) => e,

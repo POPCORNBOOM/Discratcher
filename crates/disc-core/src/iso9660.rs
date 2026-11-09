@@ -82,6 +82,26 @@ const BATCH_SECTORS: usize = 2048;
 /// Deterministic random fill: timing reads need ordinary data, single-byte textures make
 /// drives retry. Each sector has its own stream, so a sector can be produced on its own.
 fn fill_sector(s: &mut [u8], lba: usize) {
+    fill_random(s, lba)
+}
+
+/// One sector of the calibration image of `total_sectors`, exactly as
+/// `generate_calibration_iso` writes it, so a burned disc can be checked against it.
+pub fn calibration_sector(lba: u32, total_sectors: u32, out: &mut [u8; SECTOR_BYTES]) {
+    let lba = lba as usize;
+    if lba <= FS_LAST_LBA {
+        let mut head = vec![0u8; (FS_LAST_LBA + 1) * SECTOR_BYTES];
+        for (i, s) in head.chunks_mut(SECTOR_BYTES).enumerate() {
+            fill_random(s, i);
+        }
+        write_volume(&mut head, CALIBRATION_VOLUME, total_sectors);
+        out.copy_from_slice(&head[lba * SECTOR_BYTES..(lba + 1) * SECTOR_BYTES]);
+    } else {
+        fill_random(out, lba);
+    }
+}
+
+fn fill_random(s: &mut [u8], lba: usize) {
     let mut g = SplitMix64(0x2026_1104_0000_0000 ^ lba as u64);
     for w in s.chunks_exact_mut(8) {
         w.copy_from_slice(&g.next_u64().to_le_bytes());
@@ -170,6 +190,12 @@ mod tests {
         assert_eq!(d[17 * 2048], 255);
         assert_ne!(&d[0..64], &d[2048..2048 + 64]);
         assert!(d[0..2048].iter().any(|&b| b != 0));
+        // Every sector can be produced on its own, which is how a burned disc is checked.
+        let mut one = [0u8; 2048];
+        for lba in [0u32, 16, 17, 19, 20, 512, 1023] {
+            calibration_sector(lba, 1024, &mut one);
+            assert_eq!(&one[..], &d[lba as usize * 2048..(lba as usize + 1) * 2048], "LBA {lba}");
+        }
         std::fs::remove_file(&p).unwrap();
     }
 }

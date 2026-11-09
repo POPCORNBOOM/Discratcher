@@ -317,6 +317,10 @@ impl TimedDrive for WinDrive {
         Ok(TimedRead { t_end_ns: self.epoch.elapsed().as_nanos() as f64 })
     }
 
+    fn read_sector(&mut self, lba: u32, buf: &mut [u8; 2048]) -> Result<(), String> {
+        self.exec(&mmc::read12(lba, 1, false), Some(&mut buf[..])).map_err(|f| f.text(0xA8))
+    }
+
     fn capacity(&mut self) -> Result<u32, String> {
         self.read_capacity().map_err(|f| f.text(0x25))
     }

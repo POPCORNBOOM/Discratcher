@@ -6,14 +6,8 @@
       <p class="small muted">{{ s.pendingCode ? t('cal.forCode', { code: s.pendingCode }) : t('cal.forUnlisted') }} {{ t('cal.times', { n: minutes }) }}</p>
       <DrivePicker />
       <div class="step">
-        <span class="num">1</span>
-        <span class="grow">{{ t('cal.step1') }}</span>
-        <UiButton :variant="blank ? 'solid' : 'soft'" :disabled="!hasDisc || !!s.job" @click="burnDisc">{{ t('cal.burnCal') }}</UiButton>
-      </div>
-      <div class="step">
-        <span class="num">2</span>
-        <span class="grow">{{ t('cal.step2') }}</span>
-        <UiButton :variant="hasDisc && !blank ? 'solid' : 'soft'" :disabled="!hasDisc || !!s.job" @click="start">{{ t('cal.measure') }}</UiButton>
+        <span class="grow small">{{ t(!hasDisc ? 'cal.hintNoDisc' : blank ? 'cal.hintBlank' : 'cal.hintWritten') }}</span>
+        <UiButton variant="solid" :disabled="!hasDisc || !!s.job" @click="begin">{{ t('cal.start') }}</UiButton>
       </div>
       <div class="small muted">{{ t('cal.autosave') }}</div>
       <div v-if="isMock" class="dev row small">
@@ -89,12 +83,12 @@ import UiAdvanced from '../components/UiAdvanced.vue'
 import UiButton from '../components/UiButton.vue'
 import UiIcon from '../components/UiIcon.vue'
 import UiSlider from '../components/UiSlider.vue'
-import { notifyError, notifySuccess } from '../notices'
-import { useProcess, type StepContext } from '../stores/process'
+import { notifyError, notifySuccess, notifyWarning } from '../notices'
+import { useProcess, type ProcessStep, type StepContext } from '../stores/process'
 import { useStudio } from '../stores/studio'
-import type { CalibRungEvent, CalibrationRecord, CalibrationResult, CalibrationRungRecord, CalibrationStatus, DiscGeometryPreset } from '../types'
+import type { CalibRungEvent, CalibrationRecord, CalibrationResult, CalibrationRungRecord, CalibrationStatus, DiscCheck, DiscGeometryPreset, DiscKind } from '../types'
 
-/** Fits every DVD-R 4.7 GB. A smaller disc reports fewer sectors and uses that instead. */
+/** Every calibration image is DVD sized, whatever the drive said a moment ago (issue #8). */
 const CALIBRATION_SECTORS = 2295104
 
 const s = useStudio()
@@ -103,8 +97,6 @@ const rungs = ref(56)
 const reads = ref(40)
 const lo = ref(2)
 const hi = ref(96)
-/** Set after burning a calibration disc: measuring then starts without another click. */
-const awaitingDisc = ref(false)
 /** The calibration being shared; sharing opens only for one that has really been burned. */
 const shareTarget = ref<DiscGeometryPreset | null>(null)
 const deleteId = ref('')
@@ -201,24 +193,69 @@ const range = computed<[number, number]>(() => [lo.value / 100, hi.value / 100])
 const seconds = computed(() => calibrationSeconds(rungs.value, reads.value, range.value, discSectors.value))
 const minutes = computed(() => Math.ceil(seconds.value / 60))
 
-function burnDisc() {
-  const sectors = Math.min(s.drive?.totalSectors || CALIBRATION_SECTORS, CALIBRATION_SECTORS)
-  p.openBurn({
-    title: t('cal.burnTitle'),
-    note: t('cal.burnNote'),
-    fileName: 'calibration.iso',
-    prepareLabel: t('cal.prepare'),
-    prepare: (outputPath) => call('generate_calibration_iso', { outputPath, totalSectors: sectors }),
-    autoClose: true,
-    onDone: () => (awaitingDisc.value = true),
-  })
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** After a burn the drive takes a while to read the disc again, and some eject it. */
+async function waitForDisc(step: StepContext) {
+  for (;;) {
+    if (p.stopping) throw CANCELLED
+    await s.refreshDrives().catch(() => {})
+    const kind = s.drive ? await call<DiscKind>('inspect_disc', { driveId: s.drive.id }).catch((): DiscKind => 'none') : 'none'
+    if (kind === 'calibration') return
+    if (kind === 'other' || kind === 'unsupported') throw t('cal.notCalDisc')
+    step.report(null, t(kind === 'none' ? 'cal.reinsert' : 'cal.waitDisc'))
+    await sleep(2000)
+  }
 }
 
-watch([awaitingDisc, hasDisc, blank, () => s.job], () => {
-  if (!awaitingDisc.value || !hasDisc.value || blank.value || s.job) return
-  awaitingDisc.value = false
-  start()
-})
+let checkCtx: StepContext | null = null
+const checkStep: ProcessStep = {
+  label: t('cal.checkStep'),
+  estimate: () => 20,
+  run: async (step) => {
+    checkCtx = step
+    try {
+      const c = await call<DiscCheck>('check_calibration_disc', { driveId: s.drive!.id })
+      if (c.foreign) notifyWarning(t('cal.foreign'))
+    } finally {
+      checkCtx = null
+    }
+  },
+}
+const measureStep: ProcessStep = { label: t('cal.measureStep'), estimate: () => seconds.value, run: measure }
+
+/**
+ * One button. A blank DVD is burned, read back and measured in one job; a calibration
+ * disc burned earlier is read back and measured; anything else is refused with the
+ * reason. Every stage checks its input before the next one trusts it.
+ */
+async function begin() {
+  const d = s.drive
+  if (!d) return
+  let kind: DiscKind
+  try {
+    kind = await call<DiscKind>('inspect_disc', { driveId: d.id })
+  } catch (e) {
+    notifyError(String(e))
+    return
+  }
+  if (kind === 'blank') {
+    p.openBurn({
+      title: t('cal.title'),
+      note: t('cal.burnNote'),
+      fileName: 'calibration.iso',
+      prepareLabel: t('cal.prepare'),
+      prepare: (outputPath) => call('generate_calibration_iso', { outputPath, totalSectors: CALIBRATION_SECTORS }),
+      autoClose: true,
+      doneMessage: t('cal.measureDone'),
+      after: [{ label: t('cal.waitStep'), estimate: () => 10, run: waitForDisc }, checkStep, measureStep],
+    })
+  } else if (kind === 'calibration') {
+    p.open({ title: t('cal.title'), note: t('cal.measureNote'), writes: false, autoClose: true, doneMessage: t('cal.measureDone'), steps: [checkStep, measureStep] })
+  } else {
+    notifyError(t(kind === 'other' ? 'cal.notCalDisc' : kind === 'unsupported' ? 'cal.unsupported' : 'drive.noDisc'))
+  }
+}
 
 async function measure(step: StepContext) {
   const d = s.drive!
@@ -241,6 +278,10 @@ async function measure(step: StepContext) {
     await record({ ...about, status: 'suspect', message: t('cal.suspectMsg'), rmsDeg: r.cubicRmsDeg, preset: null }, began)
     throw t('cal.suspectErr')
   }
+  if (r.specProblem) {
+    await record({ ...about, status: 'suspect', message: r.specProblem, rmsDeg: r.cubicRmsDeg, preset: null }, began)
+    throw r.specProblem
+  }
   const stamp = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
   const preset = {
     ...r.preset,
@@ -261,16 +302,13 @@ async function measure(step: StepContext) {
   notifySuccess(t('cal.saved'))
 }
 
-function start() {
-  p.open({ title: t('cal.measureTitle'), note: t('cal.measureNote'), writes: false, autoClose: true, doneMessage: t('cal.measureDone'), steps: [{ label: t('cal.measureStep'), estimate: () => seconds.value, run: measure }] })
-}
 
 /** Browser-only: put a blank disc in the mock drive, prefill a code, run the real flow. */
 function simulate() {
   if (!isMock) return
   mockDev?.setMockDisc('blank')
   s.pendingCode = 'MOCK-0001 A'
-  s.refreshDrives().then(start)
+  s.refreshDrives().then(begin)
 }
 
 onMounted(() => {
@@ -281,6 +319,7 @@ onMounted(() => {
     if (plan) ctx?.report(plan.rungDone(e.lba, referenceLba))
   })
   on<string>('calib://status', (m) => ctx?.report(null, m))
+  on<number>('calib://check', (percent) => checkCtx?.report(percent))
   loadLog()
   refreshShared()
 })
@@ -311,6 +350,5 @@ dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(-
 dt { color: var(--oc-fg-muted); font-size: var(--oc-text-xs); }
 dd { margin: 0; overflow-wrap: anywhere; }
 .step { display: flex; align-items: center; gap: var(--oc-space-sm); }
-.num { width: 22px; height: 22px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--oc-bg-raised); font-size: var(--oc-text-sm); }
 .dev { padding-top: var(--oc-space-sm); border-top: 1px dashed var(--oc-border-muted); }
 </style>

@@ -95,6 +95,16 @@ impl TimedDrive for SimDrive {
         Ok(self.spiral.params.total_sectors)
     }
 
+    /// The simulated disc is a freshly burned calibration disc.
+    fn read_sector(&mut self, lba: u32, buf: &mut [u8; 2048]) -> Result<(), String> {
+        let total = self.spiral.params.total_sectors;
+        if lba >= total {
+            return Err(format!("LBA {lba} 超出光盘"));
+        }
+        crate::iso9660::calibration_sector(lba, total, buf);
+        Ok(())
+    }
+
     fn supports_fua(&self) -> bool {
         self.fua
     }

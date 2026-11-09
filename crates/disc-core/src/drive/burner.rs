@@ -33,6 +33,16 @@ pub fn parse_hdiutil_line(line: &str) -> Option<BurnProgress> {
     Some(BurnProgress { percent: None, message: msg.to_string() })
 }
 
+/// IMAPI_FORMAT2_DATA_WRITE_ACTION_FINALIZATION: from here on every sector is on the disc.
+pub const ACTION_FINALIZING: i64 = 5;
+
+/// Whether a burn that then reported an error had already put all its data on the disc.
+/// Some drives fail the closing step (issue #9: "feature page not current") after a
+/// complete write; that disc reads and measures fine, so the burn counts as done.
+pub fn wrote_everything(furthest_action: i64, last_lba: i64, sectors: i64) -> bool {
+    furthest_action >= ACTION_FINALIZING || (sectors > 0 && last_lba + 1 >= sectors)
+}
+
 /// Command line for the platforms that burn with an external tool. Windows burns in process
 /// through IMAPI2 instead, so this is only reached from macOS and Linux.
 pub fn burn_command(drive_id: &str, iso: &str, speed: u8, verify: bool) -> Result<Vec<String>, String> {
@@ -155,6 +165,15 @@ pub fn burn(argv: &[String], cancel: &AtomicBool, on_progress: &mut dyn FnMut(Bu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_error_after_the_last_sector_is_not_a_failed_burn() {
+        assert!(wrote_everything(5, 0, 0));
+        assert!(wrote_everything(6, 100, 2_295_104));
+        assert!(wrote_everything(4, 2_295_103, 2_295_104));
+        assert!(!wrote_everything(4, 1_000_000, 2_295_104));
+        assert!(!wrote_everything(-1, 0, 0));
+    }
 
     #[test]
     fn parses_puppet_strings() {

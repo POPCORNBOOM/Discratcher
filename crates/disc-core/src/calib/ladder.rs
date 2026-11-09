@@ -81,6 +81,8 @@ pub struct CalibrationResult {
     /// The fit stayed well above read noise: a rung may be a turn out. Do not carve with
     /// this geometry; re-measure.
     pub suspect: bool,
+    /// The geometry is outside what a single-layer DVD can be; why, in words.
+    pub spec_problem: Option<String>,
 }
 
 struct Session<'a> {
@@ -339,6 +341,7 @@ pub fn run_ladder(
     let suspect = is_suspect(cubic.rms_deg, noise);
     Ok(CalibrationResult {
         suspect,
+        spec_problem: super::disc_check::spec_problem(&preset),
         preset,
         rungs: rows,
         constant_rms_deg: c.rms_deg,

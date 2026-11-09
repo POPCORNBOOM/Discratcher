@@ -59,6 +59,9 @@ export interface BurnPlan {
   onDone?: () => void
   /** Show the composition growing on the disc while it burns. */
   reveal?: boolean
+  /** Work on the burned disc that belongs to the same job, such as measuring it. */
+  after?: ProcessStep[]
+  doneMessage?: string
 }
 
 /** The one screen every long job runs on, so it looks and stops the same everywhere. */
@@ -138,7 +141,7 @@ export const useProcess = defineStore('process', () => {
       note: plan.note,
       writes: true,
       autoClose: plan.autoClose,
-      doneMessage: t('process.burnDone'),
+      doneMessage: plan.doneMessage ?? t('process.burnDone'),
       onDone: plan.onDone,
       rateIssue: plan.rateIssue,
       shareable: plan.shareable,
@@ -160,6 +163,7 @@ export const useProcess = defineStore('process', () => {
           dangerous: () => true,
           run: () => call('burn_iso_to_drive', { driveId: s.drive!.id, isoPath: path, speed: burnSettings.speed, verify: burnSettings.verify }),
         },
+        ...(plan.after ?? []),
       ],
     })
   }
