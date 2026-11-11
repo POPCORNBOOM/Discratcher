@@ -68,7 +68,7 @@ export async function preset(id: string): Promise<DiscGeometryPreset> {
   if (!hit) throw new Error('HTTP 404')
   return hit
 }
-declare global { var __mockOpened: string | undefined }
+declare global { var __mockOpened: string | undefined; var __mockExported: string | undefined }
 export const openUrl = (url: string) => {
   globalThis.__mockOpened = url
   // A contribution is a pre-filled issue form. Keep what it carries so a later search
@@ -95,6 +95,7 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     case 'get_presets': return saved
     case 'save_preset': saved = [...saved.filter((p) => p.id !== a.preset.id), a.preset]; return null
     case 'delete_preset': saved = saved.filter((p) => p.id !== a.id); return null
+    case 'export_local': globalThis.__mockExported = a.path; return null
     case 'analyze_artwork':
       return { width: 2048, height: String(a.imagePath).includes('wide') ? 1024 : 2048, darkRatio: 0.41, suggestInvert: true, maxBlackRunPx: 86, thumbnail: disc(256, 30) }
     case 'preview_texture': {

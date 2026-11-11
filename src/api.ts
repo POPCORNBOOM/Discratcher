@@ -80,6 +80,11 @@ export async function pickCompositionSave(defaultPath: string): Promise<string |
   return save({ defaultPath, filters: [{ ...COMPOSITION, name: t('dialog.compositionFilter') }] })
 }
 
+export async function pickDataPath(defaultPath: string): Promise<string | null> {
+  if (mock) return `/Users/demo/${defaultPath}`
+  return save({ defaultPath, filters: [{ name: t('dialog.dataFilter'), extensions: ['json'] }] })
+}
+
 export async function pickSavePath(defaultPath: string): Promise<string | null> {
   if (mock) return `/Users/demo/${defaultPath}`
   return save({ defaultPath, filters: [{ name: t('dialog.isoFilter'), extensions: ['iso'] }] })

@@ -115,6 +115,17 @@ fn save_preset(app: AppHandle, preset: DiscGeometryPreset) -> Result<(), String>
     write_presets(&app, &v)
 }
 
+/// Everything this machine holds, in one file the user picks: presets and the calibration log.
+#[tauri::command]
+fn export_local(app: AppHandle, path: String) -> Result<(), String> {
+    let bundle = serde_json::json!({
+        "presets": user_presets(&app)?,
+        "calibrations": calibration_log(&app)?,
+    });
+    let text = serde_json::to_vec_pretty(&bundle).map_err(|e| e.to_string())?;
+    write_atomic(Path::new(&path), &text)
+}
+
 #[tauri::command]
 fn delete_preset(app: AppHandle, id: String) -> Result<(), String> {
     let mut v = user_presets(&app)?;
@@ -371,6 +382,7 @@ pub fn run() {
             get_presets,
             save_preset,
             delete_preset,
+            export_local,
             get_calibration_log,
             add_calibration_record,
             delete_calibration_record,
