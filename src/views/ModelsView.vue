@@ -23,7 +23,7 @@
           <UiIcon class="mark" :path="r.preset ? mdiHarddisk : mdiCloudOutline" :data-tooltip="t(r.preset ? 'models.onDisk' : 'models.inCloud')" />
           <div class="grow text">
             <div class="ellipsis" :data-tooltip="r.look.name" data-tooltip-overflow>{{ r.look.name }}</div>
-            <div class="small muted ellipsis selectable" :data-tooltip="r.look.stamperCode" data-tooltip-overflow>{{ r.look.stamperCode }}</div>
+            <div v-if="normalizeCode(r.look.name) !== normalizeCode(r.look.stamperCode)" class="small muted ellipsis selectable" :data-tooltip="r.look.stamperCode" data-tooltip-overflow>{{ r.look.stamperCode }}</div>
             <div class="badges">
               <span v-if="r.brand" class="badge">{{ r.brand }}</span>
               <span class="badge">{{ sizeLabel(r.size) }}</span>
