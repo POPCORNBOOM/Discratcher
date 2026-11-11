@@ -156,6 +156,7 @@ async function loadLog() {
   } catch (e) {
     notifyError(String(e))
   }
+  refreshShared()
 }
 
 async function record(entry: Omit<CalibrationRecord, 'id' | 'durationSeconds' | 'startedAt' | 'rungsMeasured' | 'points' | 'rungs' | 'reads' | 'rangePct'>, began: Date) {
@@ -321,10 +322,11 @@ onMounted(() => {
   on<string>('calib://status', (m) => ctx?.report(null, m))
   on<number>('calib://check', (percent) => checkCtx?.report(percent))
   loadLog()
-  refreshShared()
 })
 
+/** Only one of our own calibrations can already be in the library, so nobody else downloads the geometry. */
 function refreshShared() {
+  if (!log.value.some((r) => r.status === 'success' && r.preset)) return
   loadPresets().then((all) => (shared.value = all)).catch(() => {})
 }
 // A contribution lands on GitHub after the form closes, so look again whenever the page is shown.
