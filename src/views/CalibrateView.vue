@@ -22,10 +22,7 @@
       </UiAdvanced>
 
       <section class="records">
-        <div class="title row">
-          <span class="grow">{{ t('cal.records') }}</span>
-          <UiButton variant="ghost" :icon="mdiExportVariant" :disabled="!!s.job || (!log.length && !s.presets.length)" @click="exportLocal">{{ t('cal.export') }}</UiButton>
-        </div>
+        <div class="title">{{ t('cal.records') }}</div>
         <div v-if="!log.length" class="small muted">{{ t('cal.noRecords') }}</div>
         <div class="list">
           <div v-for="r in log" :key="r.id" class="record" :class="{ open: openId === r.id }">
@@ -73,9 +70,9 @@
 </template>
 
 <script setup lang="ts">
-import { mdiAlertOutline, mdiCheckCircleOutline, mdiCloseCircleOutline, mdiExportVariant, mdiInformationOutline, mdiMinusCircleOutline } from '@mdi/js'
+import { mdiAlertOutline, mdiCheckCircleOutline, mdiCloseCircleOutline, mdiInformationOutline, mdiMinusCircleOutline } from '@mdi/js'
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
-import { call, CANCELLED, isMock, loadIndex, mockDev, on, openInBrowser, pickDataPath } from '../api'
+import { call, CANCELLED, isMock, loadIndex, mockDev, on, openInBrowser } from '../api'
 import { issueUrl, normalizeCode, type CatalogEntry } from '../catalog'
 import { calibrationSeconds, CalibrationPlan, REFERENCE_SHARE } from '../etaModel'
 import { t } from '../i18n'
@@ -147,19 +144,6 @@ async function removeRecord() {
   try {
     await call('delete_calibration_record', { id })
     await loadLog()
-  } catch (e) {
-    notifyError(String(e))
-  }
-}
-
-/** Everything this machine holds, in one file: the presets, and the log behind them. */
-async function exportLocal() {
-  const day = new Date().toISOString().slice(0, 10)
-  const path = await pickDataPath(`discratcher-local-${day}.json`)
-  if (!path) return
-  try {
-    await call('export_local', { path })
-    notifySuccess(t('cal.exported'))
   } catch (e) {
     notifyError(String(e))
   }

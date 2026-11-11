@@ -31,6 +31,7 @@
             </div>
           </div>
           <span v-if="r.rating" class="rating small" :data-tooltip="t('models.rated', { n: r.rating.count })"><UiIcon :path="mdiStar" />{{ r.rating.average.toFixed(1) }}</span>
+          <UiButton v-if="r.preset" icon-only variant="ghost" :icon="mdiExportVariant" :aria-label="t('models.export')" @click="exportPreset(r.preset)" />
           <UiButton :variant="r.preset ? 'soft' : 'solid'" :icon="r.preset ? undefined : mdiDownload" :disabled="!!saving" @click="use(r)">{{ t(r.preset ? 'models.use' : 'models.download') }}</UiButton>
         </div>
       </div>
@@ -55,9 +56,9 @@
 </template>
 
 <script setup lang="ts">
-import { mdiAlertOutline, mdiCloudOutline, mdiDiscPlayer, mdiDownload, mdiHarddisk, mdiInformationOutline, mdiRefresh, mdiStar } from '@mdi/js'
+import { mdiAlertOutline, mdiCloudOutline, mdiDiscPlayer, mdiDownload, mdiExportVariant, mdiHarddisk, mdiInformationOutline, mdiRefresh, mdiStar } from '@mdi/js'
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
-import { call, loadIndex, loadPreset } from '../api'
+import { call, loadIndex, loadPreset, pickDataPath } from '../api'
 import { byRating, labelOf, matches, normalizeCode, sizeCm, sizeLabel, type CatalogEntry, type Rating } from '../catalog'
 import UiButton from '../components/UiButton.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
@@ -172,6 +173,19 @@ async function download(id: string) {
     return await loadPreset(id)
   } catch (e) {
     throw String(e).includes('404') ? t('models.gone') : t('models.offline')
+  }
+}
+
+/** A local calibration goes out as the same JSON the library publishes for it. */
+async function exportPreset(preset: DiscGeometryPreset) {
+  const name = (labelOf(preset) || preset.id).replace(/[\\/:*?"<>|]/g, '-')
+  const path = await pickDataPath(`${name}.json`)
+  if (!path) return
+  try {
+    await call('export_preset', { path, preset })
+    notifySuccess(t('models.exported'))
+  } catch (e) {
+    notifyError(String(e))
   }
 }
 
