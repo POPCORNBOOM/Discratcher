@@ -47,8 +47,14 @@ def summary($votes):
   | if $count == 0 then null else { average: ([$votes[]] | add / $count), count: $count } end;
 
 # Pictures the contributor dropped into the issue; the URLs are stable, so the folder keeps those.
+# GitHub writes them as markdown when typed and as <img> tags when dropped in.
 def images($issue):
-  [ ($issue.body // "") | scan("!\\[[^\\]]*\\]\\(([^)]+)\\)") | .[0] ] | unique;
+  ($issue.body // "") as $body
+  | [
+      ($body | scan("!\\[[^\\]]*\\]\\(([^)]+)\\)") | .[0]),
+      ($body | scan("<img[^>]+src=\"([^\"]+)\"") | .[0]),
+      ($body | scan("<img[^>]+src='([^']+)'") | .[0])
+    ] | unique;
 
 [ ($c[0] // [])[] as $issue | { issue: $issue, preset: (preset($issue)) } ]
 | map(select(.preset != null))
