@@ -37,7 +37,8 @@
 
       <div v-if="offline" class="notice warn">
         <UiIcon :path="mdiAlertOutline" />
-        <div>{{ t('models.offline') }}</div>
+        <div class="grow">{{ t('models.offline') }}</div>
+        <UiButton class="retry" variant="ghost" :icon="mdiRefresh" :disabled="syncing" @click="sync(true)">{{ t('models.retry') }}</UiButton>
       </div>
 
       <div v-else-if="settled && !syncing && !rows.length" class="notice info">
@@ -54,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import { mdiAlertOutline, mdiCloudOutline, mdiDiscPlayer, mdiDownload, mdiHarddisk, mdiInformationOutline, mdiStar } from '@mdi/js'
+import { mdiAlertOutline, mdiCloudOutline, mdiDiscPlayer, mdiDownload, mdiHarddisk, mdiInformationOutline, mdiRefresh, mdiStar } from '@mdi/js'
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { call, loadIndex, loadPresets } from '../api'
 import { byRating, matches, normalizeCode, sizeCm, sizeLabel, type CatalogEntry, type Rating } from '../catalog'
@@ -118,14 +119,17 @@ const rows = computed<Row[]>(() => {
   ]
 })
 
-async function sync() {
+/** A retried sync reports how it went; the automatic one on entry stays quiet. */
+async function sync(announce = false) {
   if (syncing.value) return
   syncing.value = true
   try {
     index.value = await loadIndex()
     offline.value = false
+    if (announce) notifySuccess(t('models.synced'))
   } catch {
     offline.value = true
+    if (announce) notifyError(t('models.offline'))
   } finally {
     syncing.value = false
   }
@@ -191,6 +195,7 @@ input::placeholder { color: var(--oc-fg-muted); }
 .rating { display: inline-flex; align-items: center; gap: 2px; color: var(--oc-fg-accent); }
 .rating svg { width: 14px; height: 14px; }
 .field { display: flex; flex-direction: column; gap: var(--oc-space-2xs); }
+.retry { flex: none; align-self: center; }
 .badges { display: flex; align-items: center; flex-wrap: wrap; gap: var(--oc-space-2xs); margin-top: 2px; }
 .badge { height: 18px; display: inline-flex; align-items: center; padding: 0 var(--oc-space-xs); border-radius: 9px; background: var(--oc-bg-raised); color: var(--oc-fg-muted); font-size: var(--oc-text-xs); white-space: nowrap; }
 .badge.warn { background: var(--oc-bg-warning-subtle); color: var(--oc-fg-warning); }

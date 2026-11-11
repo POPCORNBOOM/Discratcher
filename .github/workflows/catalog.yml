@@ -2,6 +2,8 @@ name: Catalog
 
 # Publishes the library as files, so the app never spends GitHub API quota:
 # a small search index, the geometry behind it, and one legacy file for old releases.
+# Closed issues stay in the library: closing is what the bot does after publishing,
+# and deleting an issue is what withdraws it.
 on:
   issues:
     types: [opened, edited, closed, reopened, deleted, labeled, unlabeled]
@@ -9,7 +11,7 @@ on:
 
 permissions:
   contents: write
-  issues: read
+  issues: write
 
 concurrency:
   group: catalog
@@ -31,7 +33,7 @@ jobs:
         run: |
           mkdir site
           list() {
-            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues?labels=$1&state=open&per_page=100" |
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/issues?labels=$1&state=all&per_page=100" |
               jq '[add // [] | .[] | select(.pull_request | not) | {number, body, labels: [.labels[] | {name}], user: {login: .user.login}}]'
           }
           list calibration > calibrations.json
@@ -51,3 +53,6 @@ jobs:
           git add index.json values.json catalog.json
           git commit -q -m "Update catalog"
           git push -q --force "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" catalog
+      - name: Close the issue that was just published
+        if: github.event_name == 'issues' && github.event.action != 'deleted' && github.event.issue.state == 'open'
+        run: gh issue close "${{ github.event.issue.number }}" --reason completed
