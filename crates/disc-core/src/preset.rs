@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct DiscGeometryPreset {
     pub id: String,
-    pub name: String,
     pub drive_model: String,
     pub media_id: String,
     pub stamper_code: String,
@@ -47,7 +46,6 @@ impl DiscGeometryPreset {
 pub fn reference_preset() -> DiscGeometryPreset {
     DiscGeometryPreset {
         id: "reference-gud1n-cmc-mag-am3-0237-l110".into(),
-        name: "HL-DT-ST GUD1N + CMC MAG. AM3（模具 0237 L110，56 阶）".into(),
         drive_model: "HL-DT-ST DVDRAM GUD1N 1.01".into(),
         media_id: "CMC MAG. AM3".into(),
         stamper_code: "CMDR47G-CFMWMO3-0237 L110".into(),

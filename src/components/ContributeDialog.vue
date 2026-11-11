@@ -49,7 +49,7 @@ function readBrand() {
 }
 
 async function contribute() {
-  const shared = { ...props.preset, brand: brand.value, stamperCode: code.value, name: props.preset.stamperCode ? props.preset.name : code.value }
+  const shared = { ...props.preset, brand: brand.value, stamperCode: code.value }
   try {
     localStorage.setItem(BRAND_KEY, brand.value)
   } catch {

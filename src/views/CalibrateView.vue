@@ -285,7 +285,6 @@ async function measure(step: StepContext) {
   const preset = {
     ...r.preset,
     id: `user-${Date.now()}`,
-    name: s.pendingCode || `${d.mediaId || d.product} · ${stamp}`,
     mediaId: d.mediaId,
     stamperCode: s.pendingCode,
     driveModel: about.driveModel,

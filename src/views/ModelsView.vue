@@ -22,8 +22,8 @@
         <div v-for="r in rows" :key="r.id" class="item" @pointerenter="s.discPreview = r.look" @pointerleave="s.discPreview = null">
           <UiIcon class="mark" :path="r.preset ? mdiHarddisk : mdiCloudOutline" :data-tooltip="t(r.preset ? 'models.onDisk' : 'models.inCloud')" />
           <div class="grow text">
-            <div class="ellipsis" :data-tooltip="r.look.name" data-tooltip-overflow>{{ r.look.name }}</div>
-            <div v-if="normalizeCode(r.look.name) !== normalizeCode(r.look.stamperCode)" class="small muted ellipsis selectable" :data-tooltip="r.look.stamperCode" data-tooltip-overflow>{{ r.look.stamperCode }}</div>
+            <div class="ellipsis" :data-tooltip="labelOf(r.look)" data-tooltip-overflow>{{ labelOf(r.look) }}</div>
+            <div v-if="r.look.stamperCode && r.look.mediaId" class="small muted ellipsis selectable" :data-tooltip="r.look.mediaId" data-tooltip-overflow>{{ r.look.mediaId }}</div>
             <div class="badges">
               <span v-if="r.brand" class="badge">{{ r.brand }}</span>
               <span class="badge">{{ sizeLabel(r.size) }}</span>
@@ -58,7 +58,7 @@
 import { mdiAlertOutline, mdiCloudOutline, mdiDiscPlayer, mdiDownload, mdiHarddisk, mdiInformationOutline, mdiRefresh, mdiStar } from '@mdi/js'
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { call, loadIndex, loadPreset } from '../api'
-import { byRating, matches, normalizeCode, sizeCm, sizeLabel, type CatalogEntry, type Rating } from '../catalog'
+import { byRating, labelOf, matches, normalizeCode, sizeCm, sizeLabel, type CatalogEntry, type Rating } from '../catalog'
 import UiButton from '../components/UiButton.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiIcon from '../components/UiIcon.vue'

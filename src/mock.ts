@@ -17,7 +17,7 @@ export function setMockDisc(state: 'none' | 'blank' | 'written' | 'cd') {
 }
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const demo = {
-  id: 'mock-reference', name: 'HL-DT-ST GUD1N + CMC MAG. AM3（模具 0237 L110，56 阶）',
+  id: 'mock-reference',
   driveModel: 'HL-DT-ST DVDRAM GUD1N 1.01', mediaId: 'CMC MAG. AM3', stamperCode: 'CMDR47G-CFMWMO3-0237 L110',
   totalSectors: 2295104, channelBitLengthNm: 133.3, innerRadiusMm: 24.173325346, outerRadiusMm: 57.878686008,
   pitchLinear: -1.85716e-5, pitchQuadratic: 1.191945e-4, pitchCubic: -1.373621e-4, basePitchUm: 0.7340606,
@@ -48,14 +48,14 @@ const disc = (size: number, dark: number) => {
 declare global { var __mockOffline: boolean | undefined; var __mockCalibrationFails: boolean | undefined }
 /** Contributions "opened on GitHub" while in the browser, so the library can return them. */
 const contributed: DiscGeometryPreset[] = []
-const library = () => [{ ...demo, id: 'issue-1', name: '演示盘（模具 TEST-0001）', mediaId: 'DEMO', brand: 'Verbatim', basePitchUm: 0.7401, stamperCode: 'TEST-0001 A', measuredSpanMm: [25.3, 56.9] as [number, number] } as DiscGeometryPreset, ...contributed]
+const library = () => [{ ...demo, id: 'issue-1', mediaId: 'DEMO', brand: 'Verbatim', basePitchUm: 0.7401, stamperCode: 'TEST-0001 A', measuredSpanMm: [25.3, 56.9] as [number, number] } as DiscGeometryPreset, ...contributed]
 /** The published index: search fields only, the way the workflow splits it. */
 export async function index(): Promise<CatalogEntry[]> {
   await wait(300)
   if (globalThis.__mockOffline) throw new Error('offline')
   const [demo, ...mine] = library()
   const entry = (p: DiscGeometryPreset, contributor: string, rating: CatalogEntry['rating']): CatalogEntry => ({
-    id: p.id, name: p.name, stamperCode: p.stamperCode, mediaId: p.mediaId, brand: p.brand ?? '', basePitchUm: p.basePitchUm,
+    id: p.id, stamperCode: p.stamperCode, mediaId: p.mediaId, brand: p.brand ?? '', basePitchUm: p.basePitchUm,
     size: p.outerRadiusMm > 45 ? 12 : 8, createdAt: p.createdAt, contributor, verified: true, rating,
   })
   return [entry(demo, 'demo-user', { average: 4.5, count: 6 }), ...mine.map((p) => entry(p, 'you', null))]
@@ -133,7 +133,7 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
         rungs.push(e); emit('calib://rung-progress', e); emit('calib://status', `第 ${i + 1} / ${a.maxTargets} 阶`); await wait(40)
       }
       rungs.forEach((r, i) => (r.cubicPitchResidualDeg = Math.sin(i * 2.1) * 0.35))
-      return { preset: { ...demo, id: '', name: '' }, rungs, constantRmsDeg: 0.715, cubicRmsDeg: 0.402, spindlePeriodMs: 25.474, suspect: false }
+      return { preset: { ...demo, id: '' }, rungs, constantRmsDeg: 0.715, cubicRmsDeg: 0.402, spindlePeriodMs: 25.474, suspect: false }
     }
     case 'get_calibration_log': return [...log].reverse()
     case 'add_calibration_record': log.push(a.record); return null

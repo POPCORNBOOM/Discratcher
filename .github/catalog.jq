@@ -15,9 +15,9 @@ def finite: [.totalSectors, .channelBitLengthNm, .innerRadiusMm, .outerRadiusMm,
 def preset($issue):
   $issue | payload as $p
   | select($issue.pull_request == null and ($p | type) == "object")
-  | select(($p | finite | map(type == "number") | all) and ($p.name | printable) and ($p.stamperCode | printable))
+  | select(($p | finite | map(type == "number") | all) and ($p.stamperCode | printable))
   | select(($p.measuredSpanMm | type) == "array" and ($p.measuredSpanMm | length) == 2 and ($p.measuredSpanMm | map(type == "number") | all))
-  | $p + {
+  | $p | del(.name) | . + {
       id: "issue-\($issue.number)",
       mediaId: ($p.mediaId // "" | tostring),
       brand: ($p.brand // "" | tostring | .[0:40]),
@@ -64,7 +64,6 @@ def images($issue):
     index: [
       $items[] | .issue as $issue | .preset as $p | {
         id: $p.id,
-        name: $p.name,
         stamperCode: $p.stamperCode,
         mediaId: $p.mediaId,
         brand: $p.brand,

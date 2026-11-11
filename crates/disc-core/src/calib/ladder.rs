@@ -320,7 +320,6 @@ pub fn run_ladder(
     let p = cubic.params;
     let preset = DiscGeometryPreset {
         id: String::new(),
-        name: String::new(),
         drive_model: String::new(),
         media_id: String::new(),
         stamper_code: String::new(),

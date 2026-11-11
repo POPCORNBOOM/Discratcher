@@ -7,7 +7,7 @@ export interface OpticalDriveInfo {
 export type DiscKind = 'none' | 'unsupported' | 'blank' | 'calibration' | 'other'
 export interface DiscCheck { sectors: number; foreign: boolean }
 export interface DiscGeometryPreset {
-  id: string; name: string; driveModel: string; mediaId: string; stamperCode: string
+  id: string; driveModel: string; mediaId: string; stamperCode: string
   /** Disc brand, filled in by whoever shares the calibration. */
   brand?: string
   /** Set locally when a real burn with this geometry has finished; sharing needs it. */
@@ -17,7 +17,7 @@ export interface DiscGeometryPreset {
   rmsResidualDeg: number; measuredSpanMm: [number, number]; createdAt: string
 }
 /** What previewing a disc needs; the library index carries it, so a row can be previewed before it is downloaded. */
-export type PresetLook = Pick<DiscGeometryPreset, 'name' | 'stamperCode' | 'mediaId' | 'basePitchUm'>
+export type PresetLook = Pick<DiscGeometryPreset, 'stamperCode' | 'mediaId' | 'basePitchUm'>
 export interface CalibRungEvent {
   rungIndex: number; totalRungs: number; lba: number; radiusMm: number; phaseDeg: number
   sigmaDeg: number; unwrappedTurns: number; constPitchResidualDeg: number

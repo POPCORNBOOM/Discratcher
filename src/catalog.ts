@@ -79,10 +79,13 @@ export function normalizeCode(text: string) {
   return text.toUpperCase().replace(/[^0-9A-Z]/g, '')
 }
 
+/** What a calibration is called: the code printed on the disc, or the media it was measured from. */
+export const labelOf = (entry: PresetLook) => entry.stamperCode || entry.mediaId || '—'
+
 /** An empty query lists everything; any printed field may carry the rest. */
 export function matches(entry: PresetLook & { brand?: string }, query: string) {
   const q = normalizeCode(query)
-  return !q || [entry.stamperCode, entry.mediaId, entry.name, entry.brand ?? ''].some((f) => normalizeCode(f).includes(q))
+  return !q || [entry.stamperCode, entry.mediaId, entry.brand ?? ''].some((f) => normalizeCode(f).includes(q))
 }
 
 /** Best rated first; unrated entries follow, newest first within a tie. */

@@ -33,7 +33,7 @@
 
       <div class="preset" data-tauri-drag-region="false">
         <UiSelect class="picker" filterable :label="t('presets.label')" :placeholder="t('presets.none')" :model-value="s.preset?.id ?? ''" :options="presetOptions" :disabled="!!s.job" @update:model-value="s.presetId = $event" @preview="preview" />
-        <UiButton v-if="s.preset" icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('presets.delete', { name: s.preset.name })" :disabled="!!s.job" @click="confirmDelete = true" />
+        <UiButton v-if="s.preset" icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('presets.delete', { name: labelOf(s.preset) })" :disabled="!!s.job" @click="confirmDelete = true" />
       </div>
 
       <div v-if="!mac" class="controls" data-tauri-drag-region="false">
@@ -50,7 +50,7 @@
     </div>
 
     <UiDialog v-if="confirmDelete && s.preset" :title="t('presets.deleteTitle')" data-tauri-drag-region="false" @close="confirmDelete = false">
-      <p>{{ t('presets.deleteBody', { name: s.preset.name }) }}</p>
+      <p>{{ t('presets.deleteBody', { name: labelOf(s.preset) }) }}</p>
       <template #actions>
         <UiButton variant="ghost" @click="confirmDelete = false">{{ t('common.cancel') }}</UiButton>
         <UiButton variant="danger" @click="removePreset">{{ t('common.delete') }}</UiButton>
@@ -73,7 +73,7 @@
 import { mdiUpdate, mdiArrowLeft, mdiCheck, mdiClose, mdiContentSaveOutline, mdiImagePlusOutline, mdiTranslate, mdiCrosshairsGps, mdiExportVariant, mdiFire, mdiFolderOpenOutline, mdiGithub, mdiHomeOutline, mdiImageEditOutline, mdiMagnify, mdiMessageAlertOutline, mdiTrashCanOutline, mdiWindowMaximize, mdiWindowMinimize, mdiWindowRestore } from '@mdi/js'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { call, isWindowMaximized, openInBrowser, windowControl } from '../api'
-import { REPOSITORY_URL } from '../catalog'
+import { labelOf, REPOSITORY_URL } from '../catalog'
 import { locale, locales, setLocale, t } from '../i18n'
 import { notices, notifyError, notifySuccess } from '../notices'
 import { useProcess } from '../stores/process'
@@ -107,7 +107,7 @@ let fadeTimer = 0
 let closeTimer = 0
 
 /** The disc the next burn will use, chosen from every calibration on this machine. */
-const presetOptions = computed(() => s.presets.map((p) => ({ value: p.id, label: p.name, keywords: `${p.stamperCode} ${p.mediaId} ${p.brand ?? ''}` })))
+const presetOptions = computed(() => s.presets.map((p) => ({ value: p.id, label: labelOf(p), keywords: `${p.stamperCode} ${p.mediaId} ${p.brand ?? ''}` })))
 const preview = (id: string | null) => (s.discPreview = s.presets.find((p) => p.id === id) ?? null)
 
 async function removePreset() {

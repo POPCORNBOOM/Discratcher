@@ -415,7 +415,7 @@ mod tests {
         let cfg: CarveJobConfig = serde_json::from_str(
             r#"{"layers":[{"id":"a","path":"/a.png","x":0,"y":0,"size":1,"rotationDeg":1.5,"invert":true,"contrast":0,"width":4,"height":4}],
             "outputIsoPath":"/a.iso","servoSafeDither":true,"maxDarkDutyCycle":0.65,
-            "preset":{"id":"x","name":"n","driveModel":"","mediaId":"","stamperCode":"","totalSectors":2295104,
+            "preset":{"id":"x","driveModel":"","mediaId":"","stamperCode":"","totalSectors":2295104,
             "channelBitLengthNm":133.3,"innerRadiusMm":24.1,"outerRadiusMm":57.9,"pitchLinear":0,
             "pitchQuadratic":0,"pitchCubic":0,"basePitchUm":0.73,"rmsResidualDeg":0.4,
             "measuredSpanMm":[25.2,56.9],"createdAt":""}}"#,

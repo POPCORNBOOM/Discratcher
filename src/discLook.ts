@@ -31,11 +31,11 @@ function hash(text: string) {
 /** The same disc always looks the same, and a different disc looks different. */
 export function lookOf(preset: PresetLook | null): DiscLook {
   if (!preset) return { dye: DYES[0], pitch: 0.74, seed: 0.3, code: DEFAULT_CODE }
-  const h = hash(preset.mediaId || preset.stamperCode || preset.name)
+  const h = hash(preset.mediaId || preset.stamperCode)
   return {
     dye: DYES[h % DYES.length],
     pitch: preset.basePitchUm,
     seed: ((h >>> 16) % 1000) / 1000,
-    code: preset.stamperCode || preset.name,
+    code: preset.stamperCode || preset.mediaId || DEFAULT_CODE,
   }
 }
