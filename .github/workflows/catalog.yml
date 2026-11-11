@@ -6,7 +6,7 @@ name: Catalog
 # and deleting an issue is what withdraws it.
 on:
   issues:
-    types: [opened, edited, closed, reopened, deleted, labeled, unlabeled]
+    types: [opened, edited, deleted, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
