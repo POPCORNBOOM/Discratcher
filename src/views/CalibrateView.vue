@@ -72,8 +72,8 @@
 <script setup lang="ts">
 import { mdiAlertOutline, mdiCheckCircleOutline, mdiCloseCircleOutline, mdiInformationOutline, mdiMinusCircleOutline } from '@mdi/js'
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
-import { call, CANCELLED, isMock, loadPresets, mockDev, on, openInBrowser } from '../api'
-import { issueUrl } from '../catalog'
+import { call, CANCELLED, isMock, loadIndex, mockDev, on, openInBrowser } from '../api'
+import { issueUrl, normalizeCode, type CatalogEntry } from '../catalog'
 import { calibrationSeconds, CalibrationPlan, REFERENCE_SHARE } from '../etaModel'
 import { t } from '../i18n'
 import ContributeDialog from '../components/ContributeDialog.vue'
@@ -106,12 +106,11 @@ const openId = ref('')
 type LogState = Exclude<CalibrationStatus, 'success'> | 'unverified' | 'tested' | 'contributed'
 const stateLabel = computed<Record<LogState, string>>(() => ({ unverified: t('cal.state.unverified'), tested: t('cal.state.tested'), contributed: t('cal.state.contributed'), suspect: t('cal.state.suspect'), failed: t('cal.state.failed'), cancelled: t('cal.state.cancelled') }))
 const stateIcon: Record<LogState, string> = { unverified: mdiAlertOutline, tested: mdiInformationOutline, contributed: mdiCheckCircleOutline, suspect: mdiAlertOutline, failed: mdiCloseCircleOutline, cancelled: mdiMinusCircleOutline }
-/** Geometry already in the community catalog; stays empty when the catalog is unreachable. */
-const shared = shallowRef<DiscGeometryPreset[]>([])
-const same = (a: DiscGeometryPreset, b: DiscGeometryPreset) =>
-  [a.basePitchUm - b.basePitchUm, a.pitchLinear - b.pitchLinear, a.pitchQuadratic - b.pitchQuadratic, a.pitchCubic - b.pitchCubic].every((d) => Math.abs(d) < 1e-9)
-
-const sharedAs = (r: CalibrationRecord) => (r.preset ? shared.value.find((p) => same(p, r.preset!)) : undefined)
+/** The library index; stays empty when it is unreachable. */
+const shared = shallowRef<CatalogEntry[]>([])
+/** A calibration of ours that is already in the library: same printed code and same measured pitch. */
+const sharedAs = (r: CalibrationRecord) =>
+  r.preset ? shared.value.find((e) => normalizeCode(e.stamperCode) === normalizeCode(r.preset!.stamperCode) && e.basePitchUm === r.preset!.basePitchUm) : undefined
 
 function state(r: CalibrationRecord): LogState {
   if (r.status !== 'success') return r.status
@@ -156,7 +155,6 @@ async function loadLog() {
   } catch (e) {
     notifyError(String(e))
   }
-  refreshShared()
 }
 
 async function record(entry: Omit<CalibrationRecord, 'id' | 'durationSeconds' | 'startedAt' | 'rungsMeasured' | 'points' | 'rungs' | 'reads' | 'rangePct'>, began: Date) {
@@ -322,12 +320,12 @@ onMounted(() => {
   on<string>('calib://status', (m) => ctx?.report(null, m))
   on<number>('calib://check', (percent) => checkCtx?.report(percent))
   loadLog()
+  refreshShared()
 })
 
-/** Only one of our own calibrations can already be in the library, so nobody else downloads the geometry. */
+/** The index is small and already held for searching, so asking it what has been contributed is free. */
 function refreshShared() {
-  if (!log.value.some((r) => r.status === 'success' && r.preset)) return
-  loadPresets().then((all) => (shared.value = all)).catch(() => {})
+  loadIndex().then((all) => (shared.value = all)).catch(() => {})
 }
 // A contribution lands on GitHub after the form closes, so look again whenever the page is shown.
 watch(() => s.view, (v) => v === 'calibrate' && refreshShared())

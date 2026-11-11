@@ -1,5 +1,6 @@
-# Builds the app's library from the raw issues the workflow fetched:
-# an index small enough to sync often, and the geometry only a download needs.
+# Builds the app's library from the raw issues the workflow fetched: one small
+# index for searching, and one folder per calibration holding only that
+# calibration's geometry, votes and pictures.
 
 # The JSON block the issue template fills in.
 def payload:
@@ -33,19 +34,26 @@ def vote($issue):
   | select(($score | floor) == $score and $score >= 1 and $score <= 5)
   | { target: $target, score: $score, account: $issue.user.login, number: $issue.number };
 
-# One vote per account per calibration: the newest issue wins, which is the highest number.
-def ratings:
+# One vote per account per calibration: the newest issue wins, which is the highest
+# number, so re-rating overwrites the key instead of counting twice.
+def votes:
   [ .[] | vote(.) ]
   | group_by([.account, .target])
   | map(max_by(.number))
-  | group_by([.target])
-  | map({ key: .[0].target, value: { average: ((map(.score) | add) / length), count: length } })
-  | from_entries;
+  | reduce .[] as $v ({}; .[$v.target][$v.account] = $v.score);
+
+def summary($votes):
+  ($votes | length) as $count
+  | if $count == 0 then null else { average: ([$votes[]] | add / $count), count: $count } end;
+
+# Pictures the contributor dropped into the issue; the URLs are stable, so the folder keeps those.
+def images($issue):
+  [ ($issue.body // "") | scan("!\\[[^\\]]*\\]\\(([^)]+)\\)") | .[0] ] | unique;
 
 [ ($c[0] // [])[] as $issue | { issue: $issue, preset: (preset($issue)) } ]
 | map(select(.preset != null))
 | . as $items
-| ($r[0] // [] | ratings) as $ratings
+| ($r[0] // [] | votes) as $votes
 | {
     index: [
       $items[] | .issue as $issue | .preset as $p | {
@@ -59,8 +67,16 @@ def ratings:
         createdAt: $p.createdAt,
         contributor: ($issue.user.login // ""),
         verified: ([$issue.labels[].name] | index("verified") != null),
-        rating: ($ratings[$issue.number | tostring] // null)
+        rating: summary($votes[$issue.number | tostring] // {})
       }
     ],
-    values: [ $items[].preset ]
+    files: (
+      reduce $items[] as $item ({};
+        ($item.issue.number | tostring) as $n
+        | .["library/issue-\($n)/data.json"] = $item.preset
+        | .["library/issue-\($n)/ratings.json"] = ($votes[$n] // {})
+        | (images($item.issue)) as $pictures
+        | if ($pictures | length) > 0 then .["library/issue-\($n)/media.json"] = $pictures else . end
+      )
+    )
   }

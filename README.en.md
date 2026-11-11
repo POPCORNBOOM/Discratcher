@@ -96,7 +96,7 @@ The core logic lives in `crates/disc-core` and does not depend on Tauri; `src-ta
 
 ## Calibration library
 
-Calibration data comes from issues labelled `calibration` in this repository. When they change, a workflow publishes them to the `catalog` branch: `index.json` holds only what searching needs (names, codes, ratings), so the app syncs it once and filters locally without touching the network per keystroke; `values.json` holds the full geometry, fetched only to download a calibration. Neither needs an account, and the old `catalog.json` is still published for 0.1.4 and earlier.
+Calibration data comes from issues labelled `calibration` in this repository. When they change, a workflow publishes them to the `catalog` branch: `index.json` holds only what searching needs (names, codes, ratings), so the app syncs it once and filters locally without touching the network per keystroke. Each calibration then gets its own `library/issue-<number>/` folder: `data.json` is the geometry, `ratings.json` maps an account to its score, and `media.json` lists the pictures dropped into the issue — fetched only when that one calibration is downloaded. Neither file needs an account, and the old `catalog.json` is still published for 0.1.4 and earlier.
 
 - **Contribute**: you must burn a real disc with your calibration before sharing it. The app opens a pre-filled issue form, you confirm the submission on GitHub, and the app stores no token. You can drop the source image and a photo of the result into the form; once submitted, it is published and the issue is closed for you.
 - **Rate**: after burning with someone else's calibration, you can give it 1–5 stars, also through a pre-filled issue (label `rating`). Only an account's latest vote on each calibration counts.

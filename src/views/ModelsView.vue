@@ -57,7 +57,7 @@
 <script setup lang="ts">
 import { mdiAlertOutline, mdiCloudOutline, mdiDiscPlayer, mdiDownload, mdiHarddisk, mdiInformationOutline, mdiRefresh, mdiStar } from '@mdi/js'
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
-import { call, loadIndex, loadPresets } from '../api'
+import { call, loadIndex, loadPreset } from '../api'
 import { byRating, matches, normalizeCode, sizeCm, sizeLabel, type CatalogEntry, type Rating } from '../catalog'
 import UiButton from '../components/UiButton.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
@@ -166,17 +166,13 @@ async function use(r: Row) {
   }
 }
 
-/** The geometry behind a row that is not on this machine yet: only a download needs it. */
+/** The geometry behind a row that is not on this machine yet: one folder, one request. */
 async function download(id: string) {
-  let all: DiscGeometryPreset[]
   try {
-    all = await loadPresets()
-  } catch {
-    throw t('models.offline')
+    return await loadPreset(id)
+  } catch (e) {
+    throw String(e).includes('404') ? t('models.gone') : t('models.offline')
   }
-  const preset = all.find((p) => p.id === id)
-  if (!preset) throw t('models.gone')
-  return preset
 }
 
 function calibrate() {

@@ -5,11 +5,11 @@ const REPOSITORY = 'POPCORNBOOM/Discratcher'
 export const REPOSITORY_URL = `https://github.com/${REPOSITORY}`
 const RATING_TEMPLATE = 'rating.yml'
 const TEMPLATE = 'calibration.yml'
-const LIBRARY_URL = `https://raw.githubusercontent.com/${REPOSITORY}/catalog`
+const PUBLISHED_URL = `https://raw.githubusercontent.com/${REPOSITORY}/catalog`
 /** What a search reads: printed fields and ratings, without the geometry. */
-const INDEX_URL = `${LIBRARY_URL}/index.json`
-/** Full geometry, fetched only to download a calibration: searching never needs it. */
-const VALUES_URL = `${LIBRARY_URL}/values.json`
+const INDEX_URL = `${PUBLISHED_URL}/index.json`
+/** One folder per calibration; the geometry inside is fetched only to use that one. */
+const LIBRARY_URL = `${PUBLISHED_URL}/library`
 const TIMEOUT_MS = 8000
 /** Long enough to answer every keystroke locally, short enough that a new calibration shows up. */
 const INDEX_TTL_MS = 10 * 60 * 1000
@@ -50,15 +50,18 @@ export function fetchIndex(): Promise<CatalogEntry[]> {
   return pulling
 }
 
-let values: Promise<DiscGeometryPreset[]> | null = null
+const presets = new Map<string, Promise<DiscGeometryPreset>>()
 
-/** Every shared calibration, geometry included. One fetch per session, on first use. */
-export function fetchPresets(): Promise<DiscGeometryPreset[]> {
-  values ??= get<DiscGeometryPreset[]>(VALUES_URL).catch((e) => {
-    values = null
+/** One calibration's geometry. Held for the session, and only fetched when it is really used. */
+export function fetchPreset(id: string): Promise<DiscGeometryPreset> {
+  const held = presets.get(id)
+  if (held) return held
+  const pull = get<DiscGeometryPreset>(`${LIBRARY_URL}/${encodeURIComponent(id)}/data.json`).catch((e) => {
+    presets.delete(id)
     throw e
   })
-  return values
+  presets.set(id, pull)
+  return pull
 }
 
 /** Disc diameter, read off the measured geometry rather than asked of the contributor. */

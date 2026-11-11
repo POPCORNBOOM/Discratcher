@@ -16,7 +16,7 @@ export function setMockDisc(state: 'none' | 'blank' | 'written' | 'cd') {
   globalThis.__mockDisc = state
 }
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
-const preset = {
+const demo = {
   id: 'mock-reference', name: 'HL-DT-ST GUD1N + CMC MAG. AM3（模具 0237 L110，56 阶）',
   driveModel: 'HL-DT-ST DVDRAM GUD1N 1.01', mediaId: 'CMC MAG. AM3', stamperCode: 'CMDR47G-CFMWMO3-0237 L110',
   totalSectors: 2295104, channelBitLengthNm: 133.3, innerRadiusMm: 24.173325346, outerRadiusMm: 57.878686008,
@@ -48,7 +48,7 @@ const disc = (size: number, dark: number) => {
 declare global { var __mockOffline: boolean | undefined; var __mockCalibrationFails: boolean | undefined }
 /** Contributions "opened on GitHub" while in the browser, so the library can return them. */
 const contributed: DiscGeometryPreset[] = []
-const library = () => [{ ...preset, id: 'issue-1', name: '演示盘（模具 TEST-0001）', mediaId: 'DEMO', brand: 'Verbatim', basePitchUm: 0.7401, stamperCode: 'TEST-0001 A', measuredSpanMm: [25.3, 56.9] as [number, number] } as DiscGeometryPreset, ...contributed]
+const library = () => [{ ...demo, id: 'issue-1', name: '演示盘（模具 TEST-0001）', mediaId: 'DEMO', brand: 'Verbatim', basePitchUm: 0.7401, stamperCode: 'TEST-0001 A', measuredSpanMm: [25.3, 56.9] as [number, number] } as DiscGeometryPreset, ...contributed]
 /** The published index: search fields only, the way the workflow splits it. */
 export async function index(): Promise<CatalogEntry[]> {
   await wait(300)
@@ -60,11 +60,13 @@ export async function index(): Promise<CatalogEntry[]> {
   })
   return [entry(demo, 'demo-user', { average: 4.5, count: 6 }), ...mine.map((p) => entry(p, 'you', null))]
 }
-/** The published values: everything the app needs to burn. */
-export async function presets(): Promise<DiscGeometryPreset[]> {
+/** The published folder for one calibration: everything the app needs to burn it. */
+export async function preset(id: string): Promise<DiscGeometryPreset> {
   await wait(200)
   if (globalThis.__mockOffline) throw new Error('offline')
-  return library()
+  const hit = library().find((p) => p.id === id)
+  if (!hit) throw new Error('HTTP 404')
+  return hit
 }
 declare global { var __mockOpened: string | undefined }
 export const openUrl = (url: string) => {
@@ -131,7 +133,7 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
         rungs.push(e); emit('calib://rung-progress', e); emit('calib://status', `第 ${i + 1} / ${a.maxTargets} 阶`); await wait(40)
       }
       rungs.forEach((r, i) => (r.cubicPitchResidualDeg = Math.sin(i * 2.1) * 0.35))
-      return { preset: { ...preset, id: '', name: '' }, rungs, constantRmsDeg: 0.715, cubicRmsDeg: 0.402, spindlePeriodMs: 25.474, suspect: false }
+      return { preset: { ...demo, id: '', name: '' }, rungs, constantRmsDeg: 0.715, cubicRmsDeg: 0.402, spindlePeriodMs: 25.474, suspect: false }
     }
     case 'get_calibration_log': return [...log].reverse()
     case 'add_calibration_record': log.push(a.record); return null

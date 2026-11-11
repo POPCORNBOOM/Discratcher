@@ -5,7 +5,7 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { t } from './i18n'
 import type { DiscGeometryPreset } from './types'
-import { fetchIndex, fetchPresets, type CatalogEntry } from './catalog'
+import { fetchIndex, fetchPreset, type CatalogEntry } from './catalog'
 
 const inTauri = '__TAURI_INTERNALS__' in window
 
@@ -32,8 +32,8 @@ export async function loadIndex(): Promise<CatalogEntry[]> {
   return mock ? mock.index() : fetchIndex()
 }
 
-export async function loadPresets(): Promise<DiscGeometryPreset[]> {
-  return mock ? mock.presets() : fetchPresets()
+export async function loadPreset(id: string): Promise<DiscGeometryPreset> {
+  return mock ? mock.preset(id) : fetchPreset(id)
 }
 
 /** The page draws the window frame, so these are the only window calls the UI makes. */
