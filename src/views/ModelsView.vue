@@ -3,10 +3,7 @@
     <div class="flow">
       <h1>{{ t('models.title') }}</h1>
       <p class="small muted">{{ t('models.intro') }}</p>
-      <form class="row" @submit.prevent="search">
-        <input ref="field" v-model.trim="query" class="grow" :aria-label="t('models.codeLabel')" :placeholder="t('models.codeHint')" spellcheck="false" autocomplete="off" @focus="s.codeFocus = true" @blur="s.codeFocus = false" />
-        <UiButton variant="solid" type="submit" :icon="mdiMagnify" :disabled="!searchable || busy">{{ t('models.search') }}</UiButton>
-      </form>
+      <input ref="field" v-model.trim="query" :aria-label="t('models.codeLabel')" :placeholder="t('models.codeHint')" spellcheck="false" autocomplete="off" @focus="s.codeFocus = true" @blur="s.codeFocus = false" />
 
       <UiAdvanced>
         <div class="field">
@@ -19,47 +16,48 @@
         </div>
       </UiAdvanced>
 
-      <div v-if="busy" class="small muted">{{ t('models.searching') }}</div>
+      <div v-if="syncing && !index.length" class="small muted">{{ t('models.syncing') }}</div>
 
-      <div v-if="results.length" class="list">
-        <div v-for="r in results" :key="r.preset.id" class="item" @pointerenter="s.discPreview = r.preset" @pointerleave="s.discPreview = null">
+      <div v-if="rows.length" class="list">
+        <div v-for="r in rows" :key="r.id" class="item" @pointerenter="s.discPreview = r.look" @pointerleave="s.discPreview = null">
+          <UiIcon class="mark" :path="r.preset ? mdiHarddisk : mdiCloudOutline" :data-tooltip="t(r.preset ? 'models.onDisk' : 'models.inCloud')" />
           <div class="grow text">
-            <div class="ellipsis" :data-tooltip="r.preset.name" data-tooltip-overflow>{{ r.preset.name }}</div>
-            <div class="small muted ellipsis selectable" :data-tooltip="r.preset.stamperCode" data-tooltip-overflow>{{ r.preset.stamperCode }}</div>
+            <div class="ellipsis" :data-tooltip="r.look.name" data-tooltip-overflow>{{ r.look.name }}</div>
+            <div class="small muted ellipsis selectable" :data-tooltip="r.look.stamperCode" data-tooltip-overflow>{{ r.look.stamperCode }}</div>
             <div class="badges">
-              <span v-if="r.preset.brand" class="badge">{{ r.preset.brand }}</span>
-              <span class="badge">{{ sizeLabel(r.preset) }}</span>
-              <span v-if="!r.local && r.contributor" class="small muted ellipsis">{{ t('models.by', { name: r.contributor }) }}</span>
+              <span v-if="r.brand" class="badge">{{ r.brand }}</span>
+              <span class="badge">{{ sizeLabel(r.size) }}</span>
+              <span v-if="!r.preset && r.contributor" class="small muted ellipsis">{{ t('models.by', { name: r.contributor }) }}</span>
             </div>
           </div>
           <span v-if="r.rating" class="rating small" :data-tooltip="t('models.rated', { n: r.rating.count })"><UiIcon :path="mdiStar" />{{ r.rating.average.toFixed(1) }}</span>
-          <UiButton :variant="r.local ? 'soft' : 'solid'" :icon="r.local ? undefined : mdiDownload" :disabled="!!saving" @click="use(r)">{{ t(r.local ? 'models.use' : 'models.download') }}</UiButton>
+          <UiButton :variant="r.preset ? 'soft' : 'solid'" :icon="r.preset ? undefined : mdiDownload" :disabled="!!saving" @click="use(r)">{{ t(r.preset ? 'models.use' : 'models.download') }}</UiButton>
         </div>
       </div>
 
-      <div v-if="unreachable" class="notice warn">
+      <div v-if="offline" class="notice warn">
         <UiIcon :path="mdiAlertOutline" />
-        <div>{{ t(results.length ? 'models.offlineSome' : 'models.offlineNone') }}</div>
+        <div>{{ t('models.offline') }}</div>
       </div>
 
-      <div v-if="searched && !busy && !results.length && !unreachable" class="notice info">
+      <div v-else-if="settled && !syncing && !rows.length" class="notice info">
         <UiIcon :path="mdiInformationOutline" />
-        <div>{{ t('models.none', { q: searched }) }}</div>
+        <div>{{ t('models.none', { q: settled }) }}</div>
       </div>
 
       <div class="fallback">
         <span class="grow small muted">{{ t('models.fallback') }}</span>
-        <UiButton :variant="searched && !busy && !results.length ? 'solid' : 'soft'" :icon="mdiDiscPlayer" @click="calibrate">{{ t('models.local') }}</UiButton>
+        <UiButton :variant="settled && !rows.length ? 'solid' : 'soft'" :icon="mdiDiscPlayer" @click="calibrate">{{ t('models.local') }}</UiButton>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { mdiAlertOutline, mdiDiscPlayer, mdiDownload, mdiInformationOutline, mdiMagnify, mdiStar } from '@mdi/js'
+import { mdiAlertOutline, mdiCloudOutline, mdiDiscPlayer, mdiDownload, mdiHarddisk, mdiInformationOutline, mdiStar } from '@mdi/js'
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
-import { call, loadCatalog } from '../api'
-import { MIN_QUERY, byRating, matches, normalizeCode, sizeCm, sizeLabel, type CatalogEntry, type Rating } from '../catalog'
+import { call, loadIndex, loadPresets } from '../api'
+import { byRating, matches, normalizeCode, sizeCm, sizeLabel, type CatalogEntry, type Rating } from '../catalog'
 import UiButton from '../components/UiButton.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiIcon from '../components/UiIcon.vue'
@@ -67,13 +65,21 @@ import UiSegmented from '../components/UiSegmented.vue'
 import { t } from '../i18n'
 import { notifyError, notifySuccess } from '../notices'
 import { useStudio } from '../stores/studio'
-import type { DiscGeometryPreset } from '../types'
+import type { DiscGeometryPreset, PresetLook } from '../types'
 
-interface Result {
-  preset: DiscGeometryPreset
-  local: boolean
-  contributor?: string
-  rating?: Rating | null
+/** Typing settles before the list is rebuilt, so it never flickers through half-typed codes. */
+const DEBOUNCE_MS = 200
+
+interface Row {
+  id: string
+  /** What the disc preview draws: a library row carries enough for that. */
+  look: PresetLook
+  brand: string
+  size: 8 | 12
+  contributor: string
+  rating: Rating | null
+  /** Null for a row that only exists in the library. */
+  preset: DiscGeometryPreset | null
 }
 
 const sizes = computed(() => [{ value: '', label: t('models.sizeAll') }, { value: '12', label: '12 cm' }, { value: '8', label: '8 cm' }])
@@ -81,65 +87,71 @@ const orders = computed(() => [{ value: 'rating', label: t('models.sortRating') 
 const size = ref('')
 const order = ref('rating')
 
-
 const s = useStudio()
 const field = ref<HTMLInputElement | null>(null)
 const query = ref('')
-const searched = ref('')
-const busy = ref(false)
+/** What the list is built from: the field settles first. */
+const settled = ref('')
+const index = shallowRef<CatalogEntry[]>([])
+const syncing = ref(false)
+const offline = ref(false)
 const saving = ref('')
-const unreachable = ref(false)
-const results = shallowRef<Result[]>([])
-const searchable = computed(() => normalizeCode(query.value).length >= MIN_QUERY)
+
+let typing = 0
+watch(query, (v) => {
+  clearTimeout(typing)
+  typing = window.setTimeout(() => (settled.value = v), DEBOUNCE_MS)
+})
+
+// Local rows and library rows together: an empty query lists both, downloading one moves it here.
+const rows = computed<Row[]>(() => {
+  const want = Number(size.value) || 0
+  const fits = (cm: number) => !want || cm === want
+  const local = s.presets.filter((p) => fits(sizeCm(p)) && matches(p, settled.value))
+  const known = new Set(local.flatMap((p) => [p.id, normalizeCode(p.stamperCode)]))
+  const remote = index.value
+    .filter((e) => e.verified && fits(e.size) && matches(e, settled.value) && !known.has(e.id) && !known.has(normalizeCode(e.stamperCode)))
+    .sort(order.value === 'rating' ? byRating : (a, b) => b.createdAt.localeCompare(a.createdAt))
+  return [
+    ...local.map((preset) => ({ id: preset.id, look: preset, brand: preset.brand ?? '', size: sizeCm(preset), contributor: '', rating: null, preset })),
+    ...remote.map((entry) => ({ id: entry.id, look: entry, brand: entry.brand, size: entry.size, contributor: entry.contributor, rating: entry.rating, preset: null })),
+  ]
+})
+
+async function sync() {
+  if (syncing.value) return
+  syncing.value = true
+  try {
+    index.value = await loadIndex()
+    offline.value = false
+  } catch {
+    offline.value = true
+  } finally {
+    syncing.value = false
+  }
+}
 
 watch(
   () => s.view,
   async (v) => {
     if (v !== 'models') return
+    void sync()
     await nextTick()
     field.value?.focus()
   },
   { immediate: true },
 )
 
-async function search() {
-  if (!searchable.value || busy.value) return
-  const q = query.value
-  busy.value = true
-  unreachable.value = false
-  s.discPreview = null
-  results.value = []
-  searched.value = q
-  const fits = (p: DiscGeometryPreset) => !size.value || sizeCm(p) === Number(size.value)
-  const local = s.presets.filter((p) => matches(p, q) && fits(p))
-  let remote: CatalogEntry[] = []
+async function use(r: Row) {
+  saving.value = r.id
   try {
-    remote = (await loadCatalog()).filter((e) => e.verified && matches(e.preset, q) && fits(e.preset))
-  } catch {
-    unreachable.value = true
-  }
-  const known = new Set(local.flatMap((p) => [p.id, normalizeCode(p.stamperCode)]))
-  results.value = [
-    ...local.map((preset) => ({ preset, local: true })),
-    ...remote
-      .filter((e) => !known.has(e.preset.id) && !known.has(normalizeCode(e.preset.stamperCode)))
-      .sort((a, b) => (order.value === 'rating' ? byRating(a, b) : b.preset.createdAt.localeCompare(a.preset.createdAt)))
-      .map((e) => ({ ...e, local: false })),
-  ]
-  busy.value = false
-}
-
-watch([size, order], () => searched.value && search())
-
-async function use(r: Result) {
-  saving.value = r.preset.id
-  try {
-    if (!r.local) {
-      await call('save_preset', { preset: r.preset })
+    const preset = r.preset ?? (await download(r.id))
+    if (!r.preset) {
+      await call('save_preset', { preset })
       await s.refreshPresets()
       notifySuccess(t('models.downloaded'))
     }
-    s.presetId = r.preset.id
+    s.presetId = preset.id
     s.discPreview = null
     s.view = 'carve'
   } catch (e) {
@@ -149,17 +161,31 @@ async function use(r: Result) {
   }
 }
 
+/** The geometry behind a row that is not on this machine yet: only a download needs it. */
+async function download(id: string) {
+  let all: DiscGeometryPreset[]
+  try {
+    all = await loadPresets()
+  } catch {
+    throw t('models.offline')
+  }
+  const preset = all.find((p) => p.id === id)
+  if (!preset) throw t('models.gone')
+  return preset
+}
+
 function calibrate() {
-  s.pendingCode = searched.value
+  s.pendingCode = query.value
   s.view = 'calibrate'
 }
 </script>
 
 <style scoped>
-input { min-width: 0; height: var(--oc-size-md); padding: 0 var(--oc-space-sm); border: 0; border-radius: var(--oc-radius-control); background: var(--oc-bg-raised); }
+input { width: 100%; min-width: 0; height: var(--oc-size-md); padding: 0 var(--oc-space-sm); border: 0; border-radius: var(--oc-radius-control); background: var(--oc-bg-raised); }
 input::placeholder { color: var(--oc-fg-muted); }
 .list { display: flex; flex-direction: column; gap: 2px; }
 .item { display: flex; align-items: center; gap: var(--oc-space-sm); padding: var(--oc-space-xs) var(--oc-space-sm); border-radius: var(--oc-radius-control); background: var(--oc-bg-glass); backdrop-filter: blur(18px); }
+.mark { flex: none; color: var(--oc-fg-muted); }
 .text { min-width: 0; }
 .fallback { display: flex; align-items: center; gap: var(--oc-space-sm); padding-top: var(--oc-space-md); border-top: 1px solid var(--oc-border-muted); }
 .rating { display: inline-flex; align-items: center; gap: 2px; color: var(--oc-fg-accent); }

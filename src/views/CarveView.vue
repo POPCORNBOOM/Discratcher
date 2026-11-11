@@ -3,7 +3,6 @@
     <aside class="side">
       <div class="flow fields">
         <h1>{{ t('carve.title') }}</h1>
-        <PresetList />
         <section class="section">
           <div class="title row">
             <span class="grow ellipsis">{{ title }}</span>
@@ -101,7 +100,6 @@
 import { mdiAlertOctagonOutline, mdiAlertOutline, mdiArrowDown, mdiArrowUp, mdiClose, mdiFire, mdiImagePlusOutline, mdiPlus } from '@mdi/js'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { call, pickComposition, pickCompositionSave, pickImage, pickSavePath } from '../api'
-import PresetList from '../components/PresetList.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiButton from '../components/UiButton.vue'
 import UiDialog from '../components/UiDialog.vue'

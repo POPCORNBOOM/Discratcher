@@ -46,12 +46,25 @@ const disc = (size: number, dark: number) => {
 }
 // Set from the console to try a failed connection.
 declare global { var __mockOffline: boolean | undefined; var __mockCalibrationFails: boolean | undefined }
-/** Contributions "opened on GitHub" while in the browser, so the catalog can return them. */
-const contributed: CatalogEntry[] = []
-export async function catalog() {
+/** Contributions "opened on GitHub" while in the browser, so the library can return them. */
+const contributed: DiscGeometryPreset[] = []
+const library = () => [{ ...preset, id: 'issue-1', name: '演示盘（模具 TEST-0001）', mediaId: 'DEMO', brand: 'Verbatim', basePitchUm: 0.7401, stamperCode: 'TEST-0001 A', measuredSpanMm: [25.3, 56.9] as [number, number] } as DiscGeometryPreset, ...contributed]
+/** The published index: search fields only, the way the workflow splits it. */
+export async function index(): Promise<CatalogEntry[]> {
   await wait(300)
   if (globalThis.__mockOffline) throw new Error('offline')
-  return [{ preset: { ...preset, id: 'issue-1', name: '演示盘（模具 TEST-0001）', mediaId: 'DEMO', brand: 'Verbatim', basePitchUm: 0.7401, stamperCode: 'TEST-0001 A', measuredSpanMm: [25.3, 56.9] as [number, number] }, contributor: 'demo-user', verified: true, rating: { average: 4.5, count: 6 } }, ...contributed]
+  const [demo, ...mine] = library()
+  const entry = (p: DiscGeometryPreset, contributor: string, rating: CatalogEntry['rating']): CatalogEntry => ({
+    id: p.id, name: p.name, stamperCode: p.stamperCode, mediaId: p.mediaId, brand: p.brand ?? '', basePitchUm: p.basePitchUm,
+    size: p.outerRadiusMm > 45 ? 12 : 8, createdAt: p.createdAt, contributor, verified: true, rating,
+  })
+  return [entry(demo, 'demo-user', { average: 4.5, count: 6 }), ...mine.map((p) => entry(p, 'you', null))]
+}
+/** The published values: everything the app needs to burn. */
+export async function presets(): Promise<DiscGeometryPreset[]> {
+  await wait(200)
+  if (globalThis.__mockOffline) throw new Error('offline')
+  return library()
 }
 declare global { var __mockOpened: string | undefined }
 export const openUrl = (url: string) => {
@@ -63,8 +76,8 @@ export const openUrl = (url: string) => {
     if (!raw) return
     const data = JSON.parse(raw)
     if ('score' in data) return
-    if (contributed.some((e) => e.preset.stamperCode === data.stamperCode)) return
-    contributed.push({ preset: { ...data, id: `issue-mock-${contributed.length + 1}` } as DiscGeometryPreset, contributor: 'you', verified: true, rating: null })
+    if (contributed.some((p) => p.stamperCode === data.stamperCode)) return
+    contributed.push({ ...data, id: `issue-mock-${contributed.length + 1}` } as DiscGeometryPreset)
   } catch {
     // A malformed form is the caller's bug; the flow itself still succeeded.
   }

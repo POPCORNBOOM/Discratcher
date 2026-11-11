@@ -72,7 +72,7 @@
 <script setup lang="ts">
 import { mdiAlertOutline, mdiCheckCircleOutline, mdiCloseCircleOutline, mdiInformationOutline, mdiMinusCircleOutline } from '@mdi/js'
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
-import { call, CANCELLED, isMock, loadCatalog, mockDev, on, openInBrowser } from '../api'
+import { call, CANCELLED, isMock, loadPresets, mockDev, on, openInBrowser } from '../api'
 import { issueUrl } from '../catalog'
 import { calibrationSeconds, CalibrationPlan, REFERENCE_SHARE } from '../etaModel'
 import { t } from '../i18n'
@@ -325,7 +325,7 @@ onMounted(() => {
 })
 
 function refreshShared() {
-  loadCatalog().then((all) => (shared.value = all.map((e) => e.preset))).catch(() => {})
+  loadPresets().then((all) => (shared.value = all)).catch(() => {})
 }
 // A contribution lands on GitHub after the form closes, so look again whenever the page is shown.
 watch(() => s.view, (v) => v === 'calibrate' && refreshShared())

@@ -1,4 +1,4 @@
-import type { DiscGeometryPreset } from './types'
+import type { PresetLook } from './types'
 
 /** Room left round the disc on the carve page, as a share of the free height. */
 export const CARVE_FIT = 0.94
@@ -29,7 +29,7 @@ function hash(text: string) {
 }
 
 /** The same disc always looks the same, and a different disc looks different. */
-export function lookOf(preset: DiscGeometryPreset | null): DiscLook {
+export function lookOf(preset: PresetLook | null): DiscLook {
   if (!preset) return { dye: DYES[0], pitch: 0.74, seed: 0.3, code: DEFAULT_CODE }
   const h = hash(preset.mediaId || preset.stamperCode || preset.name)
   return {

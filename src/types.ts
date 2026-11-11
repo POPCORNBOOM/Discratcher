@@ -16,6 +16,8 @@ export interface DiscGeometryPreset {
   pitchLinear: number; pitchQuadratic: number; pitchCubic: number; basePitchUm: number
   rmsResidualDeg: number; measuredSpanMm: [number, number]; createdAt: string
 }
+/** What previewing a disc needs; the library index carries it, so a row can be previewed before it is downloaded. */
+export type PresetLook = Pick<DiscGeometryPreset, 'name' | 'stamperCode' | 'mediaId' | 'basePitchUm'>
 export interface CalibRungEvent {
   rungIndex: number; totalRungs: number; lba: number; radiusMm: number; phaseDeg: number
   sigmaDeg: number; unwrappedTurns: number; constPitchResidualDeg: number

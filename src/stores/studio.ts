@@ -3,7 +3,7 @@ import { computed, ref, shallowRef, watch } from 'vue'
 import { call, CANCELLED } from '../api'
 import { notifyError } from '../notices'
 import { useComposition } from './composition'
-import type { DiscGeometryPreset, OpticalDriveInfo } from '../types'
+import type { DiscGeometryPreset, OpticalDriveInfo, PresetLook } from '../types'
 
 export type View = 'home' | 'models' | 'calibrate' | 'carve' | 'process'
 
@@ -32,7 +32,7 @@ export const useStudio = defineStore('studio', () => {
   /** The code the user searched for when calibration was entered from a failed search. */
   const pendingCode = ref('')
   /** A result being pointed at: the disc previews it before anything is chosen. */
-  const discPreview = shallowRef<DiscGeometryPreset | null>(null)
+  const discPreview = shallowRef<PresetLook | null>(null)
   const discZoom = ref(1)
   const discPan = ref({ x: 0, y: 0 })
   /** The code field has focus: the disc comes forward and aims at its stamped code. */

@@ -31,6 +31,11 @@
 
       <UiButton v-if="update" variant="soft" :disabled="p.status === 'running'" @click="updateDialog = true">{{ t('update.available', { version: update.version }) }}</UiButton>
 
+      <div class="preset" data-tauri-drag-region="false">
+        <UiSelect class="picker" filterable :label="t('presets.label')" :placeholder="t('presets.none')" :model-value="s.preset?.id ?? ''" :options="presetOptions" :disabled="!!s.job" @update:model-value="s.presetId = $event" @preview="preview" />
+        <UiButton v-if="s.preset" icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('presets.delete', { name: s.preset.name })" :disabled="!!s.job" @click="confirmDelete = true" />
+      </div>
+
       <div v-if="!mac" class="controls" data-tauri-drag-region="false">
         <button class="wc" type="button" :aria-label="t('titlebar.minimize')" :data-tooltip="t('titlebar.minimize')" @click="windowControl('minimize')">
           <UiIcon :path="mdiWindowMinimize" :size="14" />
@@ -44,7 +49,15 @@
       </div>
     </div>
 
-    <UiDialog v-if="updateDialog && update" :title="t('update.available', { version: update.version })" @close="updateDialog = false">
+    <UiDialog v-if="confirmDelete && s.preset" :title="t('presets.deleteTitle')" data-tauri-drag-region="false" @close="confirmDelete = false">
+      <p>{{ t('presets.deleteBody', { name: s.preset.name }) }}</p>
+      <template #actions>
+        <UiButton variant="ghost" @click="confirmDelete = false">{{ t('common.cancel') }}</UiButton>
+        <UiButton variant="danger" @click="removePreset">{{ t('common.delete') }}</UiButton>
+      </template>
+    </UiDialog>
+
+    <UiDialog v-if="updateDialog && update" :title="t('update.available', { version: update.version })" data-tauri-drag-region="false" @close="updateDialog = false">
       <p class="notes selectable">{{ update.body || t('update.noNotes') }}</p>
       <template #actions>
         <UiButton variant="ghost" @click="updateDialog = false">{{ t('update.later') }}</UiButton>
@@ -57,12 +70,12 @@
 </template>
 
 <script setup lang="ts">
-import { mdiUpdate, mdiArrowLeft, mdiCheck, mdiClose, mdiContentSaveOutline, mdiImagePlusOutline, mdiTranslate, mdiCrosshairsGps, mdiExportVariant, mdiFire, mdiFolderOpenOutline, mdiGithub, mdiHomeOutline, mdiImageEditOutline, mdiMagnify, mdiMessageAlertOutline, mdiWindowMaximize, mdiWindowMinimize, mdiWindowRestore } from '@mdi/js'
+import { mdiUpdate, mdiArrowLeft, mdiCheck, mdiClose, mdiContentSaveOutline, mdiImagePlusOutline, mdiTranslate, mdiCrosshairsGps, mdiExportVariant, mdiFire, mdiFolderOpenOutline, mdiGithub, mdiHomeOutline, mdiImageEditOutline, mdiMagnify, mdiMessageAlertOutline, mdiTrashCanOutline, mdiWindowMaximize, mdiWindowMinimize, mdiWindowRestore } from '@mdi/js'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { isWindowMaximized, openInBrowser, windowControl } from '../api'
+import { call, isWindowMaximized, openInBrowser, windowControl } from '../api'
 import { REPOSITORY_URL } from '../catalog'
 import { locale, locales, setLocale, t } from '../i18n'
-import { notices } from '../notices'
+import { notices, notifyError, notifySuccess } from '../notices'
 import { useProcess } from '../stores/process'
 import { useComposition } from '../stores/composition'
 import { useStudio, type CarveCommands } from '../stores/studio'
@@ -73,6 +86,7 @@ import UiButton from './UiButton.vue'
 import UiDialog from './UiDialog.vue'
 import UiIcon from './UiIcon.vue'
 import UiMenubar, { type Menu } from './UiMenubar.vue'
+import UiSelect from './UiSelect.vue'
 
 const FADE_MS = 2200
 const ERROR_FADE_MS = 6000
@@ -85,11 +99,30 @@ const s = useStudio()
 const comp = useComposition()
 const p = useProcess()
 const updateDialog = ref(false)
+const confirmDelete = ref(false)
 const taskPanel = ref(false)
 const noticePanel = ref(false)
 const faded = ref(false)
 let fadeTimer = 0
 let closeTimer = 0
+
+/** The disc the next burn will use, chosen from every calibration on this machine. */
+const presetOptions = computed(() => s.presets.map((p) => ({ value: p.id, label: p.name, keywords: `${p.stamperCode} ${p.mediaId} ${p.brand ?? ''}` })))
+const preview = (id: string | null) => (s.discPreview = s.presets.find((p) => p.id === id) ?? null)
+
+async function removePreset() {
+  const id = s.preset?.id
+  confirmDelete.value = false
+  if (!id) return
+  try {
+    await call('delete_preset', { id })
+    if (s.presetId === id) s.presetId = ''
+    await s.refreshPresets()
+    notifySuccess(t('presets.deleted'))
+  } catch (e) {
+    notifyError(String(e))
+  }
+}
 
 /** The window is frameless, so its buttons are ours and the icon has to follow it. */
 const maxed = ref(false)
@@ -204,6 +237,8 @@ onBeforeUnmount(() => {
 .brand.busy { color: var(--oc-fg-default); cursor: pointer; }
 .brand.busy:hover { background-color: var(--oc-bg-hover); }
 .right { display: flex; justify-content: flex-end; align-items: stretch; align-self: stretch; min-width: 0; gap: var(--oc-space-xs); }
+.preset { display: flex; align-items: center; align-self: center; gap: var(--oc-space-2xs); width: clamp(160px, 22vw, 260px); }
+.picker { flex: 1; min-width: 0; }
 .controls { display: flex; align-items: stretch; }
 .wc { width: 36px; display: grid; place-items: center; border: 0; padding: 0; background: transparent; color: var(--oc-fg-muted); transition: background-color var(--oc-duration) var(--oc-ease), color var(--oc-duration) var(--oc-ease); }
 .wc:hover { background: var(--oc-bg-hover); color: var(--oc-fg-default); }

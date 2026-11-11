@@ -1,6 +1,7 @@
 name: Catalog
 
-# Publishes the library as one file, so the app never spends GitHub API quota.
+# Publishes the library as files, so the app never spends GitHub API quota:
+# a small search index, the geometry behind it, and one legacy file for old releases.
 on:
   issues:
     types: [opened, edited, closed, reopened, deleted, labeled, unlabeled]
@@ -26,7 +27,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Build catalog.json
+      - name: Build the catalog
         run: |
           mkdir site
           list() {
@@ -35,6 +36,11 @@ jobs:
           }
           list calibration > calibrations.json
           list rating > ratings.json
+          # The app searches the index and fetches the geometry only to download a calibration.
+          jq -n --slurpfile c calibrations.json --slurpfile r ratings.json -f .github/catalog.jq > library.json
+          jq .index library.json > site/index.json
+          jq .values library.json > site/values.json
+          # Releases up to 0.1.4 read this one; keep publishing it until they are gone.
           jq -n --slurpfile c calibrations.json --slurpfile r ratings.json '{calibrations: $c[0], ratings: $r[0]}' > site/catalog.json
       - name: Publish to the catalog branch
         working-directory: site
@@ -42,6 +48,6 @@ jobs:
           git init -q -b catalog
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add catalog.json
+          git add index.json values.json catalog.json
           git commit -q -m "Update catalog"
           git push -q --force "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" catalog
