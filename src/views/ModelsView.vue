@@ -146,16 +146,17 @@ watch(
   { immediate: true },
 )
 
+/** A download saves the geometry and stays put; the row turns local and can then be used. */
 async function use(r: Row) {
   saving.value = r.id
   try {
-    const preset = r.preset ?? (await download(r.id))
     if (!r.preset) {
-      await call('save_preset', { preset })
+      await call('save_preset', { preset: await download(r.id) })
       await s.refreshPresets()
       notifySuccess(t('models.downloaded'))
+      return
     }
-    s.presetId = preset.id
+    s.presetId = r.preset.id
     s.discPreview = null
     s.view = 'carve'
   } catch (e) {
