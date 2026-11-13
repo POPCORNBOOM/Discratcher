@@ -12,6 +12,10 @@ export interface DiscGeometryPreset {
   brand?: string
   /** Set locally when a real burn with this geometry has finished; sharing needs it. */
   burnedAt?: string
+  /** Left out for a DVD. */
+  media?: 'dvd' | 'cd'
+  /** CD only: the drive's along-track constant, read off a burned twist chart. Unset until then. */
+  alongTrackFrames?: number | null
   totalSectors: number; channelBitLengthNm: number; innerRadiusMm: number; outerRadiusMm: number
   pitchLinear: number; pitchQuadratic: number; pitchCubic: number; basePitchUm: number
   rmsResidualDeg: number; measuredSpanMm: [number, number]; createdAt: string

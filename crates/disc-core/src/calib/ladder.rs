@@ -9,7 +9,7 @@
 use super::rayleigh::{circular_stats, estimate_period, phase_deg, refine_period, CircularStats};
 use super::solver::*;
 use crate::drive::TimedDrive;
-use crate::ecma267::SECTOR_CHANNEL_BITS;
+use crate::media::{LadderShape, Media};
 use crate::preset::DiscGeometryPreset;
 use crate::rng::SplitMix64;
 use crate::spiral::Spiral;
@@ -17,13 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub const MIN_SPACING_SECTORS: u32 = 2000;
 pub const MIN_COHERENCE: f64 = 0.98;
-/// 4x, the one speed the method has been validated at on hardware.
-pub const READ_SPEED_KBPS: u16 = 5540;
-const BIT_MM: f64 = 133.3e-6;
-const NOMINAL_RI: f64 = 24.1;
-const NOMINAL_PITCH: f64 = 0.74e-3;
 /// A model cannot pick a turn count if its prediction is this unsure.
 const SAFE_SIGMA_DEG: f64 = 25.0;
 /// The constant-pitch model misses a real disc by a degree or two.
@@ -61,11 +55,15 @@ pub struct LadderConfig {
     pub reps: usize,
     pub range_pct: (f64, f64),
     pub seed: u64,
+    pub media: Media,
+    /// Sectors the calibration image holds, when known: a CD reports a few more than
+    /// were written, and the next disc is carved to this size.
+    pub image_sectors: Option<u32>,
 }
 
 impl Default for LadderConfig {
     fn default() -> Self {
-        Self { max_targets: 56, reps: 40, range_pct: (0.02, 0.96), seed: 0x1234 }
+        Self { max_targets: 56, reps: 40, range_pct: (0.02, 0.96), seed: 0x1234, media: Media::Dvd, image_sectors: None }
     }
 }
 
@@ -81,7 +79,7 @@ pub struct CalibrationResult {
     /// The fit stayed well above read noise: a rung may be a turn out. Do not carve with
     /// this geometry; re-measure.
     pub suspect: bool,
-    /// The geometry is outside what a single-layer DVD can be; why, in words.
+    /// The geometry is outside what this kind of disc can be; why, in words.
     pub spec_problem: Option<String>,
 }
 
@@ -92,16 +90,13 @@ struct Session<'a> {
     period_ns: f64,
     total: u32,
     far_lba: u32,
+    shape: LadderShape,
 }
 
 /// One measured target: wrapped phase relative to the reference.
 pub struct Measurement {
     pub stats: CircularStats,
     pub period_ns: f64,
-}
-
-fn align(lba: u32) -> u32 {
-    lba / 16 * 16
 }
 
 impl Session<'_> {
@@ -151,7 +146,7 @@ impl Session<'_> {
     /// 30–60 s without a read, so a quiet wait ends with the speed it was meant to avoid.
     fn settle(&mut self, lba: u32) -> Result<(), String> {
         // No period known yet: draw waits from one slowest-plausible turn.
-        self.period_ns = 60e9 / 1200.0;
+        self.period_ns = self.shape.slowest_turn_ns;
         let mut previous: Option<f64> = None;
         for _ in 0..SETTLE_ROUNDS {
             let mut ts = Vec::with_capacity(SETTLE_READS);
@@ -159,7 +154,7 @@ impl Session<'_> {
                 self.check()?;
                 ts.push(self.read(lba)?);
             }
-            let fit = estimate_period(&ts, 1500.0, 12_000.0);
+            let fit = estimate_period(&ts, self.shape.rpm.0, self.shape.rpm.1);
             if fit.coherence <= SETTLED_COHERENCE {
                 previous = None;
                 continue;
@@ -174,21 +169,23 @@ impl Session<'_> {
     }
 }
 
-fn nominal_uv() -> (f64, f64) {
-    (NOMINAL_RI / BIT_MM, NOMINAL_PITCH / BIT_MM)
+fn nominal_uv(media: Media) -> (f64, f64) {
+    let s = media.ladder();
+    (s.nominal_ri_mm / media.bit_mm(), s.nominal_pitch_mm / media.bit_mm())
 }
 
-fn priors() -> (Prior, Prior) {
-    let (u, v) = nominal_uv();
-    (Prior { value: u, sigma: 0.6 / BIT_MM }, Prior { value: v, sigma: 0.02e-3 / BIT_MM })
+fn priors(media: Media) -> (Prior, Prior) {
+    let (u, v) = nominal_uv(media);
+    let s = media.ladder();
+    (Prior { value: u, sigma: s.sigma_ri_mm / media.bit_mm() }, Prior { value: v, sigma: s.sigma_pitch_mm / media.bit_mm() })
 }
 
 /// Sectors per turn at the reference on a nominal disc.
-fn sectors_per_turn_near(lba: u32) -> f64 {
-    let (u, v) = nominal_uv();
-    let n = completion_bit(lba);
+fn sectors_per_turn_near(media: Media, lba: u32) -> f64 {
+    let (u, v) = nominal_uv(media);
+    let n = media.completion_bit(lba);
     let r_bits = (u * u + v * n / PI).sqrt();
-    2.0 * PI * r_bits / SECTOR_CHANNEL_BITS as f64
+    2.0 * PI * r_bits / media.sector_bits() as f64
 }
 
 pub fn run_ladder(
@@ -198,8 +195,14 @@ pub fn run_ladder(
     on_rung: &mut dyn FnMut(&CalibRungEvent),
     on_status: &mut dyn FnMut(&str),
 ) -> Result<CalibrationResult, String> {
-    let total = drive.capacity()?;
-    if total < 500_000 {
+    let media = cfg.media;
+    let shape = media.ladder();
+    let align = |lba: u32| media.align(lba);
+    let completion_bit = |lba: u32| media.completion_bit(lba);
+    let bit_mm = media.bit_mm();
+    let capacity = drive.capacity()?;
+    let total = cfg.image_sectors.map_or(capacity, |s| s.min(capacity));
+    if total < shape.min_sectors {
         return Err(format!("这张光盘只有 {total} 个扇区，无法标定，先刻入校准镜像"));
     }
     let lo = align((total as f64 * cfg.range_pct.0) as u32);
@@ -209,29 +212,30 @@ pub fn run_ladder(
 
     on_status("等待光驱转速稳定");
     // Auto speed changes ruin the timing, so a refused speed has to be visible.
-    if let Err(e) = drive.set_read_speed(READ_SPEED_KBPS) {
+    if let Err(e) = drive.set_read_speed(shape.read_speed_kbps) {
         on_status(&format!("读速没有设上，测量可能不稳定：{e}"));
     }
-    let mut s = Session { drive, cancel, rng: SplitMix64(cfg.seed), period_ns: 25e6, total, far_lba: align(total - 2048) };
+    let mut s = Session { drive, cancel, rng: SplitMix64(cfg.seed), period_ns: 25e6, total, far_lba: align(total - 2048), shape: media.ladder() };
     for lba in [0, total / 4, total / 2, total / 2 + total / 4] {
         s.check()?;
         s.drive.read_timed(align(lba), false)?;
     }
     s.settle(reference)?;
 
-    let turn = sectors_per_turn_near(reference);
-    let near: Vec<u32> = [1.5f64, -1.5, 3.0, -3.0, 6.0, -6.0, 12.0, -12.0, 24.0, -24.0]
+    let turn = sectors_per_turn_near(media, reference);
+    let near: Vec<u32> = shape
+        .near_turns
         .iter()
-        .map(|t| align((reference as f64 + t * turn).round() as u32 + 8))
-        .filter(|l| (lo..hi).contains(l) && l.abs_diff(reference) >= 32)
+        .map(|t| align((reference as f64 + t * turn).round() as u32 + media.block() / 2))
+        .filter(|l| (lo..hi).contains(l) && l.abs_diff(reference) >= shape.near_min_sectors)
         .collect();
 
     let mut points: Vec<PhasePoint> = Vec::new();
     let mut rows: Vec<CalibRungEvent> = Vec::new();
-    let (mut u, mut v) = nominal_uv();
+    let (mut u, mut v) = nominal_uv(media);
     let n_grid = (cfg.max_targets * 2).max(40);
     let grid: Vec<u32> = (0..n_grid)
-        .map(|i| align(lo + ((hi - 16 - lo) as u64 * i as u64 / (n_grid as u64 - 1)) as u32))
+        .map(|i| align(lo + ((hi - media.block() - lo) as u64 * i as u64 / (n_grid as u64 - 1)) as u32))
         .collect();
     let mut model: Option<ConstFit> = None;
     let mut rejected: Vec<u32> = Vec::new();
@@ -240,7 +244,7 @@ pub fn run_ladder(
         let lba = if rows.len() < near.len() {
             near[rows.len()]
         } else {
-            let Some(l) = pick_next(&grid, &points, &rejected, model.as_ref(), reference) else { break };
+            let Some(l) = pick_next(&grid, &points, &rejected, model.as_ref(), reference, media) else { break };
             l
         };
         on_status(&format!("第 {} / {} 阶", rows.len() + 1, cfg.max_targets));
@@ -269,7 +273,7 @@ pub fn run_ladder(
         // keeping it would poison every later rung.
         points.push(point);
         let enough = points.len() >= 8;
-        let pri = if enough { None } else { Some(priors()) };
+        let pri = if enough { None } else { Some(priors(media)) };
         let fit = fit_constant(&points, n_ref, (u, v), pri)?;
         let residual = fit.predict_deg(n) - unwrapped;
         if residual.abs() > 45.0 && points.len() > 4 {
@@ -283,7 +287,7 @@ pub fn run_ladder(
         }
         u = fit.u;
         v = fit.v;
-        let radius_mm = BIT_MM * (fit.u * fit.u + fit.v * n / PI).sqrt();
+        let radius_mm = bit_mm * (fit.u * fit.u + fit.v * n / PI).sqrt();
         let row = CalibRungEvent {
             rung_index: rows.len(),
             total_rungs: cfg.max_targets,
@@ -306,7 +310,7 @@ pub fn run_ladder(
         return Err(format!("只测到 {} 阶，不足以拟合", points.len()));
     }
     on_status("拟合三次轨距");
-    let fin = finish_fit(&mut points, n_ref, (u, v), total)?;
+    let fin = finish_fit(&mut points, n_ref, (u, v), total, media)?;
     let (c, cubic) = (&fin.constant, &fin.cubic);
     let noise = fin.noise_deg;
 
@@ -325,8 +329,10 @@ pub fn run_ladder(
         stamper_code: String::new(),
         brand: String::new(),
         burned_at: String::new(),
+        media,
+        along_track_frames: None,
         total_sectors: total,
-        channel_bit_length_nm: BIT_MM * 1e6,
+        channel_bit_length_nm: bit_mm * 1e6,
         inner_radius_mm: p.ri,
         outer_radius_mm: p.ro,
         pitch_linear: p.c1,
@@ -366,19 +372,21 @@ pub fn finish_fit(
     n_ref: f64,
     init: (f64, f64),
     total: u32,
+    media: Media,
 ) -> Result<FinalFit, String> {
+    let (bit_mm, sector_bits) = (media.bit_mm(), media.sector_bits());
     points.sort_by(|a, b| a.n.total_cmp(&b.n));
     let c = fit_constant(points, n_ref, init, None)?;
-    let ri = c.u * BIT_MM;
-    let bits = total as f64 * SECTOR_CHANNEL_BITS as f64;
-    let ro0 = BIT_MM * (c.u * c.u + c.v * bits / PI).sqrt();
-    let mut cubic = fit_cubic(points, n_ref, ri, ro0, total, BIT_MM, CUBIC_LAMBDA)?;
+    let ri = c.u * bit_mm;
+    let bits = total as f64 * sector_bits as f64;
+    let ro0 = bit_mm * (c.u * c.u + c.v * bits / PI).sqrt();
+    let mut cubic = fit_cubic(points, n_ref, ri, ro0, total, sector_bits, bit_mm, CUBIC_LAMBDA)?;
     // Real rungs carry a little more than their floored standard error, so the bar sits
     // well clear of a healthy disc: only a plain misfit may move ri or touch a turn count.
     let noise = points.iter().map(|p| p.sigma_deg).sum::<f64>() / points.len() as f64;
     let bar = MISFIT_FACTOR * noise.max(0.25);
     let free = |pts: &[PhasePoint], from: &CubicFit| {
-        fit_cubic_scan_ri(pts, n_ref, from.params.ri, from.params.ro, total, BIT_MM, CUBIC_LAMBDA)
+        fit_cubic_scan_ri(pts, n_ref, from.params.ri, from.params.ro, total, sector_bits, bit_mm, CUBIC_LAMBDA)
     };
     if cubic.rms_deg > bar {
         let f = free(points, &cubic)?;
@@ -452,17 +460,19 @@ fn pick_next(
     rejected: &[u32],
     model: Option<&ConstFit>,
     reference: u32,
+    media: Media,
 ) -> Option<u32> {
+    let spacing = media.ladder().min_spacing_sectors;
     let model = model?;
     let free: Vec<u32> = grid
         .iter()
         .copied()
         .filter(|l| {
-            points.iter().all(|p| p.lba.abs_diff(*l) >= MIN_SPACING_SECTORS) && !rejected.contains(l)
+            points.iter().all(|p| p.lba.abs_diff(*l) >= spacing) && !rejected.contains(l)
         })
         .collect();
     let scale = model.chi2_per_dof.sqrt().max(1.0);
-    let sigma = |l: u32| model.predict_sigma_deg(completion_bit(l)) * scale + MODEL_FLOOR_DEG;
+    let sigma = |l: u32| model.predict_sigma_deg(media.completion_bit(l)) * scale + MODEL_FLOOR_DEG;
     // Walk into uncertain territory from its edge, in steps that double as the coverage
     // grows, rather than saving the hardest region for one long jump at the end.
     let nearest = |l: u32| points.iter().map(|p| p.lba.abs_diff(l)).min().unwrap_or(u32::MAX);
@@ -532,7 +542,7 @@ mod tests {
         // fit: a turn error spread over the outer rungs fits as curvature, so no residual
         // test catches it.
         for (seed, ri, ro, c2) in [(1, 23.95, 58.4, 0.0), (2, 24.25, 57.7, 2e-4), (3, 24.05, 58.1, -2e-4)] {
-            let p = SpiralParams { total_sectors: 2_295_104, bit_mm: 133.3e-6, ri, ro, c1: 0.0, c2, c3: 0.0 };
+            let p = SpiralParams { total_sectors: 2_295_104, sector_bits: 38_688, bit_mm: 133.3e-6, ri, ro, c1: 0.0, c2, c3: 0.0 };
             let (r, _) = run(SimDrive::new(p, seed)).unwrap();
             let truth = Spiral::new(p).unwrap();
             let err = worst_error(&truth, r.preset.spiral_params());
@@ -569,7 +579,7 @@ mod tests {
             })
             .collect();
         let n_ref = completion_bit(1_124_544);
-        let f = finish_fit(&mut pts, n_ref, (24.17 / BIT_MM, 0.734e-3 / BIT_MM), 2_295_104).unwrap();
+        let f = finish_fit(&mut pts, n_ref, (24.17 / 133.3e-6, 0.734e-3 / 133.3e-6), 2_295_104, Media::Dvd).unwrap();
         eprintln!("noise {:.3}, rms {:.3}, repairs {}, ri {:.6}", f.noise_deg, f.cubic.rms_deg, f.turn_repairs, f.cubic.params.ri);
         assert_eq!(f.turn_repairs, 0);
         assert!((f.cubic.params.ri - 24.173325).abs() < 1e-5, "{}", f.cubic.params.ri);
@@ -578,6 +588,36 @@ mod tests {
         let err = worst_error(&truth, f.cubic.params);
         eprintln!("worst angle error to golden {err:.3}");
         assert!(err < 0.1, "{err}");
+    }
+
+    /// A CD, read by a drive that reports 206 frames late. The ladder must recover the
+    /// angle map of where reads really end, which is the true spiral that far along.
+    #[test]
+    fn recovers_cd_geometry_and_cannot_see_the_late_frames() {
+        let truth_preset = crate::preset::cd_test_preset();
+        let truth = Spiral::new(truth_preset.spiral_params()).unwrap();
+        for (seed, late) in [(5u64, 0.0), (6, 206.0)] {
+            let mut d = SimDrive::new(truth_preset.spiral_params(), seed);
+            d.late_frames = late;
+            let cfg = LadderConfig { max_targets: 36, reps: 32, media: Media::Cd, image_sectors: Some(359_779), ..Default::default() };
+            let r = run_ladder(&mut d, &cfg, &AtomicBool::new(false), &mut |_| {}, &mut |_| {}).unwrap();
+            assert_eq!((r.preset.media, r.preset.total_sectors), (Media::Cd, 359_779));
+            assert!(!r.suspect && r.spec_problem.is_none(), "{:?}", r.spec_problem);
+            assert!((r.spindle_period_ms - 48.34).abs() < 0.02, "{}", r.spindle_period_ms);
+            let fitted = Spiral::new(r.preset.spiral_params()).unwrap();
+            let shift = late * 588.0;
+            let n_ref = Media::Cd.completion_bit(176_291);
+            let worst = (0..=200)
+                .map(|k| {
+                    let n = truth.total_bits() * (0.03 + 0.92 * k as f64 / 200.0);
+                    let want = truth.theta_at_bit(n + shift) - truth.theta_at_bit(n_ref + shift);
+                    ((fitted.theta_at_bit(n) - fitted.theta_at_bit(n_ref)) - want).to_degrees().abs()
+                })
+                .fold(0.0, f64::max);
+            eprintln!("cd late {late}: rms {:.3}, worst {worst:.3} deg, ri {:.4}, pitch {:.4}", r.cubic_rms_deg, r.preset.inner_radius_mm, r.preset.base_pitch_um);
+            assert!(worst < 1.5, "late {late}: {worst}");
+            assert!((r.preset.base_pitch_um - 1.5003).abs() < 0.003, "{}", r.preset.base_pitch_um);
+        }
     }
 
     #[test]

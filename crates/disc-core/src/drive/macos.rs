@@ -113,6 +113,13 @@ impl TimedDrive for MacDrive {
         }
     }
 
+    fn read_raw_sector(&mut self, lba: u32, buf: &mut [u8; 2352]) -> Result<(), String> {
+        match &mut self.t {
+            Transport::Scsi(s) => s.exec(&mmc::read_cd_raw(lba), Some(&mut buf[..])).map(|_| ()),
+            Transport::Raw(_) => Err("这个通道读不了原始扇区".into()),
+        }
+    }
+
     fn capacity(&mut self) -> Result<u32, String> {
         match &mut self.t {
             Transport::Scsi(s) => {
@@ -175,7 +182,9 @@ pub fn open(id: &str) -> Result<Box<dyn TimedDrive>, String> {
             Err(e) => scsi_err = e,
         }
     }
-    let path = format!("/dev/r{id}");
+    // A CD's whole-disc node hands out 2352-byte raw sectors; its data track is slice 0.
+    let track = format!("/dev/r{id}s0");
+    let path = if std::path::Path::new(&track).exists() { track } else { format!("/dev/r{id}") };
     let f = std::fs::File::open(&path).map_err(|e| format!("{scsi_err}；{path} 也打不开：{e}"))?;
     unsafe { libc::fcntl(f.as_raw_fd(), libc::F_NOCACHE, 1) };
     Ok(Box::new(MacDrive { t: Transport::Raw(f), epoch: Instant::now() }))
@@ -203,7 +212,8 @@ pub fn parse_burn_speeds_xml(xml: &str) -> (Vec<u8>, Option<u8>) {
         if let Some(val_str) = rest.split('"').next() {
             if let Ok(v) = val_str.parse::<f32>() {
                 let speed_int = v.round() as u8;
-                if speed_int > 0 {
+                // drutil gives kB/s here for a CD ("4233.6"): that is not a multiple.
+                if speed_int > 0 && v <= 64.0 {
                     max_speed = Some(speed_int);
                 }
             }
@@ -215,7 +225,8 @@ pub fn parse_burn_speeds_xml(xml: &str) -> (Vec<u8>, Option<u8>) {
             for key in &["dvdXFactor=\"", "cdXFactor=\"", "factor=\"", "speed=\""] {
                 if let Some(rest) = attr.split(key).nth(1) {
                     if let Some(val_str) = rest.split('"').next() {
-                        if let Ok(v) = val_str.parse::<f32>() {
+                        // A CD's factor reads "16x", a DVD's "4.0".
+                        if let Ok(v) = val_str.trim_end_matches('x').parse::<f32>() {
                             let speed_int = v.round() as u8;
                             if speed_int > 0 && !speeds.contains(&speed_int) {
                                 speeds.push(speed_int);
@@ -364,6 +375,21 @@ mod tests {
         let (speeds, max_speed) = parse_burn_speeds_xml(xml);
         assert_eq!(speeds, vec![2, 4, 8]);
         assert_eq!(max_speed, Some(8));
+    }
+
+    /// What drutil printed for a blank CD-R in the GUD1N.
+    #[test]
+    fn parses_cd_burn_speeds() {
+        let xml = r#"<writeSpeed maxSpeed="4233.6" currentSpeed="4233.6"/>
+            <burnSpeedList>
+                <burnSpeed value="1764" cdXFactor="10x"/>
+                <burnSpeed value="2822" cdXFactor="16x"/>
+                <burnSpeed value="4233" cdXFactor="24x"/>
+            </burnSpeedList>"#;
+        assert_eq!(parse_burn_speeds_xml(xml), (vec![10, 16, 24], None));
+        let t = " Vendor   Product           Rev \n HL-DT-ST DVDRAM GUD1N      1.01\n\n           Type: CD-R                 Name: /dev/disk9\n   Write Speeds: 10x, 16x, 24x\n   Overwritable:   79:57:68         blocks:   359843 / 736.96MB / 702.82MiB\n     Space Free:   79:57:68         blocks:   359843 / 736.96MB / 702.82MiB\n     Space Used:   00:00:00         blocks:        0 /   0.00MB /   0.00MiB\n    Writability: appendable, blank, overwritable\n";
+        let d = parse_drutil(t).unwrap();
+        assert_eq!((d.media_type.as_str(), d.total_sectors, d.is_blank), ("CD-R", 359_843, true));
     }
 
     #[test]

@@ -1,7 +1,9 @@
 //! ISO synthesis: spiral sampling, servo-safe dithering, scrambler XOR.
 
 use crate::artwork::{Composition, Layer};
+use crate::ecma130;
 use crate::ecma267::*;
+use crate::media::Media;
 use crate::preset::DiscGeometryPreset;
 use crate::spiral::Spiral;
 use memmap2::{Mmap, MmapMut};
@@ -27,6 +29,10 @@ pub struct CarveJobConfig {
     pub preset: DiscGeometryPreset,
     pub servo_safe_dither: bool,
     pub max_dark_duty_cycle: f64,
+    /// CD only: first user byte in the raw sector. Left out, it is what this platform's
+    /// burner writes.
+    #[serde(default)]
+    pub cd_user_offset: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -225,6 +231,9 @@ pub fn build_iso_from(
     cancel: &AtomicBool,
     progress: &(dyn Fn(CarveProgress) + Sync),
 ) -> Result<CarveJobSummary, String> {
+    if cfg.preset.media == Media::Cd {
+        return build_cd_iso(cfg, spiral, art, cancel, progress);
+    }
     let total = cfg.preset.total_sectors;
     if total % ECC_BLOCK_SECTORS as u32 != 0 {
         return Err("总扇区数必须是 16 的倍数".into());
@@ -294,25 +303,184 @@ pub struct IsoAudit {
     pub worst_lba: u32,
 }
 
+/// Sectors carved together on a CD: enough work per task, small enough for progress.
+const CD_CHUNK_SECTORS: usize = 64;
+
+pub struct CdCtx<'a> {
+    pub spiral: &'a Spiral,
+    pub art: &'a Composition,
+    pub tone: Tone,
+    pub user_offset: usize,
+    pub mask: [u8; SECTOR_BYTES],
+    pub placements: [ecma130::Placement; 24],
+    /// See `DiscGeometryPreset::along_track_bits`.
+    pub shift_bits: f64,
+}
+
+impl<'a> CdCtx<'a> {
+    pub fn new(spiral: &'a Spiral, art: &'a Composition, tone: Tone, user_offset: usize, shift_bits: f64) -> Self {
+        Self { spiral, art, tone, user_offset, mask: ecma130::user_mask(user_offset), placements: ecma130::placements(), shift_bits }
+    }
+}
+
+/// Dither threshold in 0..1 for a symbol, from its place on the track. A CD sector's
+/// bytes are scattered over two sectors' length, so error cannot be carried from one
+/// byte to the next as on a DVD; a golden-ratio sequence along the track spreads the
+/// dark bytes just as evenly and needs no neighbour.
+#[inline]
+fn track_threshold(frame: u64, slot: u8) -> f32 {
+    let i = frame * 32 + slot as u64;
+    (i.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as f32 / (1u64 << 24) as f32
+}
+
+/// Carve one CD sector into 2048 bytes ready to write; returns how many came out dark.
+///
+/// Bytes that enter the encoder in the same position of a frame keep the same delay, so
+/// each of the 24 positions is a straight run of 98 frames along the track: its ends are
+/// looked up on the spiral and the rest stepped between them.
+pub fn carve_cd_sector(ctx: &CdCtx, lba: u32, out: &mut [u8]) -> u32 {
+    let frames = ecma130::FRAMES_PER_SECTOR as usize;
+    let first_frame = lba as u64 * frames as u64;
+    let ro2 = 2.0 * ctx.spiral.params.ro;
+    let Tone { servo_safe, min_luma } = ctx.tone;
+    let mut dark = 0u32;
+    for (q, place) in ctx.placements.iter().enumerate() {
+        let start = first_frame + place.delay as u64;
+        let bit = |frame: u64| ecma130::symbol_bit(frame as f64, place.slot) - ctx.shift_bits;
+        let (r0, th0) = ctx.spiral.locate(bit(start));
+        let (r1, th1) = ctx.spiral.locate(bit(start + frames as u64 - 1));
+        let (dr, dth) = ((r1 - r0) / (frames - 1) as f64, (th1 - th0) / (frames - 1) as f64);
+        let (mut s, mut c) = th0.sin_cos();
+        let (ds, dc) = dth.sin_cos();
+        for k in 0..frames {
+            // Clause 16 swaps each byte pair on the way in.
+            let raw = (k * 24 + q) ^ 1;
+            if (ctx.user_offset..ctx.user_offset + SECTOR_BYTES).contains(&raw) {
+                let r = r0 + k as f64 * dr;
+                let grey = ctx.art.sample(r * c / ro2, r * s / ro2);
+                let white = if servo_safe {
+                    track_threshold(start + k as u64, place.slot) < grey.max(min_luma) / 255.0
+                } else {
+                    grey >= 128.0
+                };
+                let i = raw - ctx.user_offset;
+                dark += !white as u32;
+                out[i] = if white { ecma130::LIGHT_BYTE } else { ecma130::DARK_BYTE } ^ ctx.mask[i];
+            }
+            let (ns, nc) = (s * dc + c * ds, c * dc - s * ds);
+            s = ns;
+            c = nc;
+        }
+    }
+    dark
+}
+
+fn build_cd_iso(
+    cfg: &CarveJobConfig,
+    spiral: &Spiral,
+    art: &Composition,
+    cancel: &AtomicBool,
+    progress: &(dyn Fn(CarveProgress) + Sync),
+) -> Result<CarveJobSummary, String> {
+    let total = cfg.preset.total_sectors;
+    let tone = Tone::from_duty(cfg.servo_safe_dither, cfg.max_dark_duty_cycle);
+    let offset = cfg.cd_user_offset.unwrap_or_else(crate::drive::cd_user_offset);
+    if offset + SECTOR_BYTES > ecma130::RAW_BYTES {
+        return Err("CD 扇区布局无效".into());
+    }
+    let ctx = CdCtx::new(spiral, art, tone, offset, cfg.preset.along_track_bits());
+    let bytes = total as u64 * SECTOR_BYTES as u64;
+    let path = Path::new(&cfg.output_iso_path);
+    let mut map = create_mapped(path, bytes)?;
+
+    let start = Instant::now();
+    let done = AtomicU64::new(0);
+    let dark = AtomicU64::new(0);
+    let max_dark = AtomicU64::new(0);
+    let chunks = (total as u64).div_ceil(CD_CHUNK_SECTORS as u64);
+    let tick = (chunks / 200).max(1);
+    let run = map.par_chunks_mut(CD_CHUNK_SECTORS * SECTOR_BYTES).enumerate().try_for_each(|(chunk, out)| {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(());
+        }
+        for (i, sector) in out.chunks_exact_mut(SECTOR_BYTES).enumerate() {
+            let d = carve_cd_sector(&ctx, (chunk * CD_CHUNK_SECTORS + i) as u32, sector);
+            dark.fetch_add(d as u64, Ordering::Relaxed);
+            max_dark.fetch_max(d as u64, Ordering::Relaxed);
+        }
+        let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+        if d % tick == 0 {
+            let dt = start.elapsed().as_secs_f64().max(1e-6);
+            progress(CarveProgress {
+                percent: d as f64 / chunks as f64 * 100.0,
+                mb_per_s: d as f64 * (CD_CHUNK_SECTORS * SECTOR_BYTES) as f64 / 1e6 / dt,
+                max_sector_dark_ratio: max_dark.load(Ordering::Relaxed) as f64 / SECTOR_BYTES as f64,
+            });
+        }
+        Ok(())
+    });
+    if run.is_err() {
+        drop(map);
+        let _ = std::fs::remove_file(path);
+        return Err("已取消".into());
+    }
+    map.flush().map_err(|e| e.to_string())?;
+    let dt = start.elapsed().as_secs_f64().max(1e-6);
+    let max_ratio = max_dark.load(Ordering::Relaxed) as f64 / SECTOR_BYTES as f64;
+    Ok(CarveJobSummary {
+        output_iso_path: cfg.output_iso_path.clone(),
+        total_sectors: total,
+        bytes,
+        elapsed_seconds: dt,
+        mb_per_s: bytes as f64 / 1e6 / dt,
+        mean_dark_ratio: dark.load(Ordering::Relaxed) as f64 / bytes as f64,
+        max_sector_dark_ratio: max_ratio,
+        // A sector's bytes are not neighbours on a CD, so a run of them means nothing.
+        max_dark_run_bytes: 0,
+        servo_safe: cfg.servo_safe_dither,
+        limit_ok: !cfg.servo_safe_dither || max_ratio <= MAX_SECTOR_DARK_LIMIT,
+    })
+}
+
+/// What an image must descramble to: the stream each sector was XORed with, and the two
+/// bytes that may remain.
+pub enum Encoding {
+    Dvd,
+    Cd { user_offset: usize },
+}
+
+impl Encoding {
+    pub fn of(cfg: &CarveJobConfig) -> Self {
+        match cfg.preset.media {
+            Media::Dvd => Self::Dvd,
+            Media::Cd => Self::Cd { user_offset: cfg.cd_user_offset.unwrap_or_else(crate::drive::cd_user_offset) },
+        }
+    }
+}
+
 /// Read a finished image back from disk and measure it, independent of the build's
 /// own counters. Foreign bytes mean the XOR or the file is wrong.
-pub fn audit_iso(path: &Path) -> Result<IsoAudit, String> {
+pub fn audit_iso(path: &Path, encoding: &Encoding) -> Result<IsoAudit, String> {
     let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let map = unsafe { Mmap::map(&f) }.map_err(|e| e.to_string())?;
     if map.len() % SECTOR_BYTES != 0 {
         return Err("镜像大小不是 2048 的倍数".into());
     }
+    let (cd_mask, dark_byte, light_byte) = match encoding {
+        Encoding::Dvd => (None, DARK_BYTE, LIGHT_BYTE),
+        Encoding::Cd { user_offset } => (Some(ecma130::user_mask(*user_offset)), ecma130::DARK_BYTE, ecma130::LIGHT_BYTE),
+    };
     let lut = build_scrambler_lut();
     let (foreign, worst, worst_lba) = map
         .par_chunks(SECTOR_BYTES)
         .enumerate()
         .map(|(i, s)| {
-            let table = &lut[seed_index(i as u32)];
+            let table = cd_mask.as_ref().unwrap_or(&lut[seed_index(i as u32)]);
             let (mut dark, mut foreign) = (0u32, 0u64);
             for (b, k) in s.iter().zip(table.iter()) {
                 match b ^ k {
-                    DARK_BYTE => dark += 1,
-                    LIGHT_BYTE => {}
+                    q if q == dark_byte => dark += 1,
+                    q if q == light_byte => {}
                     _ => foreign += 1,
                 }
             }
@@ -331,7 +499,7 @@ pub fn audit_iso(path: &Path) -> Result<IsoAudit, String> {
 mod tests {
     use super::*;
     use crate::artwork::Picture;
-    use crate::preset::reference_preset;
+    use crate::preset::{reference_preset, DiscGeometryPreset};
     use std::sync::Arc;
 
     fn ctx_parts(art: Composition) -> (Spiral, Composition, Box<ScramblerLut>) {
@@ -437,13 +605,97 @@ mod tests {
         preset.total_sectors = 16 * 400;
         let spiral = Spiral::new(preset.spiral_params()).unwrap();
         let art = crate::artwork::tests::whole(Picture::from_luma(2, 2, vec![0, 255, 255, 0]));
-        let cfg = CarveJobConfig { layers: Vec::new(), output_iso_path: out.to_string_lossy().into(), preset, servo_safe_dither: true, max_dark_duty_cycle: 0.65 };
+        let cfg = CarveJobConfig { layers: Vec::new(), output_iso_path: out.to_string_lossy().into(), preset, servo_safe_dither: true, max_dark_duty_cycle: 0.65, cd_user_offset: None };
         let s = build_iso_from(&cfg, &spiral, &art, &AtomicBool::new(false), &|_| {}).unwrap();
         assert!(s.limit_ok);
-        let a = audit_iso(&out).unwrap();
+        let a = audit_iso(&out, &Encoding::Dvd).unwrap();
         assert_eq!(a.foreign_bytes, 0);
         assert_eq!(a.sectors, 6400);
         assert!((a.max_sector_dark_ratio - s.max_sector_dark_ratio).abs() < 1e-12);
+        std::fs::remove_file(&out).unwrap();
+    }
+
+    /// What a CD player's laser would meet: walk whole recorded frames, find which host
+    /// byte the encoder put in each symbol, and compare its tone with the picture at that
+    /// spot on the disc. This runs the mapping backwards from how the carver uses it.
+    fn frames_show_the_picture(along_track_frames: Option<f64>, user_offset: usize) {
+        let preset = DiscGeometryPreset { along_track_frames, ..crate::preset::cd_test_preset() };
+        let spiral = Spiral::new(preset.spiral_params()).unwrap();
+        // Left half black, right half white.
+        let art = crate::artwork::tests::whole(Picture::from_luma(64, 64, (0..64 * 64).map(|i| if i % 64 < 32 { 0 } else { 255 }).collect()));
+        let ctx = CdCtx::new(&spiral, &art, Tone::from_duty(false, 0.65), user_offset, preset.along_track_bits());
+        let (first, count) = (150_000u32, 6usize);
+        let mut sectors = vec![0u8; count * SECTOR_BYTES];
+        let mut dark = 0;
+        for (i, s) in sectors.chunks_exact_mut(SECTOR_BYTES).enumerate() {
+            dark += carve_cd_sector(&ctx, first + i as u32, s);
+        }
+        assert!(dark > 1000 && (dark as usize) < count * SECTOR_BYTES - 1000, "both tones present: {dark}");
+        let (mut seen, mut wrong, mut mixed) = (0, 0, 0);
+        let ro2 = 2.0 * spiral.params.ro;
+        // Frames every one of whose data symbols comes from the carved sectors.
+        for frame in first as u64 * 98 + 108..(first as u64 + count as u64) * 98 {
+            let mut sources = std::collections::HashSet::new();
+            for (q, place) in ctx.placements.iter().enumerate() {
+                let global = (frame - place.delay as u64) * 24 + q as u64;
+                let (lba, raw) = (global / 2352, (global % 2352) as usize ^ 1);
+                if !(user_offset..user_offset + SECTOR_BYTES).contains(&raw) {
+                    continue;
+                }
+                let i = raw - user_offset;
+                let recorded = sectors[(lba as usize - first as usize) * SECTOR_BYTES + i] ^ ctx.mask[i];
+                assert!(recorded == ecma130::DARK_BYTE || recorded == ecma130::LIGHT_BYTE);
+                let (r, th) = spiral.locate(ecma130::symbol_bit(frame as f64, place.slot) - preset.along_track_bits());
+                let want_light = art.sample(r * th.cos() / ro2, r * th.sin() / ro2) >= 128.0;
+                seen += 1;
+                wrong += (want_light != (recorded == ecma130::LIGHT_BYTE)) as usize;
+                sources.insert(lba);
+            }
+            mixed += (sources.len() > 1) as usize;
+        }
+        assert!(seen > 8000, "{seen}");
+        assert!(wrong * 500 < seen, "{wrong} of {seen} symbols show the wrong tone");
+        assert!(mixed > 300, "CIRC mixes sectors within a frame: {mixed}");
+    }
+
+    #[test]
+    fn cd_frames_show_the_picture() {
+        frames_show_the_picture(None, ecma130::MODE1_USER_OFFSET);
+        frames_show_the_picture(Some(206.0), ecma130::MODE2_FORM1_USER_OFFSET);
+    }
+
+    #[test]
+    fn cd_dither_follows_grey_and_keeps_the_guard() {
+        let preset = crate::preset::cd_test_preset();
+        let spiral = Spiral::new(preset.spiral_params()).unwrap();
+        let mut out = [0u8; SECTOR_BYTES];
+        for (grey, want) in [(191u8, 0.25), (0, 0.651), (255, 0.0)] {
+            let art = flat(vec![grey; 16]);
+            let ctx = CdCtx::new(&spiral, &art, safe(), 16, 0.0);
+            for lba in [1000u32, 200_000, 359_000] {
+                let share = carve_cd_sector(&ctx, lba, &mut out) as f64 / SECTOR_BYTES as f64;
+                assert!((share - want).abs() < 0.02, "grey {grey} lba {lba}: {share}");
+            }
+        }
+    }
+
+    #[test]
+    fn cd_build_then_audit() {
+        let dir = std::env::temp_dir().join(format!("disc-core-cd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("cd.iso");
+        let mut preset = crate::preset::cd_test_preset();
+        preset.total_sectors = 3000;
+        let spiral = Spiral::new(preset.spiral_params()).unwrap();
+        let art = crate::artwork::tests::whole(Picture::from_luma(2, 2, vec![0, 255, 255, 0]));
+        let cfg = CarveJobConfig { layers: Vec::new(), output_iso_path: out.to_string_lossy().into(), preset, servo_safe_dither: true, max_dark_duty_cycle: 0.65, cd_user_offset: Some(16) };
+        let s = build_iso_from(&cfg, &spiral, &art, &AtomicBool::new(false), &|_| {}).unwrap();
+        assert!(s.limit_ok, "{}", s.max_sector_dark_ratio);
+        let a = audit_iso(&out, &Encoding::of(&cfg)).unwrap();
+        assert_eq!((a.foreign_bytes, a.sectors), (0, 3000));
+        // Read as the other layout, or as a DVD, the same file is noise.
+        assert!(audit_iso(&out, &Encoding::Cd { user_offset: 24 }).unwrap().foreign_bytes > 1_000_000);
+        assert!(audit_iso(&out, &Encoding::Dvd).unwrap().foreign_bytes > 1_000_000);
         std::fs::remove_file(&out).unwrap();
     }
 

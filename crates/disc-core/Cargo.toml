@@ -3,7 +3,7 @@ name = "disc-core"
 version = "0.1.4"
 edition = "2021"
 license = "GPL-3.0-or-later"
-description = "Spiral geometry, ISO carving and drive-timing calibration for DVD-R data-side imaging."
+description = "Spiral geometry, ISO carving and drive-timing calibration for DVD and CD data-side imaging."
 build = "build.rs"
 
 [dependencies]

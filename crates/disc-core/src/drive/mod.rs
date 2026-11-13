@@ -13,6 +13,7 @@ pub mod imapi;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
+use crate::media::Media;
 use serde::{Deserialize, Serialize};
 
 pub const SIM_DRIVE_ID: &str = "sim://gud1n";
@@ -41,14 +42,25 @@ pub struct OpticalDriveInfo {
     pub supported: bool,
 }
 
-/// Single-layer DVD only: calibration and carving count 38,688 channel bits a sector,
-/// and a CD or Blu-ray disc would take the burn and come out as noise. Anything not
-/// named here, including a type nobody could read, is refused.
+/// Single-layer DVD and CD only: calibration and carving count the channel bits of
+/// those two formats, and a Blu-ray or dual-layer disc would take the burn and come out
+/// as noise. Anything not named, including a type nobody could read, is refused.
 pub fn is_supported_media(media_type: &str) -> bool {
-    matches!(media_type.trim(), "DVD-R" | "DVD+R" | "DVD-RW" | "DVD+RW")
+    Media::of_type(media_type).is_some()
 }
 
-/// Refuses a burn on anything but a DVD the app supports, whatever the page allowed, and
+/// Where this platform's burner puts the 2048 user bytes inside a CD sector: IMAPI2 writes
+/// Mode 2 Form 1 (found by disc-probe on a burned disc), hdiutil and the rest Mode 1.
+/// A burned calibration disc is checked against this before anything is carved.
+pub fn cd_user_offset() -> usize {
+    if cfg!(target_os = "windows") {
+        crate::ecma130::MODE2_FORM1_USER_OFFSET
+    } else {
+        crate::ecma130::MODE1_USER_OFFSET
+    }
+}
+
+/// Refuses a burn on anything but a disc the app supports, whatever the page allowed, and
 /// an image that does not fit the disc. Every image Discratcher makes covers the whole
 /// disc, so one much smaller than the disc was made for another disc (issue #8).
 pub fn check_burnable(id: &str, iso: &str) -> Result<(), String> {
@@ -57,7 +69,7 @@ pub fn check_burnable(id: &str, iso: &str) -> Result<(), String> {
         return Err("光驱里没有光盘".into());
     }
     if !d.supported {
-        return Err(format!("目前只支持 DVD 光盘，这张是 {}", d.media_type));
+        return Err(format!("目前只支持 DVD 和 CD 光盘，这张是 {}", d.media_type));
     }
     let image = std::fs::metadata(iso).map_err(|e| format!("读不到镜像：{e}"))?.len().div_ceil(2048);
     image_fits(image, d.total_sectors as u64)
@@ -90,6 +102,11 @@ pub trait TimedDrive: Send {
     /// Read one sector's 2048 user bytes. Used to check a calibration disc before it is
     /// timed, never on the timing path.
     fn read_sector(&mut self, lba: u32, buf: &mut [u8; 2048]) -> Result<(), String>;
+    /// A CD sector as recorded, all 2352 bytes with sync and header (READ CD). Only
+    /// pass-through transports can.
+    fn read_raw_sector(&mut self, _lba: u32, _buf: &mut [u8; 2352]) -> Result<(), String> {
+        Err("这个通道读不了原始扇区".into())
+    }
     /// False when the transport cannot bypass the drive's own cache; callers then have to
     /// evict it with a distant read.
     fn supports_fua(&self) -> bool;
@@ -172,6 +189,12 @@ pub mod mmc {
         [0xA8, if fua { 0x08 } else { 0 }, l[0], l[1], l[2], l[3], n[0], n[1], n[2], n[3], 0, 0]
     }
 
+    /// READ CD for one whole raw sector of any type: sync, headers, user data, EDC and ECC.
+    pub fn read_cd_raw(lba: u32) -> [u8; 12] {
+        let l = lba.to_be_bytes();
+        [0xBE, 0, l[0], l[1], l[2], l[3], 0, 0, 1, 0xF8, 0, 0]
+    }
+
     pub fn read_capacity() -> [u8; 10] {
         [0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     }
@@ -251,6 +274,7 @@ pub mod mmc {
             assert_eq!(&c[..6], &[0xA8, 0x08, 0x00, 0x11, 0x22, 0x33]);
             assert_eq!(&c[6..10], &[0, 0, 0, 1]);
             assert_eq!(set_speed(5540)[..4], [0xBB, 0x00, 0x15, 0xA4]);
+            assert_eq!(read_cd_raw(0x0102_0304), [0xBE, 0, 1, 2, 3, 4, 0, 0, 1, 0xF8, 0, 0]);
             assert_eq!(parse_capacity(&[0, 0x23, 0x05, 0x3F, 0, 0, 8, 0]), 2_295_104);
         }
 
@@ -314,11 +338,11 @@ mod tests {
     }
 
     #[test]
-    fn only_single_layer_dvd_is_supported() {
-        for m in ["DVD-R", "DVD+R", "DVD-RW", "DVD+RW", " DVD-R "] {
+    fn only_single_layer_dvd_and_cd_are_supported() {
+        for m in ["DVD-R", "DVD+R", "DVD-RW", "DVD+RW", " DVD-R ", "CD-R", "CD-RW", "CD-ROM"] {
             assert!(is_supported_media(m), "{m}");
         }
-        for m in ["CD-R", "CD-RW", "BD-R", "BD-RE", "DVD+R DL", "DVD-RAM", "DVD-ROM", "None", ""] {
+        for m in ["BD-R", "BD-RE", "DVD+R DL", "DVD-RAM", "DVD-ROM", "None", ""] {
             assert!(!is_supported_media(m), "{m}");
         }
     }

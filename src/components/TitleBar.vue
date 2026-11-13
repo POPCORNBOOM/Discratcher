@@ -107,7 +107,7 @@ let fadeTimer = 0
 let closeTimer = 0
 
 /** The disc the next burn will use, chosen from every calibration on this machine. */
-const presetOptions = computed(() => s.presets.map((p) => ({ value: p.id, label: labelOf(p), keywords: `${p.stamperCode} ${p.mediaId} ${p.brand ?? ''}` })))
+const presetOptions = computed(() => s.presets.map((p) => ({ value: p.id, label: p.stamperCode || p.mediaId || (p.media === 'cd' ? 'CD-R' : labelOf(p)), keywords: `${p.stamperCode} ${p.mediaId} ${p.brand ?? ''}` })))
 const preview = (id: string | null) => (s.discPreview = s.presets.find((p) => p.id === id) ?? null)
 
 async function removePreset() {

@@ -77,6 +77,10 @@ impl TimedDrive for LinuxDrive {
         self.exec(&mmc::read12(lba, 1, false), Some(&mut buf[..]))
     }
 
+    fn read_raw_sector(&mut self, lba: u32, buf: &mut [u8; 2352]) -> Result<(), String> {
+        self.exec(&mmc::read_cd_raw(lba), Some(&mut buf[..]))
+    }
+
     fn capacity(&mut self) -> Result<u32, String> {
         let mut b = [0u8; 8];
         self.exec(&mmc::read_capacity(), Some(&mut b))?;

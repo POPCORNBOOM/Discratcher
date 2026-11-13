@@ -26,7 +26,7 @@
 </p>
 
 > [!NOTE]
-> Discratcher is at an early stage and **supports DVD discs only** for now; CD and Blu-ray are not supported yet. The combinations tested so far are under [Platform support](#platform-support), and [issues](https://github.com/POPCORNBOOM/Discratcher/issues) are welcome. To draw on a CD, try [DiscImageStudio](https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio) for now.
+> Discratcher is at an early stage and **supports DVD; CD has just been added and has not been verified on a real disc**. Blu-ray is not supported yet. The combinations tested so far are under [Platform support](#platform-support), and [issues](https://github.com/POPCORNBOOM/Discratcher/issues) are welcome. For CDs the more mature choice is [DiscImageStudio](https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio).
 
 ## Features
 
@@ -79,7 +79,7 @@ The app looks for a new version at startup, or you can use Help → Check for up
 | --- | --- |
 | DVD-R | Tested (CMC MAG. AM3) |
 | DVD+R, DVD-RW, DVD+RW | Should work, unverified |
-| CD-R, CD-RW | Not supported yet: calibration and carving follow the DVD format |
+| CD-R, CD-RW | Experimental: encoding and calibration pass in simulation only, not yet verified on a real disc. Each drive needs one extra twist chart burned the first time |
 | Blu-ray, DVD-RAM, dual-layer DVD | Not supported |
 
 ## Build from source

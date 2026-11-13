@@ -33,7 +33,24 @@
           </div>
         </section>
 
+        <div v-if="isCdPreset && s.preset?.alongTrackFrames == null" class="notice warn">
+          <UiIcon :path="mdiAlertOutline" />
+          <div class="grow">
+            {{ t('carve.twistNeeded') }}
+            <a role="button" tabindex="0" @click="loadTwistChart" @keydown.enter="loadTwistChart">{{ t('carve.twistLoad') }}</a>
+          </div>
+        </div>
+
         <UiAdvanced>
+          <section v-if="isCdPreset" class="section">
+            <div class="title row">
+              <span class="grow">{{ t('carve.twist') }}</span>
+              <a class="action-link" role="button" tabindex="0" @click="loadTwistChart" @keydown.enter="loadTwistChart">{{ t('carve.twistLoad') }}</a>
+            </div>
+            <UiSlider v-model="twist" :label="t('carve.twist')" :min="-60" :max="345" :step="1" :format="(v) => t('carve.twistUnit', { n: Math.round(v) })" />
+            <div class="small muted">{{ t('carve.twistHelp') }}</div>
+          </section>
+
           <section v-if="sel" class="section">
             <div class="title row">
               <span class="grow">{{ t('carve.position') }}</span>
@@ -107,10 +124,11 @@ import UiIcon from '../components/UiIcon.vue'
 import UiSlider from '../components/UiSlider.vue'
 import UiSwitch from '../components/UiSwitch.vue'
 import { CARVE_FIT } from '../discLook'
-import { COMPOSE_SECONDS } from '../etaModel'
+import { COMPOSE_SECONDS, isCd } from '../etaModel'
 import { t } from '../i18n'
 import { issueOf } from '../catalog'
 import { notifyError, notifySuccess } from '../notices'
+import { rememberTwist } from '../twist'
 import { coverSize, fileName, useComposition } from '../stores/composition'
 import { useProcess, type StepContext } from '../stores/process'
 import { useStudio } from '../stores/studio'
@@ -139,6 +157,41 @@ function resetLayer() {
   const l = sel.value
   if (!l) return
   Object.assign(l, { x: 0, y: 0, rotationDeg: 0, size: comp.layers[0] === l ? coverSize(l) : 0.5 })
+}
+
+// ---- CD twist: one number per drive, read off a burned chart ----
+const isCdPreset = computed(() => s.preset?.media === 'cd')
+let twistTimer: ReturnType<typeof setTimeout> | undefined
+const twist = computed({
+  get: () => s.preset?.alongTrackFrames ?? 0,
+  set: (frames) => {
+    const preset = s.preset
+    if (!preset) return
+    preset.alongTrackFrames = frames
+    clearTimeout(twistTimer)
+    twistTimer = setTimeout(async () => {
+      try {
+        await call('save_preset', { preset })
+        rememberTwist(preset.driveModel, frames)
+      } catch (e) {
+        notifyError(String(e))
+      }
+    }, 400)
+  },
+})
+/** Puts the chart on the disc as the only picture, filling it: its lines are drawn for the whole radius. */
+function loadTwistChart() {
+  guard(async () => {
+    try {
+      const path = await call<string>('make_twist_chart', { preset: s.preset })
+      comp.clear()
+      await comp.add(path)
+      const l = comp.layers[0]
+      if (l) Object.assign(l, { name: t('carve.twistChart'), x: 0, y: 0, size: 1, rotationDeg: 0, invert: false, contrast: 0 })
+    } catch (e) {
+      notifyError(String(e))
+    }
+  })
 }
 
 async function choose() {
@@ -357,6 +410,13 @@ async function compose(path: string, ctx?: StepContext) {
     if (!(await ctx?.ask(question, t('carve.riskContinue')))) throw t('carve.riskDeclined')
   }
 }
+/** A DVD calibration on a CD, or the other way round, can only fail: say so before composing. */
+function checkFamily() {
+  const d = s.drive
+  if (!d?.mediaPresent || !d.supported || d.simulated) return
+  const [disc, preset] = [isCd(d) ? 'CD' : 'DVD', s.preset?.media === 'cd' ? 'CD' : 'DVD']
+  if (disc !== preset) throw t('carve.familyMismatch', { disc, preset })
+}
 /** A real burn finished with these parameters: only now may they be shared. */
 async function markBurned(preset: DiscGeometryPreset) {
   try {
@@ -368,7 +428,7 @@ async function markBurned(preset: DiscGeometryPreset) {
 }
 function burn() {
   const preset = s.preset!
-  p.openBurn({ title: t('carve.burnTitle'), note: t('carve.burnNote', { name: jobName() }), fileName: 'carved.iso', prepareLabel: t('carve.compose'), prepare: compose,
+  p.openBurn({ title: t('carve.burnTitle'), note: t('carve.burnNote', { name: jobName() }), fileName: 'carved.iso', prepareLabel: t('carve.compose'), prepare: (path, ctx) => (checkFamily(), compose(path, ctx)),
     rateIssue: issueOf(preset.id) ?? undefined,
     shareable: preset.id.startsWith('user-') ? preset : undefined,
     onBurned: () => markBurned(preset),

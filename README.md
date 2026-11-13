@@ -26,7 +26,7 @@
 </p>
 
 > [!NOTE]
-> Discratcher 还在早期阶段，目前**只支持 DVD 光盘**，暂不支持 CD 和蓝光。实测过的组合见下方[支持情况](#平台支持)，遇到问题欢迎[提 Issue](https://github.com/POPCORNBOOM/Discratcher/issues)。想在 CD 上刻图可以先用 [DiscImageStudio](https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio)。
+> Discratcher 还在早期阶段，目前**支持 DVD，CD 刚加入、还没有实盘验证**，暂不支持蓝光。实测过的组合见下方[支持情况](#平台支持)，遇到问题欢迎[提 Issue](https://github.com/POPCORNBOOM/Discratcher/issues)。CD 更成熟的选择是 [DiscImageStudio](https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio)。
 
 ## 特性
 
@@ -79,7 +79,7 @@
 | --- | --- |
 | DVD-R | 已实测（CMC MAG. AM3） |
 | DVD+R、DVD-RW、DVD+RW | 应该可用，未验证 |
-| CD-R、CD-RW | 暂不支持：标定和刻图都按 DVD 规格计算 |
+| CD-R、CD-RW | 实验性：编码和标定只通过了模拟，未实盘验证。每台光驱第一次用要多刻一张扭转测试图 |
 | 蓝光、DVD-RAM、双层 DVD | 暂不支持 |
 
 ## 从源码构建

@@ -87,11 +87,12 @@ export const openUrl = (url: string) => {
 export async function call(cmd: string, a: Record<string, any>): Promise<unknown> {
   switch (cmd) {
     case 'list_optical_drives':
-      return [{ id: '', vendor: 'HL-DT-ST', product: 'DVDRAM GUD1N', revision: '1.01', mediaPresent: media() !== 'none', mediaType: media() === 'none' ? 'None' : media() === 'cd' ? 'CD-R' : 'DVD-R', mediaId: media() === 'none' ? '' : 'CMC MAG. AM3', totalSectors: 2295104, isBlank: media() === 'blank' || media() === 'cd', simulated: false, supported: media() === 'blank' || media() === 'written' }]
+      return [{ id: '', vendor: 'HL-DT-ST', product: 'DVDRAM GUD1N', revision: '1.01', mediaPresent: media() !== 'none', mediaType: media() === 'none' ? 'None' : media() === 'cd' ? 'CD-R' : 'DVD-R', mediaId: media() === 'none' ? '' : 'CMC MAG. AM3', totalSectors: media() === 'cd' ? 359843 : 2295104, isBlank: media() === 'blank' || media() === 'cd', simulated: false, writeSpeeds: media() === 'cd' ? [10, 16, 24] : undefined, supported: media() !== 'none' }]
     case 'inspect_disc':
-      return ({ none: 'none', cd: 'unsupported', blank: 'blank', written: 'calibration' } as Record<string, string>)[media()] ?? 'none'
+      return ({ none: 'none', cd: 'blank', blank: 'blank', written: 'calibration' } as Record<string, string>)[media()] ?? 'none'
     case 'check_calibration_disc':
       return { sectors: 2295104, foreign: false }
+    case 'make_twist_chart': return '/Users/demo/twist-chart.png'
     case 'get_presets': return saved
     case 'save_preset': saved = [...saved.filter((p) => p.id !== a.preset.id), a.preset]; return null
     case 'delete_preset': saved = saved.filter((p) => p.id !== a.id); return null

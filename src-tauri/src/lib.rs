@@ -5,9 +5,10 @@ use disc_core::artwork::{self, ArtworkAnalysis, Composition, Picture};
 use disc_core::composition;
 use disc_core::calib::disc_check::{self, DiscCheck, DiscKind};
 use disc_core::calib::ladder::{self, CalibrationResult, LadderConfig};
-use disc_core::carver::{self, CarveJobConfig, CarveJobSummary, IsoAudit, Tone};
+use disc_core::carver::{self, CarveJobConfig, CarveJobSummary, Encoding, IsoAudit, Tone};
 use disc_core::drive::{self, burner, OpticalDriveInfo};
 use disc_core::iso9660;
+use disc_core::media::Media;
 use disc_core::preset::DiscGeometryPreset;
 use disc_core::preview::{self, PreviewInput};
 use disc_core::spiral::Spiral;
@@ -179,19 +180,29 @@ async fn generate_calibration_iso(app: AppHandle, output_path: String, total_sec
     .await
 }
 
+/// The disc family, from the type the page already holds. Asking the drive again here
+/// fails: for a few seconds after a pass-through session ends, macOS lists the drive
+/// without its disc (seen on the GUD1N between the inspection and the check).
+fn media_of(media_type: &str) -> Result<Media, String> {
+    Media::of_type(media_type).ok_or_else(|| format!("目前只支持 DVD 和 CD 光盘，这张是 {media_type}"))
+}
+
 #[tauri::command]
 async fn start_calibration(
     app: AppHandle,
     state: State<'_, Studio>,
     drive_id: String,
+    media_type: String,
     max_targets: usize,
     reps: usize,
     range_pct: (f64, f64),
 ) -> Result<CalibrationResult, String> {
     let cancel = fresh_cancel(&state);
     blocking(move || {
+        let media = media_of(&media_type)?;
         let mut d = drive::open_timed(&drive_id, true)?;
-        let cfg = LadderConfig { max_targets, reps, range_pct, ..Default::default() };
+        let image_sectors = if media == Media::Cd { disc_check::calibration_sectors(d.as_mut()) } else { None };
+        let cfg = LadderConfig { max_targets, reps, range_pct, media, image_sectors, ..Default::default() };
         let a = app.clone();
         ladder::run_ladder(
             d.as_mut(),
@@ -216,11 +227,12 @@ async fn inspect_disc(drive_id: String) -> Result<DiscKind, String> {
 
 /// Reads a burned calibration disc back before it is timed. Only reads.
 #[tauri::command]
-async fn check_calibration_disc(app: AppHandle, state: State<'_, Studio>, drive_id: String) -> Result<DiscCheck, String> {
+async fn check_calibration_disc(app: AppHandle, state: State<'_, Studio>, drive_id: String, media_type: String) -> Result<DiscCheck, String> {
     let cancel = fresh_cancel(&state);
     blocking(move || {
+        let media = media_of(&media_type)?;
         let mut d = drive::open_timed(&drive_id, false)?;
-        disc_check::check_calibration_disc(d.as_mut(), &cancel, &mut |p| {
+        disc_check::check_calibration_disc(d.as_mut(), media, &cancel, &mut |p| {
             let _ = app.emit("calib://check", p);
         })
     })
@@ -303,6 +315,22 @@ async fn open_composition(app: AppHandle, path: String) -> Result<Vec<serde_json
     .await
 }
 
+/// Draws the twist chart for a CD calibration and returns the picture's path, to be
+/// carved like any other picture. See `disc_core::twist`.
+#[tauri::command]
+async fn make_twist_chart(app: AppHandle, preset: DiscGeometryPreset) -> Result<String, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("images");
+    blocking(move || {
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        // Named by what it was drawn against: a new value draws a new chart.
+        let id: String = preset.id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+        let path = dir.join(format!("twist-chart-{id}-{}.png", preset.along_track_frames.unwrap_or(0.0).round()));
+        disc_core::twist::write_chart(&preset, &path)?;
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BuiltIso {
@@ -317,7 +345,7 @@ async fn build_carved_iso(app: AppHandle, state: State<'_, Studio>, config: Carv
         let summary = carver::build_iso(&config, &cancel, &|p| {
             let _ = app.emit("carve://progress", p);
         })?;
-        let audit = carver::audit_iso(Path::new(&summary.output_iso_path))?;
+        let audit = carver::audit_iso(Path::new(&summary.output_iso_path), &Encoding::of(&config))?;
         Ok(BuiltIso { summary, audit })
     })
     .await
@@ -393,6 +421,7 @@ pub fn run() {
             save_composition,
             open_composition,
             build_carved_iso,
+            make_twist_chart,
             burn_iso_to_drive,
             cache_iso_path,
             remove_cached_iso,

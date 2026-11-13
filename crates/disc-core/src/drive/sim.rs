@@ -2,8 +2,8 @@
 //! cache timing, whole-turn rereads and speed changes that no simulator settles.
 
 use super::{OpticalDriveInfo, TimedDrive, TimedRead, SIM_DRIVE_ID};
-use crate::calib::solver::completion_bit;
 use crate::ecma267::DEFAULT_TOTAL_SECTORS;
+use crate::media::Media;
 use crate::preset::reference_preset;
 use crate::rng::SplitMix64;
 use crate::spiral::{Spiral, SpiralParams};
@@ -11,6 +11,10 @@ use std::f64::consts::TAU;
 
 pub struct SimDrive {
     spiral: Spiral,
+    media: Media,
+    /// Frames the drive finishes a read after the model's end point. Timing must not
+    /// be able to see it.
+    pub late_frames: f64,
     pub period_ns: f64,
     pub jitter_deg: f64,
     pub retry_chance: f64,
@@ -40,9 +44,13 @@ pub fn drive_info() -> OpticalDriveInfo {
 
 impl SimDrive {
     pub fn new(params: SpiralParams, seed: u64) -> Self {
+        let media = if params.sector_bits == Media::Cd.sector_bits() { Media::Cd } else { Media::Dvd };
         Self {
             spiral: Spiral::new(params).expect("sim geometry"),
-            period_ns: 25.474e6,
+            media,
+            late_frames: 0.0,
+            // The spindle speeds measured on real drives: 4x DVD, 8x CD.
+            period_ns: if media == Media::Cd { 48.34e6 } else { 25.474e6 },
             jitter_deg: 0.6,
             retry_chance: 0.01,
             fua: true,
@@ -65,16 +73,16 @@ impl SimDrive {
 
 impl TimedDrive for SimDrive {
     fn read_timed(&mut self, lba: u32, fua: bool) -> Result<TimedRead, String> {
-        let block = lba / 16;
+        let block = lba / self.media.block();
         let hit = !(fua && self.fua) && self.cached_block == Some(block);
         if hit {
             self.now_ns += 1.1e6;
             return Ok(TimedRead { t_end_ns: self.now_ns });
         }
         // Seek cost grows with distance, then wait for the block's end to reach the head.
-        let dist = lba.abs_diff(self.head_lba) as f64 / DEFAULT_TOTAL_SECTORS as f64;
+        let dist = lba.abs_diff(self.head_lba) as f64 / self.spiral.params.total_sectors as f64;
         let earliest = self.now_ns + 3e6 + 90e6 * dist.sqrt();
-        let target = self.spiral.theta_at_bit(completion_bit(lba));
+        let target = self.spiral.theta_at_bit(self.media.completion_bit(lba) + self.late_frames * crate::ecma130::FRAME_BITS as f64);
         let phase_ns = (target / TAU).rem_euclid(1.0) * self.period_ns;
         let wait = (phase_ns - earliest).rem_euclid(self.period_ns);
         let mut end = earliest + wait;

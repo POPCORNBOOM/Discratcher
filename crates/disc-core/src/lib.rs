@@ -5,12 +5,15 @@ pub mod calib;
 pub mod carver;
 pub mod composition;
 pub mod drive;
+pub mod ecma130;
 pub mod ecma267;
 pub mod iso9660;
+pub mod media;
 pub mod preset;
 pub mod preview;
 pub mod rng;
 pub mod spiral;
+pub mod twist;
 
 /// The sibling discprobe checkout holds the real burned-image and real-run oracles.
 /// Those tests skip themselves when it is not on this machine; the home directory is

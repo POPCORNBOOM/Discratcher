@@ -106,6 +106,7 @@ import { ratingUrl } from '../catalog'
 import { notifyError } from '../notices'
 import { t } from '../i18n'
 import { useEta } from '../eta'
+import { isCd } from '../etaModel'
 import { useProcess } from '../stores/process'
 import { useStudio } from '../stores/studio'
 
@@ -150,8 +151,7 @@ const speedOptions = computed(() => {
   if (d.writeSpeeds && d.writeSpeeds.length > 0) {
     speeds = [...d.writeSpeeds]
   } else if (d.maxWriteSpeed && d.maxWriteSpeed > 0) {
-    const isCd = d.mediaType.toUpperCase().includes('CD')
-    const candidates = isCd ? [4, 8, 10, 16, 24, 32, 40, 48] : [2, 4, 6, 8, 12, 16]
+    const candidates = isCd(d) ? [4, 8, 10, 16, 24, 32, 40, 48] : [2, 4, 6, 8, 12, 16]
     speeds = candidates.filter((x) => x <= d.maxWriteSpeed!)
   } else if (d.isBlank) {
     speeds = [2, 4, 8, 16]
@@ -159,7 +159,8 @@ const speedOptions = computed(() => {
   speeds = Array.from(new Set(speeds)).sort((a, b) => a - b)
   return speeds.map((speed) => {
     let label = `${speed}x`
-    if (speed === 4) label += t('burn.recommended')
+    // 4x is where DVD burns were measured; on a CD the slowest speed marks the dye best.
+    if (speed === (isCd(d) ? speeds[0] : 4)) label += t('burn.recommended')
     else if (speed === speeds[speeds.length - 1] && speeds.length > 1) label += t('burn.fastest')
     return { value: String(speed), label }
   })

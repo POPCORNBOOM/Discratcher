@@ -25,5 +25,10 @@ as the spiral grid size and the calibration volume label. File headers and
 The spiral model and encoding for data-side images draw on DiscImageStudio
 (GPL-3.0-or-later): https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio
 
+CD support follows disc-probe's CD notes (docs/CD_PHYSICAL_MODEL.md and
+docs/research/CD_GEOMETRY_INVESTIGATION.md): the point where a timed read ends,
+the ladder's starting values, the CIRC delay table used as a test vector and the
+along-track constant. The dark and light bytes for CD are DiscImageStudio's.
+
 The source code of Discratcher and of these changes is available at
 https://github.com/POPCORNBOOM/Discratcher

@@ -2,7 +2,6 @@
 //! this problem are almost parallel, and normal equations would throw that precision away.
 //! The constant-pitch model and `completion_bit` follow discprobe `calib.py` and `geo.py`.
 
-use crate::ecma267::SECTOR_CHANNEL_BITS;
 use crate::spiral::{Spiral, SpiralParams};
 use std::f64::consts::{PI, TAU};
 
@@ -16,9 +15,9 @@ pub struct PhasePoint {
     pub sigma_deg: f64,
 }
 
-/// Reads finish where the ECC block ends, because the drive must decode the whole block.
+/// Where a DVD read ends; see `Media::completion_bit` for both families.
 pub fn completion_bit(lba: u32) -> f64 {
-    ((lba / 16 + 1) * 16) as f64 * SECTOR_CHANNEL_BITS as f64
+    crate::media::Media::Dvd.completion_bit(lba)
 }
 
 /// Solve min ||A x - b|| by Householder QR. Returns x and the upper-triangular R.
@@ -277,10 +276,11 @@ pub fn fit_cubic(
     ri: f64,
     ro0: f64,
     total_sectors: u32,
+    sector_bits: u32,
     bit_mm: f64,
     lambda: f64,
 ) -> Result<CubicFit, String> {
-    let make = |x: &[f64]| SpiralParams { total_sectors, bit_mm, ri, ro: x[0], c1: x[1], c2: x[2], c3: x[3] };
+    let make = |x: &[f64]| SpiralParams { total_sectors, sector_bits, bit_mm, ri, ro: x[0], c1: x[1], c2: x[2], c3: x[3] };
     let reg = lambda.sqrt() / 1e-4;
     let residual = |x: &[f64]| -> Vec<f64> {
         let Some(m) = cubic_grid_angle(make(x), n_ref, points) else {
@@ -328,13 +328,14 @@ pub fn fit_cubic_scan_ri(
     ri0: f64,
     ro0: f64,
     total_sectors: u32,
+    sector_bits: u32,
     bit_mm: f64,
     lambda: f64,
 ) -> Result<CubicFit, String> {
     // Keeps the area, and so the track length, roughly fixed as ri moves.
     let at = |ri: f64| {
         let ro = (ro0 * ro0 + ri * ri - ri0 * ri0).sqrt();
-        fit_cubic(points, n_ref, ri, ro, total_sectors, bit_mm, lambda)
+        fit_cubic(points, n_ref, ri, ro, total_sectors, sector_bits, bit_mm, lambda)
     };
     const SPAN: f64 = 0.36;
     const STEPS: i32 = 9;
@@ -437,7 +438,7 @@ mod tests {
         let ri = c.u * bit;
         let bits = 2_295_104f64 * 38688.0;
         let ro0 = bit * (c.u * c.u + c.v * bits / PI).sqrt();
-        let f = fit_cubic(&pts, n_ref, ri, ro0, 2_295_104, bit, CUBIC_LAMBDA).unwrap();
+        let f = fit_cubic(&pts, n_ref, ri, ro0, 2_295_104, 38_688, bit, CUBIC_LAMBDA).unwrap();
         let p = f.params;
         eprintln!("cubic ro {:.6} c {:.4e} {:.4e} {:.4e} p0 {:.6} rms {:.3}", p.ro, p.c1, p.c2, p.c3, f.p0_um, f.rms_deg);
 

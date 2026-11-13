@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { call, CANCELLED } from '../api'
+import { isCd } from '../etaModel'
 import { notifyError } from '../notices'
 import { useComposition } from './composition'
 import type { DiscGeometryPreset, OpticalDriveInfo, PresetLook } from '../types'
@@ -49,12 +50,27 @@ export const useStudio = defineStore('studio', () => {
     maxDarkDutyCycle: 0.65,
   })
 
-  // A disc whose MID names exactly one configuration needs no choosing.
+  // A disc whose MID names exactly one configuration needs no choosing. Not for the
+  // virtual drive: the list falls back to it whenever the real one drops out for a
+  // moment, as it does while a disc is swapped, and its preset then replaced the
+  // user's own just before a burn.
   watch(
-    () => drive.value?.mediaId,
+    () => (drive.value?.simulated ? '' : drive.value?.mediaId),
     (id) => {
       const hits = presets.value.filter((p) => p.mediaId === id)
       if (id && hits.length === 1) presetId.value = hits[0].id
+    },
+  )
+
+  // A calibration for the other kind of disc can only fail, so when the disc in the drive
+  // changes kind and exactly one calibration fits it, that one is selected.
+  watch(
+    // The calibrations may load after the drive is first seen.
+    [() => (drive.value?.mediaPresent && drive.value.supported && !drive.value.simulated ? isCd(drive.value) : null), () => presets.value.length] as const,
+    ([cd]) => {
+      if (cd === null || (preset.value?.media === 'cd') === cd) return
+      const fits = presets.value.filter((p) => (p.media === 'cd') === cd)
+      if (fits.length === 1) presetId.value = fits[0].id
     },
   )
 
@@ -89,9 +105,21 @@ export const useStudio = defineStore('studio', () => {
     return d.id || `${d.vendor}/${d.product}`
   }
 
+  /** The virtual drive is selected only because no real one was listed. */
+  let stoodIn = false
   async function refreshDrives() {
     drives.value = await call<OpticalDriveInfo[]>('list_optical_drives')
-    if (!drive.value && drives.value.length) driveKey.value = keyOf(drives.value[0])
+    // A real drive's key changes with its disc, and the drive can drop out of the list
+    // for a moment while one is swapped. The virtual drive may stand in then, but only
+    // until a real one is back: left selected, it sent a calibration to nowhere.
+    const real = drives.value.find((d) => !d.simulated)
+    if (!drive.value && drives.value.length) {
+      driveKey.value = keyOf(real ?? drives.value[0])
+      stoodIn = !real
+    } else if (stoodIn && real) {
+      driveKey.value = keyOf(real)
+      stoodIn = false
+    }
   }
 
   async function refreshPresets() {

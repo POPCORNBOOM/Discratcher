@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, reactive, ref, shallowRef } from 'vue'
 import { call, CANCELLED, on } from '../api'
 import { t } from '../i18n'
-import { burnSeconds, COMPOSE_SECONDS } from '../etaModel'
+import { burnSeconds, COMPOSE_SECONDS, isCd } from '../etaModel'
 import { notifySuccess, notifyWarning } from '../notices'
 import { removeTask, setTask } from '../tasks'
 import type { BurnProgress, CarveProgress, DiscGeometryPreset } from '../types'
@@ -159,7 +159,7 @@ export const useProcess = defineStore('process', () => {
         },
         {
           label: t('process.writeDisc'),
-          estimate: () => burnSeconds(burnSettings.speed, burnSettings.verify),
+          estimate: () => burnSeconds(burnSettings.speed, burnSettings.verify, isCd(s.drive) ? 'cd' : 'dvd'),
           dangerous: () => true,
           run: () => call('burn_iso_to_drive', { driveId: s.drive!.id, isoPath: path, speed: burnSettings.speed, verify: burnSettings.verify }),
         },

@@ -123,6 +123,7 @@ fn command_name(op: u8) -> &'static str {
         0x46 => "GET CONFIGURATION",
         0x51 => "READ DISC INFORMATION",
         0xA8 => "READ(12)",
+        0xBE => "READ CD",
         0xBB => "SET CD SPEED",
         _ => "SCSI 命令",
     }
@@ -319,6 +320,10 @@ impl TimedDrive for WinDrive {
 
     fn read_sector(&mut self, lba: u32, buf: &mut [u8; 2048]) -> Result<(), String> {
         self.exec(&mmc::read12(lba, 1, false), Some(&mut buf[..])).map_err(|f| f.text(0xA8))
+    }
+
+    fn read_raw_sector(&mut self, lba: u32, buf: &mut [u8; 2352]) -> Result<(), String> {
+        self.exec(&mmc::read_cd_raw(lba), Some(&mut buf[..])).map_err(|f| f.text(0xBE))
     }
 
     fn capacity(&mut self) -> Result<u32, String> {

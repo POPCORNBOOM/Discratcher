@@ -93,12 +93,17 @@ export function calibrationSeconds(rungs: number, reads: number, range: [number,
   return new CalibrationPlan(rungs, reads, range, totalSectors).seconds
 }
 
-// Burning. A 4.7 GB disc at 1x, 1385 kB/s.
-const ONE_X_SECONDS = 3394
+// Burning. A 4.7 GB DVD at 1x, 1385 kB/s; an 80 minute CD at 1x plays for 80 minutes.
+const ONE_X_SECONDS = { dvd: 3394, cd: 4800 }
 
-export function burnSeconds(speed: number, verify: boolean) {
-  return (ONE_X_SECONDS / speed) * (verify ? 2 : 1)
+export function burnSeconds(speed: number, verify: boolean, media: 'dvd' | 'cd' = 'dvd') {
+  return (ONE_X_SECONDS[media] / speed) * (verify ? 2 : 1)
 }
+
+/** A CD is measured at 8x, where a turn takes 48 ms against a DVD's 25 ms at 4x. */
+export const CD_MEASURE_FACTOR = 1.9
+
+export const isCd = (d: { mediaType: string } | null | undefined) => !!d?.mediaType.toUpperCase().startsWith('CD')
 
 /** Measured: 4.7 GB in 22 s at 212 MB/s. */
 export const COMPOSE_SECONDS = 22

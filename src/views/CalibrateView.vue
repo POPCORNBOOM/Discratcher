@@ -3,7 +3,7 @@
     <div class="flow">
       <h1>{{ t('cal.title') }}</h1>
       <p class="small muted">{{ t('cal.tip') }} <a role="button" tabindex="0" @click="s.view = 'models'" @keydown.enter="s.view = 'models'">{{ t('cal.goSearch') }}</a></p>
-      <p class="small muted">{{ s.pendingCode ? t('cal.forCode', { code: s.pendingCode }) : t('cal.forUnlisted') }} {{ t('cal.times', { n: minutes }) }}</p>
+      <p class="small muted">{{ s.pendingCode ? t('cal.forCode', { code: s.pendingCode }) : t('cal.forUnlisted') }} {{ t('cal.times', { n: minutes, b: cd ? 8 : 15 }) }}</p>
       <DrivePicker />
       <div class="step">
         <span class="grow small">{{ t(!hasDisc ? 'cal.hintNoDisc' : blank ? 'cal.hintBlank' : 'cal.hintWritten') }}</span>
@@ -74,7 +74,8 @@ import { mdiAlertOutline, mdiCheckCircleOutline, mdiCloseCircleOutline, mdiInfor
 import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { call, CANCELLED, isMock, loadIndex, mockDev, on, openInBrowser } from '../api'
 import { issueUrl, normalizeCode, type CatalogEntry } from '../catalog'
-import { calibrationSeconds, CalibrationPlan, REFERENCE_SHARE } from '../etaModel'
+import { calibrationSeconds, CalibrationPlan, CD_MEASURE_FACTOR, isCd, REFERENCE_SHARE } from '../etaModel'
+import { twistOf } from '../twist'
 import { t } from '../i18n'
 import ContributeDialog from '../components/ContributeDialog.vue'
 import UiDialog from '../components/UiDialog.vue'
@@ -88,8 +89,11 @@ import { useProcess, type ProcessStep, type StepContext } from '../stores/proces
 import { useStudio } from '../stores/studio'
 import type { CalibRungEvent, CalibrationRecord, CalibrationResult, CalibrationRungRecord, CalibrationStatus, DiscCheck, DiscGeometryPreset, DiscKind } from '../types'
 
-/** Every calibration image is DVD sized, whatever the drive said a moment ago (issue #8). */
-const CALIBRATION_SECTORS = 2295104
+/** Every DVD calibration image is DVD sized, whatever the drive said a moment ago (issue #8). */
+const DVD_SECTORS = 2295104
+/** CD-Rs come in several lengths, so a CD image follows the disc, less a margin for the burner's run-out blocks. */
+const CD_NOMINAL_SECTORS = 359849
+const CD_MARGIN_SECTORS = 64
 
 const s = useStudio()
 const p = useProcess()
@@ -184,12 +188,19 @@ let referenceLba = 0
 let points: CalibrationRungRecord[] = []
 let rungClock = 0
 
-// A CD or Blu-ray disc counts as no disc: neither burning nor measuring means anything on it.
+// A Blu-ray disc counts as no disc: neither burning nor measuring means anything on it.
 const hasDisc = computed(() => !!s.drive?.mediaPresent && !!s.drive.supported)
 const blank = computed(() => hasDisc.value && !!s.drive?.isBlank)
-const discSectors = computed(() => s.drive?.totalSectors || CALIBRATION_SECTORS)
+const cd = computed(() => isCd(s.drive))
+/** Held from the last time the drive showed its disc: it lists none for a moment after each session. */
+const mediaType = ref('DVD-R')
+watch(() => s.drive, (d) => d?.mediaPresent && d.supported && (mediaType.value = d.mediaType), { immediate: true })
+const imageSectors = computed(() => (cd.value ? (s.drive?.totalSectors || CD_NOMINAL_SECTORS) - CD_MARGIN_SECTORS : DVD_SECTORS))
+const discSectors = computed(() => s.drive?.totalSectors || imageSectors.value)
+// disc-probe's CD ladder: fewer rungs cover a track a quarter as long.
+watch(cd, (yes) => ([rungs.value, reads.value] = yes ? [36, 32] : [56, 40]), { immediate: true })
 const range = computed<[number, number]>(() => [lo.value / 100, hi.value / 100])
-const seconds = computed(() => calibrationSeconds(rungs.value, reads.value, range.value, discSectors.value))
+const seconds = computed(() => calibrationSeconds(rungs.value, reads.value, range.value, discSectors.value) * (cd.value ? CD_MEASURE_FACTOR : 1))
 const minutes = computed(() => Math.ceil(seconds.value / 60))
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -214,7 +225,7 @@ const checkStep: ProcessStep = {
   run: async (step) => {
     checkCtx = step
     try {
-      const c = await call<DiscCheck>('check_calibration_disc', { driveId: s.drive!.id })
+      const c = await call<DiscCheck>('check_calibration_disc', { driveId: s.drive!.id, mediaType: mediaType.value })
       if (c.foreign) notifyWarning(t('cal.foreign'))
     } finally {
       checkCtx = null
@@ -244,7 +255,7 @@ async function begin() {
       note: t('cal.burnNote'),
       fileName: 'calibration.iso',
       prepareLabel: t('cal.prepare'),
-      prepare: (outputPath) => call('generate_calibration_iso', { outputPath, totalSectors: CALIBRATION_SECTORS }),
+      prepare: (outputPath) => call('generate_calibration_iso', { outputPath, totalSectors: imageSectors.value }),
       autoClose: true,
       doneMessage: t('cal.measureDone'),
       after: [{ label: t('cal.waitStep'), estimate: () => 10, run: waitForDisc }, checkStep, measureStep],
@@ -267,7 +278,7 @@ async function measure(step: StepContext) {
   rungClock = performance.now()
   let r: CalibrationResult
   try {
-    r = await call<CalibrationResult>('start_calibration', { driveId: d.id, maxTargets: rungs.value, reps: reads.value, rangePct: range.value })
+    r = await call<CalibrationResult>('start_calibration', { driveId: d.id, mediaType: mediaType.value, maxTargets: rungs.value, reps: reads.value, rangePct: range.value })
   } catch (e) {
     const cancelled = e === CANCELLED
     await record({ ...about, status: cancelled ? 'cancelled' : 'failed', message: cancelled ? '' : String(e), rmsDeg: null, preset: null }, began)
@@ -282,8 +293,10 @@ async function measure(step: StepContext) {
     throw r.specProblem
   }
   const stamp = new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-  const preset = {
+  const preset: DiscGeometryPreset = {
     ...r.preset,
+    // What this drive's twist chart showed last time holds for every CD it reads.
+    ...(r.preset.media === 'cd' ? { alongTrackFrames: twistOf(about.driveModel) } : {}),
     id: `user-${Date.now()}`,
     mediaId: d.mediaId,
     stamperCode: s.pendingCode,
