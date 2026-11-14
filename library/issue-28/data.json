@@ -1,0 +1,21 @@
+{
+  "driveModel": "HL-DT-ST BD-RE BP71N 1.03",
+  "mediaId": "OPTODISCR016",
+  "stamperCode": "OPTODISC-516S 010 010220",
+  "brand": "",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.91137657984739,
+  "outerRadiusMm": 57.903066908712994,
+  "pitchLinear": -0.000014995460034703554,
+  "pitchQuadratic": 0.00004182629305106481,
+  "pitchCubic": -0.000032017233838483484,
+  "basePitchUm": 0.7381498801668483,
+  "rmsResidualDeg": 0.21513875608992025,
+  "measuredSpanMm": [
+    25.047486758684386,
+    56.934358486374066
+  ],
+  "createdAt": "2026-11-14T16:42:10.474Z",
+  "id": "issue-28"
+}

@@ -1,0 +1,21 @@
+{
+  "driveModel": "HL-DT-ST DVDRAM GUD1N 1.01",
+  "mediaId": "CMC MAG. AM3",
+  "stamperCode": "CMDR47G-CFMWM03-0237 L110",
+  "brand": "Iron Disc",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.173323096131647,
+  "outerRadiusMm": 57.87867834233574,
+  "pitchLinear": -0.00007613386510913493,
+  "pitchQuadratic": 0.00025950925912743934,
+  "pitchCubic": -0.00023145766537902728,
+  "basePitchUm": 0.7340641222388145,
+  "rmsResidualDeg": 0.3145190700102741,
+  "measuredSpanMm": [
+    25.29157990483523,
+    56.91509689455397
+  ],
+  "createdAt": "2026-11-07T11:56:00.937Z",
+  "id": "issue-3"
+}

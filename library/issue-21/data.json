@@ -1,0 +1,21 @@
+{
+  "driveModel": "PLDS DVD-RW DS8A9SH EL3A",
+  "mediaId": "",
+  "stamperCode": "Lenovo DVD+R 4.7GB/1-16X",
+  "brand": "Lenovo",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.04819472749099,
+  "outerRadiusMm": 58.02646679408733,
+  "pitchLinear": 0.000022411601449243422,
+  "pitchQuadratic": -0.00004792330504974494,
+  "pitchCubic": 0.000026699808014980235,
+  "basePitchUm": 0.7402027266336539,
+  "rmsResidualDeg": 0.3491683519821975,
+  "measuredSpanMm": [
+    25.181194284685564,
+    57.05713974930649
+  ],
+  "createdAt": "2026-11-13T15:19:02.451Z",
+  "id": "issue-21"
+}

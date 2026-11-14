@@ -1,0 +1,21 @@
+{
+  "driveModel": "hp CDDVDW SH-216DB HH10",
+  "mediaId": "",
+  "stamperCode": "CPDR47G-CSMWP03-6813",
+  "brand": "HP",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.906545015552613,
+  "outerRadiusMm": 57.96181496454207,
+  "pitchLinear": 0.00009547729086906586,
+  "pitchQuadratic": -0.0002425382339295303,
+  "pitchCubic": 0.00016744186588389426,
+  "basePitchUm": 0.740009987266642,
+  "rmsResidualDeg": 0.4203022987384778,
+  "measuredSpanMm": [
+    25.045673884698235,
+    56.99159825940579
+  ],
+  "createdAt": "2026-11-14T15:37:12.869Z",
+  "id": "issue-27"
+}

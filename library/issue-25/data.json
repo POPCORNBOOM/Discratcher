@@ -1,0 +1,21 @@
+{
+  "driveModel": "TEAC DV-W28SS-B 1.2A",
+  "mediaId": "",
+  "stamperCode": "CPDR47G-CSMWP03-6849 49CA0304",
+  "brand": "紫光",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.908357219773592,
+  "outerRadiusMm": 57.96247238135107,
+  "pitchLinear": -0.00003269809306251855,
+  "pitchQuadratic": 0.0001248068898702313,
+  "pitchCubic": -0.00011733891328777572,
+  "basePitchUm": 0.740017592969726,
+  "rmsResidualDeg": 0.9570925675138864,
+  "measuredSpanMm": [
+    25.04741370769064,
+    56.992358205500075
+  ],
+  "createdAt": "2026-11-14T10:16:03.184Z",
+  "id": "issue-25"
+}

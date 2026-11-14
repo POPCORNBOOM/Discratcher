@@ -1,0 +1,21 @@
+{
+  "driveModel": "ThinkPad Ultraslim DVD YL31",
+  "mediaId": "",
+  "stamperCode": "CPDR47G-CSMWP03-6849 49B00013",
+  "brand": "PHILIPS DVD+R",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.908352032236813,
+  "outerRadiusMm": 57.9625205892318,
+  "pitchLinear": 0.00008632176321992399,
+  "pitchQuadratic": -0.0001993048184134585,
+  "pitchCubic": 0.00012109470999175413,
+  "basePitchUm": 0.7400104546632809,
+  "rmsResidualDeg": 0.6909169178068605,
+  "measuredSpanMm": [
+    25.04740408700984,
+    56.99236049090128
+  ],
+  "createdAt": "2026-11-10T15:43:49.572Z",
+  "id": "issue-13"
+}

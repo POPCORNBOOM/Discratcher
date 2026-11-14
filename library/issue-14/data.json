@@ -1,0 +1,21 @@
+{
+  "driveModel": "HL-DT-ST DVD+-RW GU90N A1C1",
+  "mediaId": "",
+  "stamperCode": "PR25014-P16",
+  "brand": "KDA DVD+R",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.09801994833235,
+  "outerRadiusMm": 58.02558946325617,
+  "pitchLinear": -0.00001737426839359413,
+  "pitchQuadratic": 0.000046547496564699183,
+  "pitchCubic": -0.00003758647338041844,
+  "basePitchUm": 0.7395424478285675,
+  "rmsResidualDeg": 0.8183965055012965,
+  "measuredSpanMm": [
+    25.227819494389013,
+    57.05712605132837
+  ],
+  "createdAt": "2026-11-11T13:55:01.886Z",
+  "id": "issue-14"
+}

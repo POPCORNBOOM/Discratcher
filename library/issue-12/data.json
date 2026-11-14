@@ -1,0 +1,21 @@
+{
+  "driveModel": "hp PLDS DVDRW  DU8AESH 6HS3",
+  "mediaId": "",
+  "stamperCode": "CPDR47G-CSMWP03-1239 393T1501",
+  "brand": "联想（thinkplus新包装）",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.157931967308837,
+  "outerRadiusMm": 57.881242819138286,
+  "pitchLinear": 0.0003438648658712075,
+  "pitchQuadratic": -0.000928954104999266,
+  "pitchCubic": 0.0006796393173190543,
+  "basePitchUm": 0.7343072096333488,
+  "rmsResidualDeg": 0.7985740703708044,
+  "measuredSpanMm": [
+    25.277262438470466,
+    56.917036556376075
+  ],
+  "createdAt": "2026-11-11T01:57:25.108Z",
+  "id": "issue-12"
+}

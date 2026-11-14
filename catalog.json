@@ -1,0 +1,248 @@
+{
+  "calibrations": [
+    {
+      "number": 28,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"0PT0DISC-516S 010 010220\",\n  \"driveModel\": \"HL-DT-ST BD-RE BP71N 1.03\",\n  \"mediaId\": \"OPTODISCR016\",\n  \"stamperCode\": \"OPTODISC-516S 010 010220\",\n  \"brand\": \"\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 23.91137657984739,\n  \"outerRadiusMm\": 57.903066908712994,\n  \"pitchLinear\": -0.000014995460034703554,\n  \"pitchQuadratic\": 0.00004182629305106481,\n  \"pitchCubic\": -0.000032017233838483484,\n  \"basePitchUm\": 0.7381498801668483,\n  \"rmsResidualDeg\": 0.21513875608992025,\n  \"measuredSpanMm\": [\n    25.047486758684386,\n    56.934358486374066\n  ],\n  \"createdAt\": \"2026-11-14T16:42:10.474Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        }
+      ],
+      "user": {
+        "login": "4sh0u0"
+      }
+    },
+    {
+      "number": 27,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"CPDR47G\",\n  \"driveModel\": \"hp CDDVDW SH-216DB HH10\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"CPDR47G-CSMWP03-6813\",\n  \"brand\": \"HP\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 23.906545015552613,\n  \"outerRadiusMm\": 57.96181496454207,\n  \"pitchLinear\": 0.00009547729086906586,\n  \"pitchQuadratic\": -0.0002425382339295303,\n  \"pitchCubic\": 0.00016744186588389426,\n  \"basePitchUm\": 0.740009987266642,\n  \"rmsResidualDeg\": 0.4203022987384778,\n  \"measuredSpanMm\": [\n    25.045673884698235,\n    56.99159825940579\n  ],\n  \"createdAt\": \"2026-11-14T15:37:12.869Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        }
+      ],
+      "user": {
+        "login": "cleveraingames"
+      }
+    },
+    {
+      "number": 26,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"DR5F6O-PW104\",\n  \"driveModel\": \"MATSHITA DVD-RAM SW810 8.05\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"DR5F6O-PW104\",\n  \"brand\": \"RIDATA\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 24.063109089576457,\n  \"outerRadiusMm\": 58.1981016547975,\n  \"pitchLinear\": 0.0000017436570044428208,\n  \"pitchQuadratic\": -0.000008463857597729454,\n  \"pitchCubic\": 0.000009195641910226954,\n  \"basePitchUm\": 0.745308004673948,\n  \"rmsResidualDeg\": 0.1874788652850184,\n  \"measuredSpanMm\": [\n    25.203080894460435,\n    57.22494074080563\n  ],\n  \"createdAt\": \"2026-11-12T12:41:00.217Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        }
+      ],
+      "user": {
+        "login": "Xjrxjr"
+      }
+    },
+    {
+      "number": 25,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"CPDR47G-CSMWP03-6849 49CA0304\",\n  \"driveModel\": \"TEAC DV-W28SS-B 1.2A\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"CPDR47G-CSMWP03-6849 49CA0304\",\n  \"brand\": \"紫光\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 23.908357219773592,\n  \"outerRadiusMm\": 57.96247238135107,\n  \"pitchLinear\": -0.00003269809306251855,\n  \"pitchQuadratic\": 0.0001248068898702313,\n  \"pitchCubic\": -0.00011733891328777572,\n  \"basePitchUm\": 0.740017592969726,\n  \"rmsResidualDeg\": 0.9570925675138864,\n  \"measuredSpanMm\": [\n    25.04741370769064,\n    56.992358205500075\n  ],\n  \"createdAt\": \"2026-11-14T10:16:03.184Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        }
+      ],
+      "user": {
+        "login": "yangtuohehe"
+      }
+    },
+    {
+      "number": 24,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"DR5F6O-PW104\",\n  \"driveModel\": \"PIONEER DVD-RW  DVR-221L 1.01\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"DR5F6O-PW104\",\n  \"brand\": \"JVC铼德蓝樱DVD-R\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 24.06310378932008,\n  \"outerRadiusMm\": 58.1980479734864,\n  \"pitchLinear\": -0.000017868999859837343,\n  \"pitchQuadratic\": 0.000068920597669368,\n  \"pitchCubic\": -0.00006471707049318697,\n  \"basePitchUm\": 0.7453087205256963,\n  \"rmsResidualDeg\": 0.6145475872539251,\n  \"measuredSpanMm\": [\n    25.203074223727583,\n    57.22494071035564\n  ],\n  \"createdAt\": \"2026-11-14T05:45:46.150Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "ajun123456"
+      }
+    },
+    {
+      "number": 23,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"Moserbaer-516S 003 030202\",\n  \"driveModel\": \"TSSTcorp CDDVDW TS-H653J LJ01\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"Moserbaer-516S 003 030202\",\n  \"brand\": \"\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 23.911434309595677,\n  \"outerRadiusMm\": 57.90310809918288,\n  \"pitchLinear\": -0.000028056164611009577,\n  \"pitchQuadratic\": 0.00006890697442723886,\n  \"pitchCubic\": -0.0000460351433478184,\n  \"basePitchUm\": 0.7381510857419498,\n  \"rmsResidualDeg\": 0.07927990639940068,\n  \"measuredSpanMm\": [\n    25.04754058635481,\n    56.93439525085607\n  ],\n  \"createdAt\": \"2026-11-13T15:12:59.043Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "muskf"
+      }
+    },
+    {
+      "number": 22,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"CPDR47G-CSMWP03-1239\",\n  \"driveModel\": \"TSSTcorp DVD+-RW TS-L633C DW50\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"CPDR47G-CSMWP03-1239 39M00005\",\n  \"brand\": \"联想thinkplus\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 24.157953515295947,\n  \"outerRadiusMm\": 57.88114311167101,\n  \"pitchLinear\": 0.0003050921130870978,\n  \"pitchQuadratic\": -0.0007664179499570739,\n  \"pitchCubic\": 0.0005278098700814983,\n  \"basePitchUm\": 0.7343068417547537,\n  \"rmsResidualDeg\": 0.5784877064259176,\n  \"measuredSpanMm\": [\n    25.27724916425819,\n    56.91703791105777\n  ],\n  \"createdAt\": \"2026-11-13T16:17:05.800Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n<img width=\"1842\" height=\"1064\" alt=\"mmexport1794586697171\" src=\"https://github.com/user-attachments/assets/b3e63673-a2a2-4a02-8de0-ca031b593285\" />\n\n<img width=\"3072\" height=\"4096\" alt=\"image\" src=\"https://github.com/user-attachments/assets/cf269ebb-773e-4788-bbf1-ff8a78674de8\" />",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "27704534"
+      }
+    },
+    {
+      "number": 21,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"Lenovo DVD+R 4.7GB/1-16X\",\n  \"driveModel\": \"PLDS DVD-RW DS8A9SH EL3A\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"Lenovo DVD+R 4.7GB/1-16X\",\n  \"brand\": \"Lenovo\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 24.04819472749099,\n  \"outerRadiusMm\": 58.02646679408733,\n  \"pitchLinear\": 0.000022411601449243422,\n  \"pitchQuadratic\": -0.00004792330504974494,\n  \"pitchCubic\": 0.000026699808014980235,\n  \"basePitchUm\": 0.7402027266336539,\n  \"rmsResidualDeg\": 0.3491683519821975,\n  \"measuredSpanMm\": [\n    25.181194284685564,\n    57.05713974930649\n  ],\n  \"createdAt\": \"2026-11-13T15:19:02.451Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "HHEENNGG"
+      }
+    },
+    {
+      "number": 19,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"CPDR47G-CSMWP03-1239 393T1411\",\n  \"driveModel\": \"HL-DT-ST DVD+-RW GU90N A1C2\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"CPDR47G-CSMWP03-1239 393T1411\",\n  \"brand\": \"Lenovo\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 24.157939411755784,\n  \"outerRadiusMm\": 57.881151984935094,\n  \"pitchLinear\": 0.0003000404508349229,\n  \"pitchQuadratic\": -0.0007681186968671006,\n  \"pitchCubic\": 0.0005339904534137256,\n  \"basePitchUm\": 0.7343084914939711,\n  \"rmsResidualDeg\": 0.4828080565646598,\n  \"measuredSpanMm\": [\n    25.277255732593886,\n    56.91702026700137\n  ],\n  \"createdAt\": \"2026-11-13T06:36:15.878Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "hocat"
+      }
+    },
+    {
+      "number": 18,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"CMDR47G-CFMWM03-6865\",\n  \"driveModel\": \"Min Yi U YZWY_TECH 10D1\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"CMDR47G-CFMWM03-6865\",\n  \"brand\": \"中环\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 23.966301688067,\n  \"outerRadiusMm\": 57.92540372242239,\n  \"pitchLinear\": 0.00007551189205438262,\n  \"pitchQuadratic\": -0.00018779790014208873,\n  \"pitchCubic\": 0.000127202385307051,\n  \"basePitchUm\": 0.7381321131980242,\n  \"rmsResidualDeg\": 0.3747189272440288,\n  \"measuredSpanMm\": [\n    25.099904316049074,\n    56.95706465485288\n  ],\n  \"createdAt\": \"2026-11-12T19:44:40.952Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "lockonkosking"
+      }
+    },
+    {
+      "number": 17,
+      "body": "### 标定数据\n\n```json\n{\n  \"driveModel\": \"HL-DT-ST DVDRAM GUD1N 1.01\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"RFD80M-79243\",\n  \"brand\": \"M&G\",\n  \"media\": \"cd\",\n  \"totalSectors\": 359779,\n  \"channelBitLengthNm\": 277.66208524226016,\n  \"innerRadiusMm\": 24.92149398095895,\n  \"outerRadiusMm\": 57.83465001298511,\n  \"pitchLinear\": 0.0002298197427726937,\n  \"pitchQuadratic\": -0.0005704052656581839,\n  \"pitchCubic\": 0.0003850462370725724,\n  \"basePitchUm\": 1.4864645201040068,\n  \"rmsResidualDeg\": 0.17653814435290946,\n  \"measuredSpanMm\": [\n    25.99167931907393,\n    56.88490935302352\n  ],\n  \"createdAt\": \"2026-11-12T15:52:35.039Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "POPCORNBOOM"
+      }
+    },
+    {
+      "number": 16,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"CPDR47G-CSMWP03-6813\",\n  \"driveModel\": \"ASUS SDRW-08V1M-U B101\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"CPDR47G-CSMWP03-6813\",\n  \"brand\": \"联想\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 23.906536429895795,\n  \"outerRadiusMm\": 57.96179970670045,\n  \"pitchLinear\": 0.00007985161046357981,\n  \"pitchQuadratic\": -0.00018881083573998045,\n  \"pitchCubic\": 0.00012103055599928212,\n  \"basePitchUm\": 0.7400109298037167,\n  \"rmsResidualDeg\": 1.5183417418123195,\n  \"measuredSpanMm\": [\n    25.045685171081583,\n    56.99161725034426\n  ],\n  \"createdAt\": \"2026-11-12T12:22:38.062Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "Lokitla"
+      }
+    },
+    {
+      "number": 14,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"PR25014-P16\",\n  \"driveModel\": \"HL-DT-ST DVD+-RW GU90N A1C1\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"PR25014-P16\",\n  \"brand\": \"KDA DVD+R\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 24.09801994833235,\n  \"outerRadiusMm\": 58.02558946325617,\n  \"pitchLinear\": -0.00001737426839359413,\n  \"pitchQuadratic\": 0.000046547496564699183,\n  \"pitchCubic\": -0.00003758647338041844,\n  \"basePitchUm\": 0.7395424478285675,\n  \"rmsResidualDeg\": 0.8183965055012965,\n  \"measuredSpanMm\": [\n    25.227819494389013,\n    57.05712605132837\n  ],\n  \"createdAt\": \"2026-11-11T13:55:01.886Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "Rehtt"
+      }
+    },
+    {
+      "number": 13,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"CPDR47G-CSMWP03-6849 49B00013\",\n  \"driveModel\": \"ThinkPad Ultraslim DVD YL31\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"CPDR47G-CSMWP03-6849 49B00013\",\n  \"brand\": \"PHILIPS DVD+R\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 23.908352032236813,\n  \"outerRadiusMm\": 57.9625205892318,\n  \"pitchLinear\": 0.00008632176321992399,\n  \"pitchQuadratic\": -0.0001993048184134585,\n  \"pitchCubic\": 0.00012109470999175413,\n  \"basePitchUm\": 0.7400104546632809,\n  \"rmsResidualDeg\": 0.6909169178068605,\n  \"measuredSpanMm\": [\n    25.04740408700984,\n    56.99236049090128\n  ],\n  \"createdAt\": \"2026-11-10T15:43:49.572Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "XxdMkbMark"
+      }
+    },
+    {
+      "number": 12,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"CPDR47G-CSMWP03-1239 393T1501\",\n  \"driveModel\": \"hp PLDS DVDRW  DU8AESH 6HS3\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"CPDR47G-CSMWP03-1239 393T1501\",\n  \"brand\": \"联想（thinkplus新包装）\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 24.157931967308837,\n  \"outerRadiusMm\": 57.881242819138286,\n  \"pitchLinear\": 0.0003438648658712075,\n  \"pitchQuadratic\": -0.000928954104999266,\n  \"pitchCubic\": 0.0006796393173190543,\n  \"basePitchUm\": 0.7343072096333488,\n  \"rmsResidualDeg\": 0.7985740703708044,\n  \"measuredSpanMm\": [\n    25.277262438470466,\n    56.917036556376075\n  ],\n  \"createdAt\": \"2026-11-11T01:57:25.108Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "knfic"
+      }
+    },
+    {
+      "number": 10,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"CMDR47G-CFMWM03-5001 651BH603\",\n  \"driveModel\": \"TSSTcorp CDDVDW SH-224DB CM00\",\n  \"mediaId\": \"\",\n  \"stamperCode\": \"CMDR47G-CFMWM03-5001 651BH603\",\n  \"brand\": \"Verbatim 63513\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 23.96629412145213,\n  \"outerRadiusMm\": 57.925408584522614,\n  \"pitchLinear\": 0.00008924890108923869,\n  \"pitchQuadratic\": -0.00022757187008871484,\n  \"pitchCubic\": 0.0001580206196867007,\n  \"basePitchUm\": 0.7381313015874468,\n  \"rmsResidualDeg\": 0.22594398874762953,\n  \"measuredSpanMm\": [\n    25.09989625505901,\n    56.95705215275993\n  ],\n  \"createdAt\": \"2026-11-09T09:21:51.787Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n_No response_",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "daititii"
+      }
+    },
+    {
+      "number": 3,
+      "body": "### 标定数据\n\n```json\n{\n  \"name\": \"CMDR47G-CFMWM03-0237 L110\",\n  \"driveModel\": \"HL-DT-ST DVDRAM GUD1N 1.01\",\n  \"mediaId\": \"CMC MAG. AM3\",\n  \"stamperCode\": \"CMDR47G-CFMWM03-0237 L110\",\n  \"brand\": \"Iron Disc\",\n  \"totalSectors\": 2295104,\n  \"channelBitLengthNm\": 133.29999999999998,\n  \"innerRadiusMm\": 24.173323096131647,\n  \"outerRadiusMm\": 57.87867834233574,\n  \"pitchLinear\": -0.00007613386510913493,\n  \"pitchQuadratic\": 0.00025950925912743934,\n  \"pitchCubic\": -0.00023145766537902728,\n  \"basePitchUm\": 0.7340641222388145,\n  \"rmsResidualDeg\": 0.3145190700102741,\n  \"measuredSpanMm\": [\n    25.29157990483523,\n    56.91509689455397\n  ],\n  \"createdAt\": \"2026-11-07T11:56:00.937Z\"\n}\n```\n\n### 原图和效果图（选填）\n\n<img width=\"1351\" height=\"849\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/f9d155a9-f781-458d-b1bd-c9d6c05f8a02\" />\n\n#### Mac\n<img width=\"3054\" height=\"3054\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/699a6679-3f17-4c38-b335-296e125a3a6d\" />\n\n#### Windows\n<img width=\"2970\" height=\"2970\" alt=\"Image\" src=\"https://github.com/user-attachments/assets/ec2c6b0f-3a83-4bf2-9ba8-cd4e37c9e6ad\" />",
+      "labels": [
+        {
+          "name": "calibration"
+        },
+        {
+          "name": "verified"
+        }
+      ],
+      "user": {
+        "login": "POPCORNBOOM"
+      }
+    }
+  ],
+  "ratings": []
+}
