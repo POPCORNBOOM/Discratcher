@@ -4,7 +4,7 @@ import { call, CANCELLED } from '../api'
 import { isCd } from '../etaModel'
 import { notifyError } from '../notices'
 import { useComposition } from './composition'
-import type { DiscGeometryPreset, OpticalDriveInfo, PresetLook } from '../types'
+import type { DiscGeometryPreset, DiscKind, OpticalDriveInfo, PresetLook } from '../types'
 
 export type View = 'home' | 'models' | 'calibrate' | 'carve' | 'process'
 
@@ -40,6 +40,8 @@ export const useStudio = defineStore('studio', () => {
   const codeFocus = ref(false)
   /** False where WebGL is unavailable, so the page falls back to a plain image. */
   const discRendered = ref(false)
+  /** What the last inspection found in the drive: the disc's real kind, not the drive's report. */
+  const discKind = ref<DiscKind | null>(null)
 
   const drive = computed(() => drives.value.find((d) => keyOf(d) === driveKey.value) ?? null)
   const preset = computed(() => presets.value.find((p) => p.id === presetId.value) ?? presets.value[0] ?? null)
@@ -147,5 +149,5 @@ export const useStudio = defineStore('studio', () => {
     }
   }
 
-  return { view, drives, presets, driveKey, presetId, drive, preset, config, error, job, carve, carveReady, canBack, origin, back, pendingCode, discPreview, discZoom, discPan, discRendered, codeFocus, keyOf, refreshDrives, refreshPresets, run }
+  return { view, drives, presets, driveKey, presetId, drive, preset, config, error, job, carve, carveReady, canBack, origin, back, pendingCode, discPreview, discZoom, discPan, discRendered, discKind, codeFocus, keyOf, refreshDrives, refreshPresets, run }
 })

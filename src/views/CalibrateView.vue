@@ -188,13 +188,26 @@ let referenceLba = 0
 let points: CalibrationRungRecord[] = []
 let rungClock = 0
 
-// A Blu-ray disc counts as no disc: neither burning nor measuring means anything on it.
-const hasDisc = computed(() => !!s.drive?.mediaPresent && !!s.drive.supported)
+// A disc is there. What the drive says about it can be wrong — a closed DVD-R answers as
+// DVD-ROM — so only the presence of a disc is checked here; the backend judges the disc.
+const hasDisc = computed(() => !!s.drive?.mediaPresent)
 const blank = computed(() => hasDisc.value && !!s.drive?.isBlank)
 const cd = computed(() => isCd(s.drive))
 /** Held from the last time the drive showed its disc: it lists none for a moment after each session. */
 const mediaType = ref('DVD-R')
-watch(() => s.drive, (d) => d?.mediaPresent && d.supported && (mediaType.value = d.mediaType), { immediate: true })
+watch(() => s.drive, (d) => {
+  if (!d?.mediaPresent) return
+  // DVD-ROM is not a family name: a closed DVD-R answers that way, and it is a DVD.
+  mediaType.value = isCd(d) ? d.mediaType : 'DVD-R'
+}, { immediate: true })
+
+// What the disc really is. The drive's report of the medium can be wrong, so the disc is
+// asked once whenever the drive changes.
+watch(() => s.drive?.id, async (id) => {
+  s.discKind = null
+  if (!id) return
+  s.discKind = await call<DiscKind>('inspect_disc', { driveId: id }).catch(() => null)
+}, { immediate: true })
 const imageSectors = computed(() => (cd.value ? (s.drive?.totalSectors || CD_NOMINAL_SECTORS) - CD_MARGIN_SECTORS : DVD_SECTORS))
 const discSectors = computed(() => s.drive?.totalSectors || imageSectors.value)
 // disc-probe's CD ladder: fewer rungs cover a track a quarter as long.

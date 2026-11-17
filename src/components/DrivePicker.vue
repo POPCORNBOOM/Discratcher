@@ -16,7 +16,9 @@ const status = computed(() => {
   const d = s.drive
   if (!d) return t('drive.none')
   if (!d.mediaPresent) return t('drive.noDisc')
-  if (!d.supported) return t('drive.unsupported', { type: d.mediaType })
+  // A closed DVD-R answers as DVD-ROM, so the drive's report alone would call a disc
+  // it can measure unsupported. The inspection knows better.
+  if (!d.supported && s.discKind !== 'calibration') return t('drive.unsupported', { type: d.mediaType })
   return t(d.isBlank ? 'drive.blank' : 'drive.written')
 })
 </script>

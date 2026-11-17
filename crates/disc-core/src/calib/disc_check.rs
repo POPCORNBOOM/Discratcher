@@ -33,22 +33,37 @@ pub fn inspect(id: &str) -> Result<DiscKind, String> {
     if !d.media_present {
         return Ok(DiscKind::None);
     }
+    // A DVD-R that has been closed answers as DVD-ROM, so the drive's own report is not
+    // enough to turn a disc away: ask the disc what it carries before refusing it.
+    let mut drive = open_timed(id, false)?;
+    if calibration_media(drive.as_mut()).is_some() {
+        return Ok(DiscKind::Calibration);
+    }
     if !d.supported {
         return Ok(DiscKind::Unsupported);
     }
     if d.is_blank {
         return Ok(DiscKind::Blank);
     }
-    let mut drive = open_timed(id, false)?;
-    Ok(match volume(drive.as_mut()) {
-        Some((label, _)) if label == CALIBRATION_VOLUME => DiscKind::Calibration,
-        _ => DiscKind::Other,
-    })
+    Ok(DiscKind::Other)
 }
 
 /// Sectors in the calibration image this disc was burned from, when it is one.
 pub fn calibration_sectors(drive: &mut dyn TimedDrive) -> Option<u32> {
     volume(drive).filter(|(label, _)| label == CALIBRATION_VOLUME).map(|v| v.1)
+}
+
+/// The family of the calibration disc in the drive, and the size of its image. Judged by
+/// what is on the disc, not by what the drive says it holds: a DVD-R that has been closed
+/// answers as DVD-ROM, so the drive cannot tell a finished recording from a pressed disc.
+pub fn calibration_media(drive: &mut dyn TimedDrive) -> Option<(Media, u32)> {
+    let (label, sectors) = volume(drive)?;
+    if label != CALIBRATION_VOLUME {
+        return None;
+    }
+    // A DVD's image runs past a million sectors; a CD's stops short of half that.
+    let media = if sectors >= 1_000_000 { Media::Dvd } else { Media::Cd };
+    Some((media, sectors))
 }
 
 /// Label and size from the primary volume descriptor, or None when LBA 16 holds none.
@@ -223,6 +238,16 @@ mod tests {
         assert_eq!(c.sectors, DEFAULT_TOTAL_SECTORS);
         assert!(!c.foreign);
         assert_eq!(seen, 100.0);
+    }
+
+    /// The family comes from the image on the disc, so a drive that calls a closed
+    /// DVD-R a DVD-ROM cannot hide the disc from the app.
+    #[test]
+    fn the_family_comes_from_the_image_not_the_drive() {
+        let mut d = SimDrive::demo(false);
+        let (media, sectors) = calibration_media(&mut d).expect("the simulated disc carries the calibration volume");
+        assert_eq!(media, Media::Dvd);
+        assert_eq!(sectors, DEFAULT_TOTAL_SECTORS);
     }
 
     #[test]

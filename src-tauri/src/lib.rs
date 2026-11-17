@@ -199,8 +199,13 @@ async fn start_calibration(
 ) -> Result<CalibrationResult, String> {
     let cancel = fresh_cancel(&state);
     blocking(move || {
-        let media = media_of(&media_type)?;
         let mut d = drive::open_timed(&drive_id, true)?;
+        // A closed DVD-R answers as DVD-ROM, so the family comes from the image on the
+        // disc, not from what the drive says it holds.
+        let media = match disc_check::calibration_media(d.as_mut()) {
+            Some((media, _)) => media,
+            None => media_of(&media_type)?,
+        };
         let image_sectors = if media == Media::Cd { disc_check::calibration_sectors(d.as_mut()) } else { None };
         let cfg = LadderConfig { max_targets, reps, range_pct, media, image_sectors, ..Default::default() };
         let a = app.clone();
@@ -230,8 +235,13 @@ async fn inspect_disc(drive_id: String) -> Result<DiscKind, String> {
 async fn check_calibration_disc(app: AppHandle, state: State<'_, Studio>, drive_id: String, media_type: String) -> Result<DiscCheck, String> {
     let cancel = fresh_cancel(&state);
     blocking(move || {
-        let media = media_of(&media_type)?;
         let mut d = drive::open_timed(&drive_id, false)?;
+        // A closed DVD-R answers as DVD-ROM, so the family comes from the image on the
+        // disc, not from what the drive says it holds.
+        let media = match disc_check::calibration_media(d.as_mut()) {
+            Some((media, _)) => media,
+            None => media_of(&media_type)?,
+        };
         disc_check::check_calibration_disc(d.as_mut(), media, &cancel, &mut |p| {
             let _ = app.emit("calib://check", p);
         })
