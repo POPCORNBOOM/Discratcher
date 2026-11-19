@@ -5,7 +5,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { t } from '../i18n'
+import { t, unsupportedText } from '../i18n'
 import { useStudio } from '../stores/studio'
 import UiSelect from './UiSelect.vue'
 
@@ -20,7 +20,7 @@ const status = computed(() => {
   const d = s.drive
   if (!d) return t(s.driveStuck ? 'drive.stuck' : 'drive.none')
   if (!d.mediaPresent) return t('drive.noDisc')
-  if (!d.supported) return t('drive.unsupported', { type: d.mediaType })
+  if (!d.supported) return unsupportedText(d)
   if (d.reusable) return t('drive.rewritable')
   return t(d.isBlank ? 'drive.blank' : 'drive.written')
 })

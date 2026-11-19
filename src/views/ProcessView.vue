@@ -104,7 +104,7 @@ import UiSwitch from '../components/UiSwitch.vue'
 import { openInBrowser } from '../api'
 import { ratingUrl } from '../catalog'
 import { notifyError } from '../notices'
-import { t } from '../i18n'
+import { t, unsupportedText } from '../i18n'
 import { useEta } from '../eta'
 import { isCd } from '../etaModel'
 import { useProcess } from '../stores/process'
@@ -137,7 +137,7 @@ const usable = computed(() => !!s.drive?.mediaPresent && !!s.drive.supported && 
 const warning = computed(() => {
   if (!s.drive) return t('burn.warnNoDrive')
   if (!s.drive.mediaPresent) return t('burn.warnNoDisc')
-  if (!s.drive.supported) return t('drive.unsupported', { type: s.drive.mediaType })
+  if (!s.drive.supported) return unsupportedText(s.drive)
   if (s.drive.reusable) return t('burn.warnErase')
   if (!s.drive.isBlank) return t('burn.warnNotBlank')
   if (!speedOptions.value.length) return t('burn.warnNoSpeed')

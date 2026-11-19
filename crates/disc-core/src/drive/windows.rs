@@ -307,7 +307,7 @@ impl WinDrive {
     /// and hands out the physical format instead, with a copy of the same block
     /// in it, so that is asked next.
     fn media_id(&mut self, media_type: &str) -> Option<String> {
-        let dvd_plus = media_type.starts_with("DVD+");
+        let in_adip = mmc::media_id_in_adip(media_type);
         for &format in mmc::media_id_formats(media_type) {
             let mut b = vec![0u8; DISC_STRUCTURE_BYTES];
             if self
@@ -320,7 +320,7 @@ impl WinDrive {
             {
                 continue;
             }
-            let id = if dvd_plus { mmc::parse_adip_id(&b) } else { mmc::parse_medium_id(&b) };
+            let id = if in_adip { mmc::parse_adip_id(&b) } else { mmc::parse_medium_id(&b) };
             if id.is_some() {
                 return id;
             }
@@ -620,7 +620,7 @@ mod tests {
         if std::env::var("DISC_HW").is_err() {
             return;
         }
-        let drives = list();
+        let drives = crate::drive::list_drives();
         assert!(!drives.is_empty(), "没有找到光驱");
         let d = &drives[0];
         eprintln!("{d:#?}");
@@ -632,9 +632,16 @@ mod tests {
         for d in drives.iter().filter(|d| d.media_present) {
             assert!(d.total_sectors > 1000, "有盘却只有 {} 个扇区", d.total_sectors);
             // A DVD names itself, blank or written; a CD keeps no maker and media
-            // code in this structure, so it has no code to read.
-            if d.media_type.starts_with("DVD") {
+            // code in this structure, so it has no code to read. A DVD-RAM names
+            // itself in ADIP, and a drive that knows no ADIP for that medium has
+            // nothing to give.
+            if d.media_type.starts_with("DVD") && d.media_type != "DVD-RAM" {
                 assert!(!d.media_id.is_empty(), "{} holds a disc whose MID cannot be read", d.product);
+            }
+            // A DVD-RAM cannot be recorded, and the report says why.
+            if d.media_type == "DVD-RAM" {
+                assert!(!d.supported, "DVD-RAM 不该被当成能刻的盘");
+                assert_eq!(d.unsupported_reason.as_deref(), Some("dvd-ram"));
             }
         }
         if !d.media_present {

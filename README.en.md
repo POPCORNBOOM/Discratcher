@@ -80,7 +80,8 @@ The app looks for a new version at startup, or you can use Help → Check for up
 | DVD-R | Tested (CMC MAG. AM3) |
 | DVD+R, DVD-RW, DVD+RW | Should work, unverified |
 | CD-R, CD-RW | Experimental: encoding and calibration pass in simulation only, not yet verified on a real disc. Each drive needs one extra twist chart burned the first time |
-| Blu-ray, DVD-RAM, dual-layer DVD | Not supported |
+| DVD-RAM | Recognized, and it says why it cannot be recorded (the 8-to-16 code of ECMA-330, not EFMPlus); not recordable yet |
+| Blu-ray, dual-layer DVD | Not supported |
 
 ## Build from source
 

@@ -3,6 +3,8 @@ export interface OpticalDriveInfo {
   mediaPresent: boolean; mediaType: string; mediaId: string
   totalSectors: number; isBlank: boolean
   writeSpeeds?: number[]; maxWriteSpeed?: number; supported?: boolean
+  /** Why the disc cannot be recorded, as a key the interface turns into words. */
+  unsupportedReason?: string | null
   /** A written rewritable disc the burner erases before writing, so it can be used again. */
   reusable?: boolean
 }

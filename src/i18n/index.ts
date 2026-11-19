@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import type { OpticalDriveInfo } from '../types'
 
 // One JSON file per language in ./locales. Adding a language is adding a file: it shows up
 // in the Help > Language menu by itself. "_name" is how the language names itself.
@@ -55,4 +56,17 @@ export function setLocale(code: string) {
 export function t(key: string, params?: Record<string, string | number>): string {
   const text = dictionaries[locale.value]?.[key] ?? dictionaries[SOURCE]?.[key] ?? key
   return params ? text.replace(/\{(\w+)\}/g, (whole, name) => (name in params ? String(params[name]) : whole)) : text
+}
+
+/** What to say about a disc that cannot be recorded, when the drive says why. */
+const UNSUPPORTED_KEYS: Record<string, string> = {
+  'dvd-ram': 'drive.unsupportedDvdRam',
+  'dual-layer': 'drive.unsupportedDualLayer',
+  'blu-ray': 'drive.unsupportedBluRay',
+}
+
+/** The words for a disc Discratcher cannot record. */
+export function unsupportedText(d: OpticalDriveInfo): string {
+  const key = d.unsupportedReason ? UNSUPPORTED_KEYS[d.unsupportedReason] : undefined
+  return key ? t(key) : t('drive.unsupported', { type: d.mediaType })
 }

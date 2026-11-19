@@ -41,6 +41,10 @@ pub struct OpticalDriveInfo {
     /// can be used again. Filled in by `list_drives`, so no backend can forget it.
     #[serde(default)]
     pub reusable: bool,
+    /// Why this disc cannot be recorded, as a key the interface turns into words.
+    /// Empty when the disc is supported, or when there is nothing worth saying.
+    #[serde(default)]
+    pub unsupported_reason: Option<String>,
 }
 
 /// Single-layer DVD and CD only: calibration and carving count the channel bits of
@@ -48,6 +52,20 @@ pub struct OpticalDriveInfo {
 /// as noise. Anything not named, including a type nobody could read, is refused.
 pub fn is_supported_media(media_type: &str) -> bool {
     Media::of_type(media_type).is_some()
+}
+
+/// Why a medium cannot be recorded, when there is a reason worth giving.
+///
+/// The generic refusal ("only DVD and CD") says nothing about a DVD-RAM, which is a
+/// DVD by name and a different format underneath: it records with the 8-to-16 code of
+/// ECMA-330 instead of EFMPlus. The key is what the interface turns into words.
+pub fn unsupported_reason(media_type: &str) -> Option<&'static str> {
+    match media_type.trim() {
+        "DVD-RAM" => Some("dvd-ram"),
+        "DVD+R DL" | "DVD-R DL" => Some("dual-layer"),
+        m if m.starts_with("BD") => Some("blu-ray"),
+        _ => None,
+    }
 }
 
 /// Discs that can be written again, and so do not have to be new to be used.
@@ -142,6 +160,7 @@ pub fn list_drives() -> Vec<OpticalDriveInfo> {
     for d in &mut v {
         d.supported = d.media_present && is_supported_media(&d.media_type);
         d.reusable = d.media_present && !d.is_blank && is_rewritable(&d.media_type) && erases_before_burn();
+        d.unsupported_reason = if d.supported { None } else { unsupported_reason(&d.media_type).map(str::to_string) };
     }
     v
 }
@@ -320,6 +339,9 @@ pub mod mmc {
         match media_type {
             "CD-R" | "CD-RW" | "CD-ROM" => 359_849,
             "DVD+R DL" => 4_173_824,
+            // A DVD-RAM is RAM media and never blank; the drive reports its real
+            // capacity anyway, and this is only the fallback for a drive that cannot.
+            "DVD-RAM" => crate::ecma330::TYPE1_SECTORS,
             m if m.starts_with("DVD") => 2_295_104,
             m if m.starts_with("BD") => 12_219_392,
             _ => 0,
@@ -334,6 +356,16 @@ pub mod mmc {
         [0xAD, 0, 0, 0, 0, 0, 0, format, (allocation >> 8) as u8, allocation as u8, 0, 0]
     }
 
+    /// Whether the disc keeps its code in ADIP rather than in a table of records.
+    ///
+    /// A DVD+R does, and so does a DVD-RAM: the drive that knows the medium
+    /// decides what it has to give, and a block is only read when it really has
+    /// the shape of one.
+    pub fn media_id_in_adip(media_type: &str) -> bool {
+        let m = media_type.trim();
+        m == "DVD-RAM" || m.starts_with("DVD+")
+    }
+
     /// The structures to ask a disc for its code, in the order to ask them.
     ///
     /// The standard keeps a DVD+R's code in ADIP, which is format 0x11. A drive
@@ -342,7 +374,7 @@ pub mod mmc {
     /// that is asked next. A DVD-R keeps its code in a table of records, and only
     /// the physical format has it.
     pub fn media_id_formats(media_type: &str) -> &'static [u8] {
-        if media_type.starts_with("DVD+") {
+        if media_id_in_adip(media_type) {
             &[0x11, 0x00]
         } else {
             &[0x00]
@@ -713,6 +745,35 @@ mod tests {
         }
         for m in ["BD-R", "BD-RE", "DVD+R DL", "DVD-RAM", "None", ""] {
             assert!(!is_supported_media(m), "{m}");
+        }
+    }
+
+    #[test]
+    fn a_disc_keeps_its_code_in_adip_when_the_medium_says_so() {
+        assert!(mmc::media_id_in_adip("DVD+R"));
+        assert!(mmc::media_id_in_adip(" DVD+RW "));
+        // A DVD-RAM names itself in ADIP as well; the drive that knows the medium
+        // decides whether it has one, and a block is only read when it has the shape.
+        assert!(mmc::media_id_in_adip("DVD-RAM"));
+        assert_eq!(mmc::media_id_formats("DVD-RAM"), &[0x11, 0x00]);
+        // A DVD-R keeps its code in a table of records, and only the physical format
+        // has it.
+        assert!(!mmc::media_id_in_adip("DVD-R"));
+        assert!(!mmc::media_id_in_adip("DVD-RW"));
+        assert_eq!(mmc::media_id_formats("DVD-R"), &[0x00]);
+    }
+
+    #[test]
+    fn a_disc_that_cannot_be_recorded_says_why() {
+        // A DVD-RAM is a DVD by name and a different format underneath, so the generic
+        // refusal is not enough: it needs the record code to say what is different.
+        assert_eq!(unsupported_reason("DVD-RAM"), Some("dvd-ram"));
+        assert_eq!(unsupported_reason(" DVD-RAM "), Some("dvd-ram"));
+        assert_eq!(unsupported_reason("DVD+R DL"), Some("dual-layer"));
+        assert_eq!(unsupported_reason("BD-RE"), Some("blu-ray"));
+        // Nothing worth saying about the discs that are supported.
+        for m in ["DVD-R", "DVD+RW", "CD-R", "None", ""] {
+            assert_eq!(unsupported_reason(m), None, "{m}");
         }
     }
 

@@ -32,7 +32,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { call, CANCELLED, isMock, mockDev, on } from '../api'
 import { calibrationSeconds, CalibrationPlan, CD_MEASURE_FACTOR, isCd, REFERENCE_SHARE } from '../etaModel'
 import { twistOf } from '../twist'
-import { t } from '../i18n'
+import { t, unsupportedText } from '../i18n'
 import DrivePicker from '../components/DrivePicker.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiButton from '../components/UiButton.vue'
@@ -106,7 +106,7 @@ const line = computed(() => {
   switch (kind.value) {
     case 'checking': return t('cal.checking')
     case 'none': return t('cal.hintNoDisc')
-    case 'unsupported': return t('drive.unsupported', { type: d.mediaType })
+    case 'unsupported': return unsupportedText(d)
     case 'blank': return t(d.isBlank ? 'cal.willBurn' : 'cal.willErase', { type: d.mediaType, n: minutes.value + (cd.value ? 8 : 15) })
     case 'calibration': return t('cal.willMeasure', { n: minutes.value })
     case 'other': return t('cal.notCalDisc')
@@ -186,8 +186,11 @@ async function begin() {
     })
   } else if (kind === 'calibration') {
     p.open({ title: t('cal.title'), note: t('cal.measureNote'), writes: false, autoClose: true, doneMessage: t('cal.measureDone'), steps: [checkStep, measureStep] })
+  } else if (kind === 'unsupported') {
+    // The drive says why this disc cannot be recorded; the generic line would not.
+    notifyError(unsupportedText(d))
   } else {
-    notifyError(t(kind === 'other' ? 'cal.notCalDisc' : kind === 'unsupported' ? 'cal.unsupported' : 'drive.noDisc'))
+    notifyError(t(kind === 'other' ? 'cal.notCalDisc' : 'drive.noDisc'))
   }
 }
 
