@@ -220,6 +220,8 @@
   "share.codeHint": "e.g. CMDR47G-CFMWMO3-0237 L110",
   "share.intro": "This calibration has been verified with a real burn. Sharing it saves the next person with this disc a wasted disc and half an hour.",
   "share.later": "Not now",
+  "share.mid": "Disc code (MID, read from the drive)",
+  "share.midUnknown": "not read from the drive",
   "share.mockDone": "Mock contribution recorded. Search MOCK-0001 on the Library page.",
   "share.note": "Sharing opens GitHub in your browser with everything filled in. You can drag the original image and a photo of the result into the form (optional); nothing is published until you submit. A GitHub account is required, and you appear under your GitHub username.",
   "share.pledge": "I promise this is real data that I calibrated myself and verified with a real burn, and that the code and brand are accurate. Fake or careless entries pollute the community library and make others waste discs.",

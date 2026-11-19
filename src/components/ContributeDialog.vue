@@ -2,6 +2,10 @@
   <UiDialog :title="t('share.title')" @close="$emit('close')">
     <p>{{ t('share.intro') }}</p>
     <label class="field">
+      <span class="small muted">{{ t('share.mid') }}</span>
+      <input :value="preset.mediaId" :placeholder="t('share.midUnknown')" class="readonly" readonly spellcheck="false" autocomplete="off" />
+    </label>
+    <label class="field">
       <span class="small muted">{{ t('share.code') }}</span>
       <input v-model.trim="code" :placeholder="t('share.codeHint')" spellcheck="false" autocomplete="off" />
     </label>
@@ -69,6 +73,7 @@ async function contribute() {
 .field { display: flex; flex-direction: column; gap: var(--oc-space-2xs); }
 .field input { height: var(--oc-size-md); padding: 0 var(--oc-space-sm); border: 0; border-radius: var(--oc-radius-control); background: var(--oc-bg-raised); }
 .field input::placeholder { color: var(--oc-fg-muted); }
+.field input.readonly { color: var(--oc-fg-muted); cursor: default; }
 .pledge { display: flex; align-items: flex-start; gap: var(--oc-space-sm); cursor: pointer; line-height: 1.5; }
 .pledge input { flex: none; width: 14px; height: 14px; margin: 3px 0 0; accent-color: var(--oc-bg-accent); cursor: pointer; }
 </style>
