@@ -323,6 +323,30 @@ pub mod mmc {
         })
     }
 
+    /// Whether the disc says it holds rewritable memory rather than a recording.
+    ///
+    /// Status 3 is the one no DVD session ever reports: a DVD-RAM is never
+    /// blank and never finalised, so it is the only DVD that answers with it.
+    pub fn ram_media(status: u8) -> bool {
+        status == 3
+    }
+
+    /// The kind of the disc, from the drive's profile and the disc's own status.
+    ///
+    /// A drive that names its DVD-RW while the disc says it holds RAM media has
+    /// answered about itself instead of about the disc. That was seen once on a
+    /// Pioneer DVR-221L, which reported the profile of the drive for the DVD-RAM
+    /// in it, and the disc was then taken for a DVD-RW that could not name
+    /// itself. The disc's own status settles it, because only RAM media reports
+    /// that status and a DVD-RAM is the only DVD written that way.
+    pub fn media_type_for(profile: u16, status: Option<u8>) -> Option<&'static str> {
+        let name = profile_media_type(profile)?;
+        if status.is_some_and(ram_media) && matches!(name, "DVD-R" | "DVD-RW" | "DVD+R" | "DVD+RW") {
+            return Some("DVD-RAM");
+        }
+        Some(name)
+    }
+
     /// Disc status from READ DISC INFORMATION: 0 empty, 1 appendable, 2 finalised, 3 other
     /// (overwritable media). It is the low two bits of byte 2; bit 4 above it is the
     /// erasable flag, which every RW disc sets whether or not anything is on it.
@@ -529,6 +553,47 @@ pub mod mmc {
             assert_eq!(disc_status(&[0, 0, 0x1E]), 2);
             // A reply too short to hold the field must not read as blank.
             assert_eq!(disc_status(&[]), 2);
+        }
+
+        /// What a Pioneer DVR-221L answered for the DVD-RAM in it, byte for byte.
+        /// The disc says it holds rewritable memory and no recording session,
+        /// which is what only RAM media reports.
+        const DVD_RAM_DISC_INFORMATION: &[u8] = &[
+            0x00, 0x20, 0x1F, 0x01, 0x01, 0x01, 0x01, 0x20,
+            0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+
+        /// The drive that saw this disc named it the way it names a DVD-RAM.
+        #[test]
+        fn a_dvd_ram_is_named_by_the_disc_as_well_as_by_the_drive() {
+            let status = disc_status(DVD_RAM_DISC_INFORMATION);
+            assert_eq!(status, 3);
+            assert_eq!(media_type_for(0x0012, Some(status)), Some("DVD-RAM"));
+            // And when the drive answers about itself instead of about the disc,
+            // the disc's own status says what is in the tray.
+            assert_eq!(media_type_for(0x0013, Some(status)), Some("DVD-RAM"));
+        }
+
+        /// A disc that does not say it holds RAM media keeps the name the drive
+        /// gave it.
+        #[test]
+        fn a_disc_that_is_not_ram_media_keeps_its_name() {
+            // A DVD-RW is blank or finalised, and keeps the name of the drive.
+            assert_eq!(media_type_for(0x0013, Some(0)), Some("DVD-RW"));
+            assert_eq!(media_type_for(0x0013, Some(2)), Some("DVD-RW"));
+            // A DVD-R is write-once and finalised.
+            assert_eq!(media_type_for(0x0011, Some(2)), Some("DVD-R"));
+            // A read-only disc is not RAM media, whatever it says.
+            assert_eq!(media_type_for(0x0010, Some(3)), Some("DVD-ROM"));
+            // A CD is not a DVD, and the status does not rename it.
+            assert_eq!(media_type_for(0x000A, Some(3)), Some("CD-RW"));
+            // A disc that said nothing keeps the name of the drive.
+            assert_eq!(media_type_for(0x0013, None), Some("DVD-RW"));
+            // A profile nobody knows stays unknown.
+            assert_eq!(media_type_for(0x0000, Some(3)), None);
         }
 
         /// A disc structure as a drive returns it: a header of zeros, then one

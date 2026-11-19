@@ -282,6 +282,9 @@ impl WinDrive {
         Ok(mmc::parse_capacity(&b))
     }
 
+    /// The profile the drive reports for the medium in it. It is the profile of
+    /// the medium; the drive's own profile is what it reports when it has none,
+    /// and a drive that answers about itself is caught by the disc's own status.
     fn current_profile(&mut self) -> Option<u16> {
         let mut b = [0u8; 8];
         self.exec(&GET_CURRENT_PROFILE, Some(&mut b)).ok()?;
@@ -344,12 +347,16 @@ impl WinDrive {
         if !media_present {
             return info;
         }
-        if let Some(profile) = self.current_profile().and_then(mmc::profile_media_type) {
-            info.media_type = profile.to_string();
+        // The disc's own status comes first: it says whether the medium holds
+        // rewritable memory, and it settles the kind of the disc when the drive
+        // answers with its own profile instead of the medium's.
+        let status = self.disc_status();
+        if let Some(name) = self.current_profile().and_then(|p| mmc::media_type_for(p, status)) {
+            info.media_type = name.to_string();
         }
         // A disc whose status cannot be read counts as written: never offer to burn
         // over something that may already hold a recording.
-        info.is_blank = self.disc_status().is_some_and(|s| s == 0);
+        info.is_blank = status.is_some_and(|s| s == 0);
         // Blank media can report no capacity at all until something is written to it,
         // and the nominal size at least matches the disc in the tray.
         let reported = self.read_capacity().unwrap_or(0);
@@ -622,8 +629,11 @@ mod tests {
         }
         let drives = crate::drive::list_drives();
         assert!(!drives.is_empty(), "没有找到光驱");
+        // Every drive is printed: what the test found out is worth reading.
+        for d in drives.iter() {
+            eprintln!("{d:#?}");
+        }
         let d = &drives[0];
-        eprintln!("{d:#?}");
         assert!(!d.product.is_empty(), "INQUIRY 没有型号");
         assert!(device_number(&d.id).is_some(), "设备编号读不到");
         let letter = drive_letter(&d.id).expect("盘符查不到");
