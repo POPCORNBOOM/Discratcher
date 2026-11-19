@@ -7,11 +7,11 @@
 //! 2 697 bytes instead of 2 048, a tighter track pitch and a rotation speed that
 //! falls from zone to zone. It is a format of its own, not a DVD with a new name.
 //!
-//! Nothing here records a DVD-RAM: the drives in this house cannot write one, the
-//! discs are long out of production, and the burning stack of the system has no
-//! DVD-RAM writer to talk to. What the module gives the rest of the program is the
-//! numbers a refusal has to be right about, and the record code that a writer would
-//! have to speak.
+//! What the module gives the rest of the program is the numbers a refusal has to
+//! be right about, the record code a writer has to speak, and the scrambler of 13.2.
+//! The carver applies that scrambler itself, because it lays every byte down on the
+//! surface itself. A drive that records a DVD-RAM scrambles on its own, so the
+//! blocks the program hands over to a drive are left plain.
 //!
 //! Every number below is from ECMA-330, third edition, June 2005.
 
@@ -52,8 +52,10 @@ pub const RECORDING_FRAME_BYTES: usize = 2_366;
 pub const TYPE1_SECTORS: u32 = 2_295_104;
 /// Sectors of a 120 mm Type 2S disc, the 9.4 GB one.
 pub const TYPE2_SECTORS: u32 = 4_589_844;
-/// The sixteen scrambler presets, in the order of the preset numbers. The same values
-/// ECMA-267 uses for a DVD.
+/// The sixteen scrambler pre-sets, in the order of the pre-set numbers.
+///
+/// Table 1 of the standard gives these values for the sixteen pre-set numbers, and
+/// they are the ones ECMA-267 gives for a DVD: the two standards use one register.
 pub const SCRAMBLER_PRESETS: [u16; 16] = [
     0x0001, 0x5500, 0x0002, 0x2A00, 0x0004, 0x5400, 0x0008, 0x2800, 0x0010, 0x5000, 0x0020, 0x2001,
     0x0040, 0x4002, 0x0080, 0x0005,
@@ -70,22 +72,29 @@ pub const fn physical_sector(lba: u32) -> u32 {
     lba + FIRST_PHYSICAL_SECTOR
 }
 
-/// The scrambler preset a logical block is recorded with.
+/// The scrambler pre-set a logical block is recorded with.
 ///
-/// The pre-set number is bits b7 to b4 of the Data ID, and the Data ID carries
-/// the physical sector number, so the phase of the sequence follows the
-/// physical number. The offset is a whole number of 256 sectors, so the phase
-/// is the same one a DVD uses and the same table of pre-set values applies.
+/// The pre-set number is bits b7 to b4 of the Data ID. The Data ID carries the
+/// sector number of the block, and in the Data Zone that number is the logical
+/// sector number plus (031000), so the phase of the sequence follows the
+/// physical number. The offset is a whole number of 256 sectors, which is why the
+/// phase is the one a DVD runs in as well.
 #[inline]
 pub fn preset_index(lba: u32) -> usize {
     ((physical_sector(lba) >> 4) & 0x0F) as usize
 }
 
-/// The scrambler of a DVD-RAM: the same feedback register ECMA-267 uses, with
-/// the same sixteen pre-set values and the same phase.
+/// The scrambler of a DVD-RAM.
+///
+/// Figure 12 of the standard is a feedback shift register of fifteen bits, r14 to
+/// r0, whose feedback is r14 and r10 exclusive or, and whose low eight bits are
+/// the scrambling byte. It is the register ECMA-267 uses for a DVD.
 pub type ScramblerLut = [[u8; USER_DATA_BYTES]; 16];
 
-/// The pre-set value of each of the sixteen pre-set numbers.
+/// The scrambling bytes of each of the sixteen pre-set numbers.
+///
+/// A byte is taken out of the register before it is shifted, so the first byte of
+/// a frame is the low eight bits of the pre-set value itself.
 pub fn build_scrambler_lut() -> Box<ScramblerLut> {
     let mut lut = Box::new([[0u8; USER_DATA_BYTES]; 16]);
     for (row, &seed) in lut.iter_mut().zip(SCRAMBLER_PRESETS.iter()) {
@@ -488,6 +497,53 @@ mod tests {
         assert_eq!(SCRAMBLER_PRESETS, crate::ecma267::LFSR_SEEDS);
         assert_eq!(preset_for_data_id(0x00), SCRAMBLER_PRESETS[0]);
         assert_eq!(preset_for_data_id(0xF0), SCRAMBLER_PRESETS[15]);
+    }
+
+    /// Figure 12 is a register of fifteen bits, r14 to r0, whose feedback is r14
+    /// and r10 exclusive or, and whose low eight bits are the scrambling byte.
+    /// The register is written out here bit by bit, so the taps and the direction
+    /// of the shift are pinned down here rather than borrowed from another module.
+    #[test]
+    fn the_register_is_the_one_figure_12_draws() {
+        let lut = build_scrambler_lut();
+        for (index, &seed) in SCRAMBLER_PRESETS.iter().enumerate() {
+            // reg[k] is r_k.
+            let mut reg = [0u8; 15];
+            for (k, bit) in reg.iter_mut().enumerate() {
+                *bit = ((seed >> k) & 1) as u8;
+            }
+            let mut want = [0u8; USER_DATA_BYTES];
+            for slot in want.iter_mut() {
+                // r7 to r0 are the scrambling byte, and it is taken out before
+                // the register is shifted.
+                *slot = reg[..8].iter().rev().fold(0u8, |acc, &b| (acc << 1) | b);
+                // Eight shifts: the content moves from r0 towards r14, and the
+                // feedback of r14 and r10 enters r0.
+                for _ in 0..8 {
+                    let feedback = reg[14] ^ reg[10];
+                    for k in (1..15).rev() {
+                        reg[k] = reg[k - 1];
+                    }
+                    reg[0] = feedback;
+                }
+            }
+            assert_eq!(lut[index], want, "pre-set {index}");
+        }
+    }
+
+    /// The pre-set number is bits b7 to b4 of the Data ID, and the Data ID of a
+    /// block in the Data Zone carries the sector number of that block, which
+    /// 17.8.3 gives as the logical sector number plus (031000).
+    #[test]
+    fn the_data_id_of_a_block_gives_the_pre_set_number() {
+        for lba in [0u32, 1, 15, 16, 255, 256, 100_000, 2_295_071] {
+            let data_id = physical_sector(lba) & 0x00FF_FFFF;
+            assert_eq!(
+                preset_for_data_id((data_id & 0xFF) as u8),
+                SCRAMBLER_PRESETS[preset_index(lba)],
+                "lba {lba}"
+            );
+        }
     }
 
     #[test]

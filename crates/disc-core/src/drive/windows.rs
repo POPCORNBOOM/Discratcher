@@ -40,6 +40,10 @@ const SCSI_IOCTL_DATA_UNSPECIFIED: u8 = 2;
 /// Long enough to spin a disc up and seek, short enough that a wedged USB bridge
 /// cannot hold the whole drive list hostage.
 const TIMEOUT_S: u32 = 20;
+/// Writing to rewritable memory takes longer than reading: the drive records the
+/// blocks into the medium before it answers, and a medium it has not formatted
+/// yet is formatted on the first write.
+const WRITE_TIMEOUT_S: u32 = 120;
 /// ERROR_NOT_READY, ERROR_MEDIUM_NOT_PRESENT.
 const MEDIUM_ABSENT: [i32; 2] = [21, 55];
 const ACCESS_DENIED: i32 = 5;
@@ -471,14 +475,15 @@ pub fn write_dvd_ram(
             return Err("镜像大小不是 2048 的倍数".into());
         }
         let blocks = (filled / 2048) as u16;
-        d.exec_out(&mmc::write12(lba, blocks), &buf[..filled], TIMEOUT_S)
+        d.exec_out(&mmc::write12(lba, blocks), &buf[..filled], WRITE_TIMEOUT_S)
             .map_err(|f| f.text(0xAA))?;
         lba += blocks as u32;
         written += filled as u64;
         progress(written, total);
     }
     // Whatever the drive still holds in its own cache goes to the disc.
-    d.exec(&mmc::synchronize_cache(), None).map_err(|f| f.text(0x35))?;
+    d.exec_with_timeout(&mmc::synchronize_cache(), None, WRITE_TIMEOUT_S)
+        .map_err(|f| f.text(0x35))?;
     Ok(())
 }
 
