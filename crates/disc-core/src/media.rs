@@ -1,7 +1,7 @@
 //! What differs between the disc families: how long a sector is on the track, where a
 //! timed read ends, and where the calibration ladder starts looking.
 
-use crate::{ecma130, ecma267};
+use crate::{ecma130, ecma267, ecma330};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -10,6 +10,8 @@ pub enum Media {
     #[default]
     Dvd,
     Cd,
+    /// A DVD-RAM: a DVD by name and a different format underneath.
+    DvdRam,
 }
 
 /// Where the ladder starts and what it may assume before anything is measured.
@@ -42,11 +44,21 @@ impl Media {
         match media_type.trim() {
             "DVD-R" | "DVD+R" | "DVD-RW" | "DVD+RW" | "DVD-ROM" => Some(Self::Dvd),
             "CD-R" | "CD-RW" | "CD-ROM" => Some(Self::Cd),
+            "DVD-RAM" => Some(Self::DvdRam),
             _ => None,
         }
     }
 
+    /// Whether this is a DVD of some kind, the plain family or RAM media.
     pub fn is_dvd(&self) -> bool {
+        matches!(self, Self::Dvd | Self::DvdRam)
+    }
+
+    /// Whether a preset of this media leaves the media field out of its file.
+    ///
+    /// The plain DVD presets leave it out, so those read and write exactly as
+    /// they always have. A DVD-RAM preset has to say what it is.
+    pub fn is_plain_dvd(&self) -> bool {
         *self == Self::Dvd
     }
 
@@ -54,6 +66,7 @@ impl Media {
         match self {
             Self::Dvd => ecma267::SECTOR_CHANNEL_BITS,
             Self::Cd => ecma130::SECTOR_CHANNEL_BITS,
+            Self::DvdRam => ecma330::SECTOR_CHANNEL_BITS,
         }
     }
 
@@ -62,13 +75,15 @@ impl Media {
         match self {
             Self::Dvd => ecma267::NOMINAL_BIT_LENGTH_NM * 1e-6,
             Self::Cd => ecma130::NOMINAL_BIT_LENGTH_NM * 1e-6,
+            Self::DvdRam => ecma330::NOMINAL_BIT_LENGTH_NM * 1e-6,
         }
     }
 
     /// Sectors the drive decodes together; reads and rungs are aligned to it.
     pub const fn block(self) -> u32 {
         match self {
-            Self::Dvd => 16,
+            // Both DVD families decode an ECC block of sixteen sectors at a time.
+            Self::Dvd | Self::DvdRam => 16,
             Self::Cd => 1,
         }
     }
@@ -86,6 +101,7 @@ impl Media {
     pub fn completion_bit(self, lba: u32) -> f64 {
         match self {
             Self::Dvd => ((lba / 16 + 1) * 16) as f64 * ecma267::SECTOR_CHANNEL_BITS as f64,
+            Self::DvdRam => ((lba / 16 + 1) * 16) as f64 * ecma330::SECTOR_CHANNEL_BITS as f64,
             Self::Cd => {
                 ((lba as f64 + 1.0) * ecma130::FRAMES_PER_SECTOR as f64 + ecma130::MAX_DELAY_FRAMES as f64)
                     * ecma130::FRAME_BITS as f64
@@ -105,6 +121,23 @@ impl Media {
                 rpm: (1500.0, 12_000.0),
                 slowest_turn_ns: 60e9 / 1200.0,
                 min_spacing_sectors: 2000,
+                min_sectors: 500_000,
+                near_turns: &[1.5, -1.5, 3.0, -3.0, 6.0, -6.0, 12.0, -12.0, 24.0, -24.0],
+                near_min_sectors: 32,
+            },
+            // A DVD-RAM: the spindle turns at a different speed in every zone, so
+            // the range of it is the whole range of the disc.
+            Self::DvdRam => LadderShape {
+                nominal_ri_mm: ecma330::DATA_ZONE_INNER_RADIUS_MM,
+                nominal_pitch_mm: ecma330::REWRITABLE_TRACK_PITCH_UM * 1e-3,
+                sigma_ri_mm: 0.6,
+                sigma_pitch_mm: 0.02e-3,
+                // The user data rate of a DVD-RAM is the same on every zone, so
+                // the drive is asked for that and not for a multiple of it.
+                read_speed_kbps: 2_770,
+                rpm: (1_375.0, 3_246.0),
+                slowest_turn_ns: 60e9 / 1_375.0,
+                min_spacing_sectors: 2_000,
                 min_sectors: 500_000,
                 near_turns: &[1.5, -1.5, 3.0, -3.0, 6.0, -6.0, 12.0, -12.0, 24.0, -24.0],
                 near_min_sectors: 32,
@@ -134,6 +167,8 @@ impl Media {
     pub fn spec(self) -> [(f64, f64); 2] {
         match self {
             Self::Dvd => [(0.71, 0.77), (23.6, 24.6)],
+            // A DVD-RAM: ECMA-330 pitch 0,615 µm and a data zone starting near 24 mm.
+            Self::DvdRam => [(0.60, 0.63), (23.6, 24.6)],
             Self::Cd => [(1.3, 1.8), (22.5, 27.0)],
         }
     }
@@ -142,6 +177,7 @@ impl Media {
         match self {
             Self::Dvd => "DVD",
             Self::Cd => "CD",
+            Self::DvdRam => "DVD-RAM",
         }
     }
 }
@@ -156,9 +192,26 @@ mod tests {
         assert_eq!(Media::of_type("CD-R"), Some(Media::Cd));
         assert_eq!(Media::of_type("CD-ROM"), Some(Media::Cd));
         assert_eq!(Media::of_type("DVD-ROM"), Some(Media::Dvd));
-        for m in ["BD-R", "DVD+R DL", "DVD-RAM", "None", ""] {
+        // A DVD-RAM is a DVD by name and a format of its own.
+        assert_eq!(Media::of_type("DVD-RAM"), Some(Media::DvdRam));
+        for m in ["BD-R", "DVD+R DL", "None", ""] {
             assert_eq!(Media::of_type(m), None, "{m}");
         }
+    }
+
+    /// A DVD-RAM is a format of its own: its numbers are not a DVD's.
+    #[test]
+    fn a_dvd_ram_has_the_numbers_of_its_own_format() {
+        assert_eq!(Media::DvdRam.sector_bits(), 43_152);
+        assert_eq!(Media::DvdRam.block(), 16);
+        // The drive decodes a whole ECC block before it answers, as on a DVD.
+        assert_eq!(Media::DvdRam.completion_bit(17), 32.0 * 43_152.0);
+        // Its channel bit is longer than a DVD's: the same length of track
+        // carries more of them.
+        assert!(Media::DvdRam.bit_mm() > Media::Dvd.bit_mm());
+        // The plain DVD presets leave the media out, a DVD-RAM preset cannot.
+        assert!(Media::Dvd.is_plain_dvd());
+        assert!(!Media::DvdRam.is_plain_dvd());
     }
 
     #[test]

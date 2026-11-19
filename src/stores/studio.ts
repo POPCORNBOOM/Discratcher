@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
 import { call, CANCELLED } from '../api'
 import { normalizeCode } from '../catalog'
-import { isCd } from '../etaModel'
+import { driveFamily, presetFamily } from '../etaModel'
 import { notifyError } from '../notices'
 import { useComposition } from './composition'
 import type { DiscGeometryPreset, OpticalDriveInfo, PresetLook } from '../types'
@@ -45,7 +45,15 @@ export const useStudio = defineStore('studio', () => {
   const discRendered = ref(false)
 
   const drive = computed(() => drives.value.find((d) => keyOf(d) === driveKey.value) ?? null)
-  const preset = computed(() => presets.value.find((p) => p.id === presetId.value) ?? presets.value[0] ?? null)
+  const preset = computed(() => {
+    const picked = presets.value.find((p) => p.id === presetId.value)
+    if (picked) return picked
+    // Nothing picked: the disc in the drive decides. A plain DVD never falls
+    // back to the geometry of a DVD-RAM, whose sectors are scrambled apart.
+    const family = driveFamily(drive.value)
+    if (family) return presets.value.find((p) => presetFamily(p) === family) ?? null
+    return presets.value[0] ?? null
+  })
 
   /** The burn settings; the pictures live in the composition store. */
   const config = ref({
@@ -71,10 +79,11 @@ export const useStudio = defineStore('studio', () => {
   // changes kind and exactly one calibration fits it, that one is selected.
   watch(
     // The calibrations may load after the drive is first seen.
-    [() => (drive.value?.mediaPresent && drive.value.supported ? isCd(drive.value) : null), () => presets.value.length] as const,
-    ([cd]) => {
-      if (cd === null || (preset.value?.media === 'cd') === cd) return
-      const fits = presets.value.filter((p) => (p.media === 'cd') === cd)
+    [() => driveFamily(drive.value), () => presets.value.length] as const,
+    ([family]) => {
+      if (family === null) return
+      if (preset.value && presetFamily(preset.value) === family) return
+      const fits = presets.value.filter((p) => presetFamily(p) === family)
       if (fits.length === 1) presetId.value = fits[0].id
     },
   )

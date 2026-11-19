@@ -106,7 +106,7 @@ import { ratingUrl } from '../catalog'
 import { notifyError } from '../notices'
 import { t, unsupportedText } from '../i18n'
 import { useEta } from '../eta'
-import { isCd } from '../etaModel'
+import { isCd, isDvdRam } from '../etaModel'
 import { useProcess } from '../stores/process'
 import { useStudio } from '../stores/studio'
 
@@ -133,11 +133,20 @@ async function rate(score: number) {
 const eta = useEta({ running: () => p.status === 'running', step: () => p.stepIndex, percent: () => p.percent, stepSeconds: p.stepSeconds, laterSeconds: p.laterSeconds })
 const minutes = computed(() => Math.ceil(p.totalSeconds / 60))
 
-const usable = computed(() => !!s.drive?.mediaPresent && !!s.drive.supported && (s.drive.isBlank || s.drive.reusable) && speedOptions.value.length > 0)
+const usable = computed(() => {
+  const d = s.drive
+  if (!d?.mediaPresent || !d.supported) return false
+  // A DVD-RAM is RAM media: the drive records over what is there, and its speed
+  // is the one of the format.
+  if (isDvdRam(d)) return true
+  return (d.isBlank || d.reusable) && speedOptions.value.length > 0
+})
 const warning = computed(() => {
   if (!s.drive) return t('burn.warnNoDrive')
   if (!s.drive.mediaPresent) return t('burn.warnNoDisc')
   if (!s.drive.supported) return unsupportedText(s.drive)
+  // A DVD-RAM is RAM media: the burn overwrites what is on it, in place.
+  if (isDvdRam(s.drive)) return t('burn.warnRam')
   if (s.drive.reusable) return t('burn.warnErase')
   if (!s.drive.isBlank) return t('burn.warnNotBlank')
   if (!speedOptions.value.length) return t('burn.warnNoSpeed')
@@ -147,6 +156,8 @@ const warning = computed(() => {
 const speedOptions = computed(() => {
   const d = s.drive
   if (!d || !d.mediaPresent) return []
+  // A DVD-RAM is recorded at the rate its format fixes, and the drive picks it.
+  if (isDvdRam(d)) return [{ value: '2', label: '2x' }]
   let speeds: number[] = []
   if (d.writeSpeeds && d.writeSpeeds.length > 0) {
     speeds = [...d.writeSpeeds]

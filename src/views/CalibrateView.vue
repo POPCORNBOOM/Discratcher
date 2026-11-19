@@ -30,7 +30,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { call, CANCELLED, isMock, mockDev, on } from '../api'
-import { calibrationSeconds, CalibrationPlan, CD_MEASURE_FACTOR, isCd, REFERENCE_SHARE } from '../etaModel'
+import { calibrationSeconds, CalibrationPlan, CD_MEASURE_FACTOR, isCd, isDvdRam, REFERENCE_SHARE } from '../etaModel'
 import { twistOf } from '../twist'
 import { t, unsupportedText } from '../i18n'
 import DrivePicker from '../components/DrivePicker.vue'
@@ -103,6 +103,9 @@ const ready = computed(() => kind.value === 'blank' || kind.value === 'calibrati
 const line = computed(() => {
   const d = s.drive
   if (!d) return t(s.driveStuck ? 'drive.stuck' : 'drive.none')
+  // A DVD-RAM can be recorded, but its spindle turns at a different speed in
+  // every zone, so the ladder cannot measure it yet.
+  if (isDvdRam(d)) return t('drive.unsupportedDvdRam')
   switch (kind.value) {
     case 'checking': return t('cal.checking')
     case 'none': return t('cal.hintNoDisc')
@@ -164,6 +167,10 @@ const measureStep: ProcessStep = { label: t('cal.measureStep'), estimate: () => 
 async function begin() {
   const d = s.drive
   if (!d) return
+  if (isDvdRam(d)) {
+    notifyError(t('drive.unsupportedDvdRam'))
+    return
+  }
   let kind: DiscKind
   try {
     kind = await call<DiscKind>('inspect_disc', { driveId: d.id })

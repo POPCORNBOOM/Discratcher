@@ -17,7 +17,7 @@ pub struct DiscGeometryPreset {
     #[serde(default)]
     pub burned_at: String,
     /// Left out of a DVD preset, so those read and write exactly as they always have.
-    #[serde(default, skip_serializing_if = "Media::is_dvd")]
+    #[serde(default, skip_serializing_if = "Media::is_plain_dvd")]
     pub media: Media,
     /// CD only. A drive reports a read some constant number of frames after the model's
     /// end point, and that constant cannot be told from a slightly different inner radius
@@ -45,7 +45,7 @@ impl DiscGeometryPreset {
     pub fn along_track_bits(&self) -> f64 {
         match self.media {
             Media::Cd => self.along_track_frames.unwrap_or(0.0) * crate::ecma130::FRAME_BITS as f64,
-            Media::Dvd => 0.0,
+            Media::Dvd | Media::DvdRam => 0.0,
         }
     }
 
@@ -83,6 +83,70 @@ pub(crate) fn cd_test_preset() -> DiscGeometryPreset {
         base_pitch_um: pitch * 1e3,
         ..reference_preset()
     }
+}
+
+/// A DVD-RAM as the standard lays it out, before anything is measured.
+///
+/// The Data Zone runs from 24,1 mm to 57,9 mm on a 120 mm disc and holds 59
+/// sectors per track at its outer edge, at a track pitch of 0,615 µm. The
+/// channel bit keeps the length that makes those three numbers agree.
+pub fn dvd_ram_preset() -> DiscGeometryPreset {
+    DiscGeometryPreset {
+        id: "std-dvd-ram-120mm".into(),
+        drive_model: String::new(),
+        media_id: String::new(),
+        stamper_code: String::new(),
+        brand: String::new(),
+        burned_at: String::new(),
+        media: Media::DvdRam,
+        along_track_frames: None,
+        total_sectors: crate::ecma330::USER_AREA_SECTORS,
+        channel_bit_length_nm: crate::ecma330::NOMINAL_BIT_LENGTH_NM,
+        inner_radius_mm: crate::ecma330::DATA_ZONE_INNER_RADIUS_MM,
+        outer_radius_mm: crate::ecma330::DATA_ZONE_OUTER_RADIUS_MM,
+        pitch_linear: 0.0,
+        pitch_quadratic: 0.0,
+        pitch_cubic: 0.0,
+        base_pitch_um: crate::ecma330::REWRITABLE_TRACK_PITCH_UM,
+        rms_residual_deg: 0.0,
+        measured_span_mm: (
+            crate::ecma330::DATA_ZONE_INNER_RADIUS_MM,
+            crate::ecma330::DATA_ZONE_OUTER_RADIUS_MM,
+        ),
+        created_at: String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::spiral::Spiral;
+
+    /// The nominal DVD-RAM preset has to come out where the zones of the
+    /// standard put it, or the picture lands on the wrong radius.
+    #[test]
+    fn a_dvd_ram_preset_matches_the_zones_of_the_standard() {
+        let p = dvd_ram_preset();
+        assert_eq!(p.media, Media::DvdRam);
+        // A standard geometry is named apart from a calibration: the program
+        // carries it, this machine did not measure it.
+        assert!(p.id.starts_with("std-"), "{}", p.id);
+        assert_eq!(p.total_sectors, 2_295_072);
+        assert_eq!(p.channel_bit_length_nm, 142.9);
+        let spiral = Spiral::new(p.spiral_params()).unwrap();
+        // The track pitch the zones of the standard come to.
+        assert!((spiral.p0 * 1000.0 - 0.615).abs() < 0.002, "{}", spiral.p0 * 1000.0);
+    }
+}
+
+/// The geometries the standards fix, rather than a machine measuring them.
+///
+/// A DVD-RAM cannot be calibrated: its spindle turns at a different speed in
+/// every zone, so the ladder cannot read one. Its geometry therefore comes
+/// from ECMA-330, and the entry belongs to the program rather than to the
+/// calibrations this machine made.
+pub fn standard_presets() -> Vec<DiscGeometryPreset> {
+    vec![dvd_ram_preset()]
 }
 
 /// A measured disc for the virtual drive and the tests. Users never see it listed.

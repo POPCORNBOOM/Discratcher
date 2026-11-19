@@ -61,7 +61,6 @@ pub fn is_supported_media(media_type: &str) -> bool {
 /// ECMA-330 instead of EFMPlus. The key is what the interface turns into words.
 pub fn unsupported_reason(media_type: &str) -> Option<&'static str> {
     match media_type.trim() {
-        "DVD-RAM" => Some("dvd-ram"),
         "DVD+R DL" | "DVD-R DL" => Some("dual-layer"),
         m if m.starts_with("BD") => Some("blu-ray"),
         _ => None,
@@ -70,7 +69,19 @@ pub fn unsupported_reason(media_type: &str) -> Option<&'static str> {
 
 /// Discs that can be written again, and so do not have to be new to be used.
 pub fn is_rewritable(media_type: &str) -> bool {
-    matches!(media_type.trim(), "CD-RW" | "DVD-RW" | "DVD+RW")
+    matches!(media_type.trim(), "CD-RW" | "DVD-RW" | "DVD+RW" | "DVD-RAM")
+}
+
+/// Whether this disc can be written again after it holds data.
+///
+/// A DVD-RAM is RAM media: the drive records over what is there, so it needs
+/// no erase step. The other rewritable discs need the burner to erase them
+/// first, and only the platforms that do that can write them again.
+pub fn can_write_again(media_type: &str) -> bool {
+    match media_type.trim() {
+        "DVD-RAM" => true,
+        m => is_rewritable(m) && erases_before_burn(),
+    }
 }
 
 /// Whether this platform's burner erases a rewritable disc on its own before writing it.
@@ -159,7 +170,7 @@ pub fn list_drives() -> Vec<OpticalDriveInfo> {
     let mut v = native_list();
     for d in &mut v {
         d.supported = d.media_present && is_supported_media(&d.media_type);
-        d.reusable = d.media_present && !d.is_blank && is_rewritable(&d.media_type) && erases_before_burn();
+        d.reusable = d.media_present && !d.is_blank && can_write_again(&d.media_type);
         d.unsupported_reason = if d.supported { None } else { unsupported_reason(&d.media_type).map(str::to_string) };
     }
     v
@@ -216,7 +227,9 @@ pub fn open_reader(id: &str) -> Result<Box<dyn TimedDrive>, String> {
 /// on a fresh one the same step is what formats it, and on a written one it is the only
 /// way it can be written again. Nothing erases anything outside a burn the user started.
 pub fn needs_erase(media_type: &str) -> bool {
-    is_rewritable(media_type) && erases_before_burn()
+    // A DVD-RAM is RAM media: the drive records over what is there, and it
+    // needs no erase step.
+    media_type.trim() != "DVD-RAM" && is_rewritable(media_type) && erases_before_burn()
 }
 
 /// Write speeds to offer for a blank disc, or for a rewritable one the burner erases
@@ -229,6 +242,11 @@ pub fn derive_write_speeds(
     offered: Vec<u8>,
     detected_max: Option<u8>,
 ) -> (Vec<u8>, u8) {
+    // A DVD-RAM is recorded at the rate its format fixes: the user data rate
+    // is the same on every zone of the disc, so there is nothing to choose.
+    if media_type.trim() == "DVD-RAM" {
+        return (vec![2], 2);
+    }
     let rewritable = is_rewritable(media_type) && erases_before_burn();
     if !is_blank && !rewritable {
         return (Vec::new(), 0);
@@ -264,6 +282,21 @@ pub fn derive_write_speeds(
 /// CDB layouts and reply decoding shared by every transport, so the three backends
 /// cannot drift apart, and so the parsing is testable without a drive.
 pub mod mmc {
+    /// WRITE(12): the command that hands logical blocks to a drive. It carries
+    /// sixteen of them at a time, which is the most the command takes.
+    pub fn write12(lba: u32, blocks: u16) -> [u8; 12] {
+        let l = lba.to_be_bytes();
+        let n = blocks.to_be_bytes();
+        // The transfer length is three bytes, and the group number and the
+        // control byte follow it.
+        [0xAA, 0, l[0], l[1], l[2], l[3], n[0], n[1], 0, 0, 0, 0]
+    }
+
+    /// SYNCHRONIZE CACHE: whatever the drive still holds goes to the medium.
+    pub fn synchronize_cache() -> [u8; 10] {
+        [0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    }
+
     pub fn read12(lba: u32, sectors: u32, fua: bool) -> [u8; 12] {
         let l = lba.to_be_bytes();
         let n = sectors.to_be_bytes();
@@ -804,11 +837,13 @@ mod tests {
     }
 
     #[test]
-    fn only_single_layer_dvd_and_cd_are_supported() {
+    fn the_formats_that_can_be_carved_are_supported() {
         for m in ["DVD-R", "DVD+R", "DVD-RW", "DVD+RW", " DVD-R ", "DVD-ROM", "CD-R", "CD-RW", "CD-ROM"] {
             assert!(is_supported_media(m), "{m}");
         }
-        for m in ["BD-R", "BD-RE", "DVD+R DL", "DVD-RAM", "None", ""] {
+        // A DVD-RAM is a format of its own, and Discratcher records it now.
+        assert!(is_supported_media("DVD-RAM"));
+        for m in ["BD-R", "BD-RE", "DVD+R DL", "None", ""] {
             assert!(!is_supported_media(m), "{m}");
         }
     }
@@ -830,10 +865,8 @@ mod tests {
 
     #[test]
     fn a_disc_that_cannot_be_recorded_says_why() {
-        // A DVD-RAM is a DVD by name and a different format underneath, so the generic
-        // refusal is not enough: it needs the record code to say what is different.
-        assert_eq!(unsupported_reason("DVD-RAM"), Some("dvd-ram"));
-        assert_eq!(unsupported_reason(" DVD-RAM "), Some("dvd-ram"));
+        // A DVD-RAM is recorded now, so it is not a disc that cannot be.
+        assert_eq!(unsupported_reason("DVD-RAM"), None);
         assert_eq!(unsupported_reason("DVD+R DL"), Some("dual-layer"));
         assert_eq!(unsupported_reason("BD-RE"), Some("blu-ray"));
         // Nothing worth saying about the discs that are supported.
@@ -850,6 +883,15 @@ mod tests {
         for m in ["CD-R", "DVD-R", "DVD+R", "DVD+R DL", "BD-RE", "CD-ROM", "None", ""] {
             assert!(!is_rewritable(m), "{m}");
         }
+    }
+
+    /// A DVD-RAM is RAM media: it is written again without an erase, and at
+    /// the rate its format fixes.
+    #[test]
+    fn a_dvd_ram_is_written_at_the_rate_of_its_format() {
+        assert_eq!(derive_write_speeds("DVD-RAM", false, Vec::new(), None), (vec![2], 2));
+        assert!(can_write_again("DVD-RAM"));
+        assert!(!needs_erase("DVD-RAM"));
     }
 
     #[test]

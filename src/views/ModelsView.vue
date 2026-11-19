@@ -100,6 +100,7 @@ import UiAdvanced from '../components/UiAdvanced.vue'
 import UiIcon from '../components/UiIcon.vue'
 import UiSegmented from '../components/UiSegmented.vue'
 import { t } from '../i18n'
+import { isStandardPreset } from '../etaModel'
 import { notifyError, notifySuccess } from '../notices'
 import { useStudio } from '../stores/studio'
 import type { DiscGeometryPreset, PresetLook } from '../types'
@@ -174,7 +175,9 @@ function localRow(preset: DiscGeometryPreset): Row {
 const split = computed(() => {
   const want = Number(size.value) || 0
   const fits = (cm: number) => !want || cm === want
-  const local = s.presets.filter((p) => fits(sizeCm(p)) && matches(p, settled.value))
+  // A standard geometry is not a calibration of this machine: the library page
+  // lists what was measured here.
+  const local = s.presets.filter((p) => !isStandardPreset(p) && fits(sizeCm(p)) && matches(p, settled.value))
   const known = new Set(local.flatMap((p) => [p.id, normalizeCode(p.stamperCode)]))
   const remote = index.value
     .filter((e) => e.verified && fits(e.size) && matches(e, settled.value) && !known.has(e.id) && !known.has(normalizeCode(e.stamperCode)))

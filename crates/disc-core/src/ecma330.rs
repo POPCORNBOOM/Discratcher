@@ -59,6 +59,78 @@ pub const SCRAMBLER_PRESETS: [u16; 16] = [
     0x0040, 0x4002, 0x0080, 0x0005,
 ];
 
+/// The physical sector the first logical block of the user area sits at.
+///
+/// The Data Zone starts at sector (031000), and the sector number written into
+/// the Data ID of a frame is that sector's physical number.
+pub const FIRST_PHYSICAL_SECTOR: u32 = 0x3_1000;
+
+/// The physical sector of a logical block of the user area.
+pub const fn physical_sector(lba: u32) -> u32 {
+    lba + FIRST_PHYSICAL_SECTOR
+}
+
+/// The scrambler preset a logical block is recorded with.
+///
+/// The pre-set number is bits b7 to b4 of the Data ID, and the Data ID carries
+/// the physical sector number, so the phase of the sequence follows the
+/// physical number. The offset is a whole number of 256 sectors, so the phase
+/// is the same one a DVD uses and the same table of pre-set values applies.
+#[inline]
+pub fn preset_index(lba: u32) -> usize {
+    ((physical_sector(lba) >> 4) & 0x0F) as usize
+}
+
+/// The scrambler of a DVD-RAM: the same feedback register ECMA-267 uses, with
+/// the same sixteen pre-set values and the same phase.
+pub type ScramblerLut = [[u8; USER_DATA_BYTES]; 16];
+
+/// The pre-set value of each of the sixteen pre-set numbers.
+pub fn build_scrambler_lut() -> Box<ScramblerLut> {
+    let mut lut = Box::new([[0u8; USER_DATA_BYTES]; 16]);
+    for (row, &seed) in lut.iter_mut().zip(SCRAMBLER_PRESETS.iter()) {
+        let mut r = seed;
+        for byte in row.iter_mut() {
+            *byte = (r & 0xFF) as u8;
+            for _ in 0..8 {
+                let feedback = ((r >> 14) ^ (r >> 10)) & 1;
+                r = ((r << 1) & 0x7FFF) | feedback;
+            }
+        }
+    }
+    lut
+}
+
+/// Turn wanted scrambled bytes into the bytes a host writes, in place. Its own inverse.
+#[inline]
+pub fn xor_sector(lut: &ScramblerLut, lba: u32, sector: &mut [u8]) {
+    let table = &lut[preset_index(lba)];
+    for (b, s) in sector.iter_mut().zip(table.iter()) {
+        *b ^= s;
+    }
+}
+
+/// Sectors the user area of a 120 mm DVD-RAM holds.
+///
+/// The Data Zone holds more, and the defect management takes the spare areas
+/// out of it, but what the drive shows the host is this many logical blocks.
+/// The disc in the Pioneer reports exactly this many.
+pub const USER_AREA_SECTORS: u32 = 2_295_072;
+
+/// Nominal length of a channel bit on the rewritable area.
+///
+/// The period of a channel bit is the same on every zone, and the linear
+/// density is the same to within a percent, so the bit keeps about the same
+/// length from the inner to the outer radius. The value here is the one that
+/// makes the whole disc add up: the length of the spiral between the two radii
+/// divided by the channel bits it carries.
+pub const NOMINAL_BIT_LENGTH_NM: f64 = 142.9;
+
+/// Inner radius of the Data Zone of a 120 mm disc, in millimetres.
+pub const DATA_ZONE_INNER_RADIUS_MM: f64 = 24.1;
+/// Outer radius of the Data Zone of a 120 mm disc, in millimetres.
+pub const DATA_ZONE_OUTER_RADIUS_MM: f64 = 57.9;
+
 /// Sectors per track in a zone of the rewritable area.
 ///
 /// The standard raises the count by one per zone, from 25 in Zone 0 to 59 in Zone 34,
@@ -382,6 +454,33 @@ mod tests {
             let got = (zone_rotation_hz(z) * 100.0).round() / 100.0;
             assert!((got - published).abs() < 0.001, "zone {zone}: {got} against {published}");
         }
+    }
+
+    /// The pre-set of a logical block comes from the physical sector, and
+    /// the offset to it is a whole number of 256 sectors, so a DVD-RAM picks
+    /// the same pre-set as a DVD does for the same logical block.
+    #[test]
+    fn the_scrambler_runs_in_the_phase_a_dvd_uses() {
+        for lba in [0u32, 1, 15, 16, 255, 256, 100_000, 2_295_071] {
+            assert_eq!(preset_index(lba), crate::ecma267::seed_index(lba), "lba {lba}");
+        }
+        // And the table of pre-set values is the same one.
+        let ram = build_scrambler_lut();
+        let dvd = crate::ecma267::build_scrambler_lut();
+        for i in 0..16 {
+            assert_eq!(ram[i], dvd[i], "pre-set {i}");
+        }
+    }
+
+    /// The bit length that makes the zones of the disc add up.
+    #[test]
+    fn the_nominal_bit_length_fits_the_zones_of_the_disc() {
+        let length_mm = std::f64::consts::PI
+            * (DATA_ZONE_OUTER_RADIUS_MM.powi(2) - DATA_ZONE_INNER_RADIUS_MM.powi(2))
+            / (REWRITABLE_TRACK_PITCH_UM * 1e-3);
+        let bits = USER_AREA_SECTORS as f64 * SECTOR_CHANNEL_BITS as f64;
+        let bit_nm = length_mm / bits * 1e6;
+        assert!((bit_nm - NOMINAL_BIT_LENGTH_NM).abs() < 0.5, "{bit_nm}");
     }
 
     #[test]

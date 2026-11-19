@@ -105,5 +105,23 @@ export const CD_MEASURE_FACTOR = 1.9
 
 export const isCd = (d: { mediaType: string } | null | undefined) => !!d?.mediaType.toUpperCase().startsWith('CD')
 
+/** A DVD-RAM is RAM media: the drive records over what is there. */
+export const isDvdRam = (d: { mediaType: string } | null | undefined) => !!d?.mediaType.trim().toUpperCase().startsWith('DVD-RAM')
+
+/** The family a disc belongs to: a CD, a plain DVD, or RAM media. */
+export type DiscFamily = 'cd' | 'dvd' | 'dvdram'
+
+/** The family the disc in the drive belongs to, or None when there is none to carve. */
+export const driveFamily = (d: { mediaType: string; mediaPresent: boolean; supported?: boolean } | null | undefined): DiscFamily | null => {
+  if (!d || !d.mediaPresent || d.supported === false) return null
+  return isDvdRam(d) ? 'dvdram' : isCd(d) ? 'cd' : 'dvd'
+}
+
+/** The family a calibration describes. A plain DVD preset leaves the field out. */
+export const presetFamily = (p: { media?: DiscFamily } | null | undefined): DiscFamily => p?.media ?? 'dvd'
+
+/** A geometry the standard fixes, not one this machine measured. */
+export const isStandardPreset = (p: { id: string }) => p.id.startsWith('std-')
+
 /** Measured: 4.7 GB in 22 s at 212 MB/s. */
 export const COMPOSE_SECONDS = 22

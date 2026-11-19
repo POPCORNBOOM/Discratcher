@@ -97,13 +97,27 @@ async fn list_optical_drives() -> Result<Vec<OpticalDriveInfo>, String> {
 
 #[tauri::command]
 fn get_presets(app: AppHandle) -> Result<Vec<DiscGeometryPreset>, String> {
-    user_presets(&app)
+    let mut v = user_presets(&app)?;
+    // Some geometries a standard fixes and no machine can measure: a DVD-RAM
+    // cannot be calibrated, so ECMA-330 supplies its numbers. A copy this
+    // machine made of the same entry wins over the standard.
+    for s in disc_core::preset::standard_presets() {
+        if !v.iter().any(|p| p.id == s.id) {
+            v.push(s);
+        }
+    }
+    Ok(v)
 }
 
 #[tauri::command]
 fn save_preset(app: AppHandle, preset: DiscGeometryPreset) -> Result<(), String> {
     // Downloaded presets arrive from outside: unusable geometry stops here.
     Spiral::new(preset.spiral_params())?;
+    // A geometry the standard fixes is already here: it is not a calibration
+    // of this machine, and storing it would only duplicate it.
+    if disc_core::preset::standard_presets().iter().any(|s| s.id == preset.id) {
+        return Ok(());
+    }
     let mut v = user_presets(&app)?;
     match v.iter_mut().find(|p| p.id == preset.id) {
         Some(p) => *p = preset,
@@ -244,6 +258,11 @@ async fn start_calibration(
     blocking(move || {
         let _held = held;
         let media = media_of(&media_type)?;
+        // A DVD-RAM turns at a different speed in every zone, and the ladder
+        // measures with a single period, so a DVD-RAM cannot be measured yet.
+        if media == Media::DvdRam {
+            return Err("a DVD-RAM cannot be calibrated yet: its spindle turns at a different speed in every zone".into());
+        }
         let mut d = drive::open_timed(&drive_id)?;
         let image_sectors = if media == Media::Cd { disc_check::calibration_sectors(d.as_mut()) } else { None };
         let cfg = LadderConfig { max_targets, reps, range_pct, media, image_sectors, ..Default::default() };
@@ -420,9 +439,17 @@ async fn burn_iso_to_drive(
         #[cfg(target_os = "windows")]
         {
             let _ = verify;
+            let reporter = app.clone();
+            // A DVD-RAM is not written by the burning stack of Windows: the drive
+            // records the logical blocks itself, in its own physical format.
+            if disc_core::drive::list_drives().iter().any(|d| d.id == drive_id && d.media_type == "DVD-RAM") {
+                return disc_core::drive::windows::write_dvd_ram(&drive_id, Path::new(&iso_path), &cancel, &mut |written, total| {
+                    let p = burner::BurnProgress { percent: Some(written as f64 / total as f64 * 100.0), message: String::new() };
+                    let _ = reporter.emit("burn://progress", p);
+                });
+            }
             let drive = disc_core::drive::windows::drive_letter(&drive_id)
                 .ok_or_else(|| format!("{drive_id} 没有盘符，无法交给刻录机"))?;
-            let reporter = app.clone();
             return disc_core::drive::imapi::burn(&drive, &iso_path, speed, cancel, move |percent, phase| {
                 let p = burner::BurnProgress { percent: Some(percent), message: phase.to_string() };
                 let _ = reporter.emit("burn://progress", p);

@@ -6,6 +6,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { t, unsupportedText } from '../i18n'
+import { isDvdRam } from '../etaModel'
 import { useStudio } from '../stores/studio'
 import UiSelect from './UiSelect.vue'
 
@@ -21,6 +22,8 @@ const status = computed(() => {
   if (!d) return t(s.driveStuck ? 'drive.stuck' : 'drive.none')
   if (!d.mediaPresent) return t('drive.noDisc')
   if (!d.supported) return unsupportedText(d)
+  // A DVD-RAM is RAM media: the burn overwrites it, it is not erased first.
+  if (isDvdRam(d)) return t('drive.ram')
   if (d.reusable) return t('drive.rewritable')
   return t(d.isBlank ? 'drive.blank' : 'drive.written')
 })

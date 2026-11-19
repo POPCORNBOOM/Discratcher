@@ -124,7 +124,7 @@ import UiIcon from '../components/UiIcon.vue'
 import UiSlider from '../components/UiSlider.vue'
 import UiSwitch from '../components/UiSwitch.vue'
 import { CARVE_FIT } from '../discLook'
-import { COMPOSE_SECONDS, isCd } from '../etaModel'
+import { COMPOSE_SECONDS, isCd, isDvdRam } from '../etaModel'
 import { t } from '../i18n'
 import { issueOf } from '../catalog'
 import { notifyError, notifySuccess } from '../notices'
@@ -414,7 +414,11 @@ async function compose(path: string, ctx?: StepContext) {
 function checkFamily() {
   const d = s.drive
   if (!d?.mediaPresent || !d.supported) return
-  const [disc, preset] = [isCd(d) ? 'CD' : 'DVD', s.preset?.media === 'cd' ? 'CD' : 'DVD']
+  // A DVD-RAM is a format of its own: its sectors are scrambled apart, so a
+  // plain DVD calibration on RAM media is as wrong as a CD one.
+  const disc = isDvdRam(d) ? 'DVD-RAM' : isCd(d) ? 'CD' : 'DVD'
+  const p = s.preset
+  const preset = p?.media === 'cd' ? 'CD' : p?.media === 'dvdram' ? 'DVD-RAM' : 'DVD'
   if (disc !== preset) throw t('carve.familyMismatch', { disc, preset })
 }
 /** A real burn finished with these parameters: only now may they be shared. */

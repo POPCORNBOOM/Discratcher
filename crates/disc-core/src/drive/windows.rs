@@ -8,7 +8,10 @@
 
 use super::{mmc, OpticalDriveInfo, TimedDrive, TimedRead};
 use std::ffi::c_void;
+use std::io::Read;
+use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE};
@@ -32,6 +35,7 @@ const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002D_1080;
 /// read it spin the drive up, and the page asks every three seconds.
 const IOCTL_STORAGE_CHECK_VERIFY: u32 = 0x002D_0801;
 const SCSI_IOCTL_DATA_IN: u8 = 1;
+const SCSI_IOCTL_DATA_OUT: u8 = 0;
 const SCSI_IOCTL_DATA_UNSPECIFIED: u8 = 2;
 /// Long enough to spin a disc up and seek, short enough that a wedged USB bridge
 /// cannot hold the whole drive list hostage.
@@ -134,6 +138,8 @@ fn command_name(op: u8) -> &'static str {
         0xA8 => "READ(12)",
         0xBE => "READ CD",
         0xBB => "SET CD SPEED",
+        0xAA => "WRITE(12)",
+        0x35 => "SYNCHRONIZE CACHE",
         0xAD => "READ DISC STRUCTURE",
         _ => "SCSI 命令",
     }
@@ -158,6 +164,16 @@ impl WinDrive {
             Some(d) => (SCSI_IOCTL_DATA_IN, d.as_mut_ptr() as *mut c_void, d.len() as u32),
             None => (SCSI_IOCTL_DATA_UNSPECIFIED, std::ptr::null_mut(), 0),
         };
+        self.exec_dir(cdb, dir, ptr, len, timeout_s)
+    }
+
+    /// The same, for a command that hands data to the drive.
+    fn exec_out(&mut self, cdb: &[u8], data: &[u8], timeout_s: u32) -> Result<(), Failure> {
+        self.exec_dir(cdb, SCSI_IOCTL_DATA_OUT, data.as_ptr() as *mut c_void, data.len() as u32, timeout_s)
+    }
+
+    /// One command, in either direction.
+    fn exec_dir(&mut self, cdb: &[u8], dir: u8, ptr: *mut c_void, len: u32, timeout_s: u32) -> Result<(), Failure> {
         let mut c = [0u8; 16];
         c[..cdb.len()].copy_from_slice(cdb);
         let mut r = SptdSense {
@@ -410,6 +426,62 @@ impl TimedDrive for WinDrive {
     }
 }
 
+/// Logical blocks one WRITE(12) carries: sixteen, which is the most the
+/// command takes.
+const WRITE_BLOCKS: usize = 16;
+
+/// Writes an image to a DVD-RAM, in the logical blocks the drive records.
+///
+/// Windows has no DVD-RAM writer of its own: the burning stack knows DVD-R and
+/// DVD+R and their rewritable forms, and nothing else. A DVD-RAM is written
+/// the way any block device is written: the host hands the drive logical
+/// blocks of 2 048 bytes and the drive records them in the physical format of
+/// the medium, with its Data ID, its error detection code, its ECC and the
+/// 8-to-16 code of its own.
+pub fn write_dvd_ram(
+    id: &str,
+    iso: &Path,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<(), String> {
+    let mut d = open_handle(id, DEVICE_ACCESS)
+        .map_err(|code| format!("打不开 {id}：{}", std::io::Error::from_raw_os_error(code)))?;
+    let file = std::fs::File::open(iso).map_err(|e| format!("读不到镜像：{e}"))?;
+    let total = file.metadata().map_err(|e| e.to_string())?.len();
+    let mut reader = std::io::BufReader::with_capacity(1 << 20, file);
+    let mut buf = vec![0u8; WRITE_BLOCKS * 2048];
+    let mut written = 0u64;
+    let mut lba = 0u32;
+    loop {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("已取消".into());
+        }
+        let mut filled = 0usize;
+        while filled < buf.len() {
+            let n = reader.read(&mut buf[filled..]).map_err(|e| format!("读镜像失败：{e}"))?;
+            if n == 0 {
+                break;
+            }
+            filled += n;
+        }
+        if filled == 0 {
+            break;
+        }
+        if filled % 2048 != 0 {
+            return Err("镜像大小不是 2048 的倍数".into());
+        }
+        let blocks = (filled / 2048) as u16;
+        d.exec_out(&mmc::write12(lba, blocks), &buf[..filled], TIMEOUT_S)
+            .map_err(|f| f.text(0xAA))?;
+        lba += blocks as u32;
+        written += filled as u64;
+        progress(written, total);
+    }
+    // Whatever the drive still holds in its own cache goes to the disc.
+    d.exec(&mmc::synchronize_cache(), None).map_err(|f| f.text(0x35))?;
+    Ok(())
+}
+
 fn open_handle(id: &str, access: u32) -> Result<WinDrive, i32> {
     let wide: Vec<u16> = id.encode_utf16().chain(std::iter::once(0)).collect();
     let h = unsafe {
@@ -515,6 +587,11 @@ fn multiples_per_x(media_type: &str) -> f32 {
 
 /// The speeds to offer, rounded to the multiples the page shows, with the drive's ceiling.
 fn speeds_to_offer(raw: &[u32], media_type: &str) -> (Vec<u8>, u8) {
+    // A DVD-RAM is recorded at the rate its format fixes: the user data rate is
+    // the same on every zone of the disc, so the drive picks it and not us.
+    if media_type.trim() == "DVD-RAM" {
+        return (vec![2], 2);
+    }
     let per_x = multiples_per_x(media_type);
     let mut speeds: Vec<u8> = raw
         .iter()
@@ -648,10 +725,11 @@ mod tests {
             if d.media_type.starts_with("DVD") && d.media_type != "DVD-RAM" {
                 assert!(!d.media_id.is_empty(), "{} holds a disc whose MID cannot be read", d.product);
             }
-            // A DVD-RAM cannot be recorded, and the report says why.
+            // A DVD-RAM is recorded now: Discratcher carves it and the drive
+            // writes it, and there is no reason left to give.
             if d.media_type == "DVD-RAM" {
-                assert!(!d.supported, "DVD-RAM 不该被当成能刻的盘");
-                assert_eq!(d.unsupported_reason.as_deref(), Some("dvd-ram"));
+                assert!(d.supported, "a DVD-RAM can be recorded");
+                assert_eq!(d.unsupported_reason, None);
             }
         }
         if !d.media_present {

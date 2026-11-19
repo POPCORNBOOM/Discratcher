@@ -3,6 +3,7 @@
 use crate::artwork::{Composition, Layer};
 use crate::ecma130;
 use crate::ecma267::*;
+use crate::ecma330;
 use crate::media::Media;
 use crate::preset::DiscGeometryPreset;
 use crate::spiral::Spiral;
@@ -53,7 +54,22 @@ pub struct CarveCtx<'a> {
     pub spiral: &'a Spiral,
     pub art: &'a Composition,
     pub lut: &'a ScramblerLut,
+    /// The format being carved: a DVD-RAM scrambles its sectors like a DVD does.
+    pub media: Media,
     pub tone: Tone,
+}
+
+/// The scrambler of the format: the stream the drive will XOR the sector with.
+///
+/// A DVD-RAM uses the register of ECMA-330, which is the one of ECMA-267 with
+/// the same sixteen pre-set values, and it reaches them in the same phase: the
+/// offset from a logical block to the physical sector that carries the pre-set
+/// number is a whole number of 256 sectors.
+fn xor_for(media: Media, lut: &ScramblerLut, lba: u32, sector: &mut [u8]) {
+    match media {
+        Media::DvdRam => ecma330::xor_sector(lut, lba, sector),
+        _ => xor_sector(lut, lba, sector),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -129,7 +145,7 @@ pub fn carve_block(ctx: &CarveCtx, block: u32, out: &mut [u8]) -> BlockStats {
         }
         st.dark_bytes += dark as u64;
         st.max_sector_dark = st.max_sector_dark.max(dark);
-        xor_sector(ctx.lut, lba, sector);
+        xor_for(ctx.media, ctx.lut, lba, sector);
     }
     st
 }
@@ -238,9 +254,12 @@ pub fn build_iso_from(
     if total % ECC_BLOCK_SECTORS as u32 != 0 {
         return Err("总扇区数必须是 16 的倍数".into());
     }
-    let lut = build_scrambler_lut();
+    let lut: Box<ScramblerLut> = match cfg.preset.media {
+        Media::DvdRam => ecma330::build_scrambler_lut(),
+        _ => build_scrambler_lut(),
+    };
     let tone = Tone::from_duty(cfg.servo_safe_dither, cfg.max_dark_duty_cycle);
-    let ctx = CarveCtx { spiral, art, lut: &lut, tone };
+    let ctx = CarveCtx { spiral, art, lut: &lut, media: cfg.preset.media, tone };
     let bytes = total as u64 * SECTOR_BYTES as u64;
     let path = Path::new(&cfg.output_iso_path);
     let mut map = create_mapped(path, bytes)?;
@@ -446,6 +465,8 @@ fn build_cd_iso(
 /// bytes that may remain.
 pub enum Encoding {
     Dvd,
+    /// A DVD-RAM: the same pre-set sequence as a DVD, so the same reading.
+    DvdRam,
     Cd { user_offset: usize },
 }
 
@@ -453,6 +474,7 @@ impl Encoding {
     pub fn of(cfg: &CarveJobConfig) -> Self {
         match cfg.preset.media {
             Media::Dvd => Self::Dvd,
+            Media::DvdRam => Self::DvdRam,
             Media::Cd => Self::Cd { user_offset: cfg.cd_user_offset.unwrap_or_else(crate::drive::cd_user_offset) },
         }
     }
@@ -468,14 +490,22 @@ pub fn audit_iso(path: &Path, encoding: &Encoding) -> Result<IsoAudit, String> {
     }
     let (cd_mask, dark_byte, light_byte) = match encoding {
         Encoding::Dvd => (None, DARK_BYTE, LIGHT_BYTE),
+        Encoding::DvdRam => (None, DARK_BYTE, LIGHT_BYTE),
         Encoding::Cd { user_offset } => (Some(ecma130::user_mask(*user_offset)), ecma130::DARK_BYTE, ecma130::LIGHT_BYTE),
     };
-    let lut = build_scrambler_lut();
+    let lut: Box<ScramblerLut> = match encoding {
+        Encoding::DvdRam => ecma330::build_scrambler_lut(),
+        _ => build_scrambler_lut(),
+    };
     let (foreign, worst, worst_lba) = map
         .par_chunks(SECTOR_BYTES)
         .enumerate()
         .map(|(i, s)| {
-            let table = cd_mask.as_ref().unwrap_or(&lut[seed_index(i as u32)]);
+            let index = match encoding {
+                Encoding::DvdRam => ecma330::preset_index(i as u32),
+                _ => seed_index(i as u32),
+            };
+            let table = cd_mask.as_ref().unwrap_or(&lut[index]);
             let (mut dark, mut foreign) = (0u32, 0u64);
             for (b, k) in s.iter().zip(table.iter()) {
                 match b ^ k {
@@ -529,8 +559,8 @@ mod tests {
         let at = |x| Composition::new([(Layer { path: String::new(), x, y: 0.0, size: 1.0, rotation_deg: 0.0, invert: false, contrast: 0.0 }, half.clone())]);
         let (spiral, centred, lut) = ctx_parts(at(0.0));
         let shifted = at(0.2);
-        let ctx_center = CarveCtx { spiral: &spiral, art: &centred, lut: &lut, tone: safe() };
-        let ctx_shifted = CarveCtx { spiral: &spiral, art: &shifted, lut: &lut, tone: safe() };
+        let ctx_center = CarveCtx { spiral: &spiral, art: &centred, lut: &lut, media: Media::Dvd, tone: safe() };
+        let ctx_shifted = CarveCtx { spiral: &spiral, art: &shifted, lut: &lut, media: Media::Dvd, tone: safe() };
         let mut buf1 = vec![0u8; ECC_BLOCK_BYTES];
         let mut buf2 = vec![0u8; ECC_BLOCK_BYTES];
         let st1 = carve_block(&ctx_center, 100_000, &mut buf1);
@@ -542,7 +572,7 @@ mod tests {
     #[test]
     fn pure_black_stays_under_servo_limit() {
         let (spiral, field, lut) = ctx_parts(flat(vec![0; 16]));
-        let ctx = CarveCtx { spiral: &spiral, art: &field, lut: &lut, tone: safe() };
+        let ctx = CarveCtx { spiral: &spiral, art: &field, lut: &lut, media: Media::Dvd, tone: safe() };
         let mut buf = vec![0u8; ECC_BLOCK_BYTES];
         for block in [100_000u32, 100_001, 123_456] {
             let st = carve_block(&ctx, block, &mut buf);
@@ -557,7 +587,7 @@ mod tests {
     fn without_guard_black_reaches_full_duty() {
         let (spiral, field, lut) = ctx_parts(flat(vec![0; 16]));
         let tone = Tone::from_duty(false, 0.65);
-        let ctx = CarveCtx { spiral: &spiral, art: &field, lut: &lut, tone };
+        let ctx = CarveCtx { spiral: &spiral, art: &field, lut: &lut, media: Media::Dvd, tone };
         let mut buf = vec![0u8; ECC_BLOCK_BYTES];
         let st = carve_block(&ctx, 100_000, &mut buf);
         assert!(st.max_sector_dark >= 2040);
@@ -566,11 +596,11 @@ mod tests {
     #[test]
     fn white_stays_all_light_and_mean_tracks_gray() {
         let (spiral, white, lut) = ctx_parts(flat(vec![255; 16]));
-        let ctx = CarveCtx { spiral: &spiral, art: &white, lut: &lut, tone: safe() };
+        let ctx = CarveCtx { spiral: &spiral, art: &white, lut: &lut, media: Media::Dvd, tone: safe() };
         let mut buf = vec![0u8; ECC_BLOCK_BYTES];
         assert_eq!(carve_block(&ctx, 90_000, &mut buf).dark_bytes, 0);
         let gray = flat(vec![191; 16]);
-        let ctx = CarveCtx { spiral: &spiral, art: &gray, lut: &lut, tone: safe() };
+        let ctx = CarveCtx { spiral: &spiral, art: &gray, lut: &lut, media: Media::Dvd, tone: safe() };
         let st = carve_block(&ctx, 90_000, &mut buf);
         let share = st.dark_bytes as f64 / ECC_BLOCK_BYTES as f64;
         assert!((share - 0.25).abs() < 0.01, "{share}");
@@ -612,6 +642,26 @@ mod tests {
         assert_eq!(a.foreign_bytes, 0);
         assert_eq!(a.sectors, 6400);
         assert!((a.max_sector_dark_ratio - s.max_sector_dark_ratio).abs() < 1e-12);
+        std::fs::remove_file(&out).unwrap();
+    }
+
+    /// A DVD-RAM image: the same carving as a DVD, with the numbers of the
+    /// medium and the pre-set sequence of its own format.
+    #[test]
+    fn a_dvd_ram_image_carves_and_audits() {
+        let dir = std::env::temp_dir().join(format!("disc-core-carve-ram-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("ram.iso");
+        let mut preset = crate::preset::dvd_ram_preset();
+        preset.total_sectors = 16 * 400;
+        let spiral = Spiral::new(preset.spiral_params()).unwrap();
+        let art = crate::artwork::tests::whole(Picture::from_luma(2, 2, vec![0, 255, 255, 0]));
+        let cfg = CarveJobConfig { layers: Vec::new(), output_iso_path: out.to_string_lossy().into(), preset, servo_safe_dither: true, max_dark_duty_cycle: 0.65, cd_user_offset: None };
+        let s = build_iso_from(&cfg, &spiral, &art, &AtomicBool::new(false), &|_| {}).unwrap();
+        assert!(s.limit_ok);
+        let a = audit_iso(&out, &Encoding::of(&cfg)).unwrap();
+        assert_eq!(a.foreign_bytes, 0);
+        assert_eq!(a.sectors, 6400);
         std::fs::remove_file(&out).unwrap();
     }
 
@@ -711,7 +761,7 @@ mod tests {
         let picture = Picture::load(&art, None).unwrap();
         assert_eq!(picture.width, picture.height);
         let (spiral, field, lut) = ctx_parts(crate::artwork::tests::whole(picture));
-        let ctx = CarveCtx { spiral: &spiral, art: &field, lut: &lut, tone: Tone::from_duty(false, 0.65) };
+        let ctx = CarveCtx { spiral: &spiral, art: &field, lut: &lut, media: Media::Dvd, tone: Tone::from_duty(false, 0.65) };
         use std::io::{Read, Seek, SeekFrom};
         let (mut mine, mut theirs) = (Vec::new(), Vec::new());
         let mut a = vec![0u8; ECC_BLOCK_BYTES];

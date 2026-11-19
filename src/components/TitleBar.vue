@@ -33,7 +33,7 @@
 
       <div class="preset" data-tauri-drag-region="false">
         <UiSelect class="picker" filterable :label="t('presets.label')" :placeholder="t('presets.none')" :model-value="s.preset?.id ?? ''" :options="presetOptions" :disabled="!!s.job" @update:model-value="s.presetId = $event" @preview="preview" />
-        <UiButton v-if="s.preset" icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('presets.delete', { name: labelOf(s.preset) })" :disabled="!!s.job" @click="confirmDelete = true" />
+        <UiButton v-if="s.preset && !isStandardPreset(s.preset)" icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('presets.delete', { name: labelOf(s.preset) })" :disabled="!!s.job" @click="confirmDelete = true" />
       </div>
 
       <div v-if="!mac" class="controls" data-tauri-drag-region="false">
@@ -74,11 +74,13 @@ import { mdiUpdate, mdiArrowLeft, mdiCheck, mdiClose, mdiContentSaveOutline, mdi
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { call, isWindowMaximized, openInBrowser, windowControl } from '../api'
 import { labelOf, REPOSITORY_URL } from '../catalog'
+import { isStandardPreset } from '../etaModel'
 import { locale, locales, setLocale, t } from '../i18n'
 import { notices, notifyError, notifySuccess } from '../notices'
 import { useProcess } from '../stores/process'
 import { useComposition } from '../stores/composition'
 import { useStudio, type CarveCommands } from '../stores/studio'
+import type { DiscGeometryPreset } from '../types'
 import { overallProgress, tasks } from '../tasks'
 import { appVersion, checkForUpdate, checking, installUpdate, update } from '../updater'
 import BrandMark from './BrandMark.vue'
@@ -106,8 +108,16 @@ const faded = ref(false)
 let fadeTimer = 0
 let closeTimer = 0
 
+/** What a calibration is called: the code on the disc, or the kind of disc it is. */
+function labelFor(p: DiscGeometryPreset) {
+  if (p.stamperCode || p.mediaId) return p.stamperCode || p.mediaId
+  if (p.media === 'cd') return 'CD-R'
+  if (p.media === 'dvdram') return t('presets.dvdRamStandard')
+  return labelOf(p)
+}
+
 /** The disc the next burn will use, chosen from every calibration on this machine. */
-const presetOptions = computed(() => s.presets.map((p) => ({ value: p.id, label: p.stamperCode || p.mediaId || (p.media === 'cd' ? 'CD-R' : labelOf(p)), keywords: `${p.stamperCode} ${p.mediaId} ${p.brand ?? ''}` })))
+const presetOptions = computed(() => s.presets.map((p) => ({ value: p.id, label: labelFor(p), keywords: `${p.stamperCode} ${p.mediaId} ${p.brand ?? ''} ${p.media === 'dvdram' ? 'DVD-RAM' : ''}` })))
 const preview = (id: string | null) => (s.discPreview = s.presets.find((p) => p.id === id) ?? null)
 
 async function removePreset() {
