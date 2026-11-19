@@ -301,19 +301,31 @@ impl WinDrive {
     ///
     /// A DVD-R keeps its code in a table of records and a DVD+R in ADIP, and the
     /// kind of disc in the drive says which of the two shapes to expect.
+    ///
+    /// A DVD+R is asked for ADIP first, which is where the standard keeps it.
+    /// A drive that knows no ADIP format of its own says the field is invalid
+    /// and hands out the physical format instead, with a copy of the same block
+    /// in it, so that is asked next.
     fn media_id(&mut self, media_type: &str) -> Option<String> {
-        let mut b = vec![0u8; DISC_STRUCTURE_BYTES];
-        self.exec_with_timeout(
-            &mmc::read_disc_structure(0x00, DISC_STRUCTURE_BYTES as u16),
-            Some(&mut b[..]),
-            DISC_STRUCTURE_TIMEOUT_S,
-        )
-        .ok()?;
-        if media_type.starts_with("DVD+") {
-            mmc::parse_adip_id(&b)
-        } else {
-            mmc::parse_medium_id(&b)
+        let dvd_plus = media_type.starts_with("DVD+");
+        for &format in mmc::media_id_formats(media_type) {
+            let mut b = vec![0u8; DISC_STRUCTURE_BYTES];
+            if self
+                .exec_with_timeout(
+                    &mmc::read_disc_structure(format, DISC_STRUCTURE_BYTES as u16),
+                    Some(&mut b[..]),
+                    DISC_STRUCTURE_TIMEOUT_S,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            let id = if dvd_plus { mmc::parse_adip_id(&b) } else { mmc::parse_medium_id(&b) };
+            if id.is_some() {
+                return id;
+            }
         }
+        None
     }
 
     /// Everything the rest of the app expects, from as few commands as will answer.

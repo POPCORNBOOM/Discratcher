@@ -334,18 +334,34 @@ pub mod mmc {
         [0xAD, 0, 0, 0, 0, 0, 0, format, (allocation >> 8) as u8, allocation as u8, 0, 0]
     }
 
+    /// The structures to ask a disc for its code, in the order to ask them.
+    ///
+    /// The standard keeps a DVD+R's code in ADIP, which is format 0x11. A drive
+    /// that knows no ADIP format of its own says the field is invalid and hands
+    /// out the physical format instead, with a copy of the same block in it, so
+    /// that is asked next. A DVD-R keeps its code in a table of records, and only
+    /// the physical format has it.
+    pub fn media_id_formats(media_type: &str) -> &'static [u8] {
+        if media_type.starts_with("DVD+") {
+            &[0x11, 0x00]
+        } else {
+            &[0x00]
+        }
+    }
+
     /// One record of the disc structure: an index, six characters of text and a
     /// terminator.
     const RECORD_BYTES: usize = 8;
 
-    /// Where a DVD+R keeps its own code and how long that code is. The maker
-    /// takes eight bytes and the media code three, and the pair sits at byte 23
-    /// of the structure the drive reports: the same place ImgBurn reads it, and
-    /// the place the ADIP answer puts it as well.
-    const DISC_CODE_AT: usize = 23;
-    const DISC_CODE_BYTES: usize = 11;
-    /// The maker's part of that code.
+    /// How long the maker's part of a DVD+R's own code is.
     const MAKER_BYTES: usize = 8;
+    /// How long the media code part of it is.
+    const MEDIA_CODE_BYTES: usize = 3;
+    /// The ADIP block says how many of its bytes it uses, and that count is the
+    /// last of them: the marker that tells a code from the bytes around it.
+    const ADIP_BYTES_IN_USE: u8 = 0x38;
+    /// The product revision in the same block is a small number.
+    const ADIP_REVISION_MAX: u8 = 0x0F;
 
     /// The disc's own identification code, out of a READ DISC STRUCTURE answer.
     ///
@@ -376,24 +392,41 @@ pub mod mmc {
     ///
     /// A DVD+R does not keep its code in a table of records: it keeps it in
     /// ADIP, the address information written into the groove. The drive copies
-    /// that into the structure it reports as eleven bytes at byte 23, the maker
-    /// in eight and the media code in three, which is where ImgBurn reads it
-    /// too.
+    /// that into the structure it reports, and where it puts the copy depends
+    /// on the drive: one that answers with ADIP itself puts the block at the
+    /// front, one that knows no ADIP format of its own copies it into the
+    /// media specific area of the structure it does report. A fixed offset
+    /// would read the wrong bytes on such a drive, so the block is found by
+    /// its shape instead: the maker in eight bytes padded with zeros, the
+    /// media code in three, the product revision, and the count of the bytes
+    /// the block uses.
     ///
     /// The maker is padded out with zeros, and DVDInfo prints that padding as
     /// one space, so the maker "RITEK" and the code "F16" read as "RITEK F16".
+    ///
+    /// A block that does not have that shape is not a code, and a disc whose
+    /// code cannot be read is left unnamed rather than named wrongly.
     pub fn parse_adip_id(b: &[u8]) -> Option<String> {
-        let field = b.get(DISC_CODE_AT..DISC_CODE_AT + DISC_CODE_BYTES)?;
-        let (maker, code) = field.split_at(MAKER_BYTES);
-        let maker = text_field(maker)?.trim_end().to_string();
-        let code = text_field(code)?.trim_end().to_string();
-        if maker.is_empty() || code.is_empty() {
-            return None;
-        }
-        // A maker that fills its eight bytes stands next to the code; a padded
-        // one is separated from it, the way DVDInfo prints it.
-        let space = if maker.len() < MAKER_BYTES { " " } else { "" };
-        Some(format!("{maker}{space}{code}"))
+        (0..b.len()).find_map(|at| {
+            let maker = text_field(b.get(at..at + MAKER_BYTES)?)?;
+            let code = text_field(b.get(at + MAKER_BYTES..at + MAKER_BYTES + MEDIA_CODE_BYTES)?)?;
+            let revision = *b.get(at + MAKER_BYTES + MEDIA_CODE_BYTES)?;
+            if *b.get(at + MAKER_BYTES + MEDIA_CODE_BYTES + 1)? != ADIP_BYTES_IN_USE {
+                return None;
+            }
+            if revision > ADIP_REVISION_MAX {
+                return None;
+            }
+            let maker = maker.trim_end().to_string();
+            let code = code.trim_end().to_string();
+            if maker.is_empty() || code.is_empty() {
+                return None;
+            }
+            // A maker that fills its eight bytes stands next to the code; a padded
+            // one is separated from it, the way DVDInfo prints it.
+            let space = if maker.len() < MAKER_BYTES { " " } else { "" };
+            Some(format!("{maker}{space}{code}"))
+        })
     }
 
     /// Is a record table here, with its first record numbered `first`? The records
@@ -520,12 +553,105 @@ pub mod mmc {
             0x00, 0x00, 0x00, 0x5A,
         ];
 
+        /// The ADIP block a drive reports, from its type marker to the count of
+        /// the bytes it uses. Read off a Pioneer DVR-221L with a blank RITEK
+        /// DVD+R in it, and the same block in every answer that drive gave.
+        const ADIP_BLOCK: &[u8] = &[
+            0xA1, 0x0F, 0x02, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x26, 0x05, 0x3F,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07,
+            0x52, 0x49, 0x54, 0x45, 0x4B, 0x00, 0x00, 0x00,
+            0x46, 0x31, 0x36,
+            0x01, 0x38,
+        ];
+
+        /// The ADIP answer of that drive, byte for byte: the block at the front,
+        /// behind a four byte header. The maker sits nineteen bytes into the
+        /// block, the media code eight further along.
+        const PIONEER_ADIP_ANSWER: &[u8] = &[
+            0x01, 0x02, 0x00, 0x00,
+            0xA1, 0x0F, 0x02, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x26, 0x05, 0x3F,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07,
+            0x52, 0x49, 0x54, 0x45, 0x4B, 0x00, 0x00, 0x00,
+            0x46, 0x31, 0x36,
+            0x01, 0x38,
+            0x23, 0x54, 0x37, 0x12,
+        ];
+
+        /// The physical format answer of the same drive, with the same block
+        /// copied into it.
+        const PIONEER_PHYSICAL_ANSWER: &[u8] = &[
+            0x08, 0x02, 0x00, 0x00,
+            0x01, 0x0F, 0x02, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x26, 0x05, 0x3F,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07,
+            0x52, 0x49, 0x54, 0x45, 0x4B, 0x00, 0x00, 0x00,
+            0x46, 0x31, 0x36,
+            0x01, 0x38,
+            0x23, 0x54, 0x00, 0x00,
+        ];
+
         #[test]
         fn a_dvd_plus_disc_names_itself_in_adip() {
             assert_eq!(parse_adip_id(DVD_PLUS_STRUCTURE).as_deref(), Some("RITEK F16"));
             // The same structure holds no table of records, so the DVD-R reader
             // finds nothing in it.
             assert_eq!(parse_medium_id(DVD_PLUS_STRUCTURE), None);
+        }
+
+        /// A drive that knows the ADIP format answers it, and the code is
+        /// where the block says it is.
+        #[test]
+        fn the_adip_answer_of_a_drive_that_knows_the_format() {
+            assert_eq!(parse_adip_id(PIONEER_ADIP_ANSWER).as_deref(), Some("RITEK F16"));
+            // The same drive hands out the same block in the physical format.
+            assert_eq!(parse_adip_id(PIONEER_PHYSICAL_ANSWER).as_deref(), Some("RITEK F16"));
+        }
+
+        /// Where the drive puts the block is up to the drive: one that copies
+        /// it into the media specific area of the structure it reports puts it
+        /// further along, and the code has to be found there too.
+        #[test]
+        fn the_adip_code_is_found_wherever_the_drive_puts_it() {
+            let mut copied = vec![0u8; 16];
+            copied.extend_from_slice(ADIP_BLOCK);
+            assert_eq!(parse_adip_id(&copied).as_deref(), Some("RITEK F16"));
+            // And further along again.
+            let mut later = vec![0u8; 40];
+            later.extend_from_slice(ADIP_BLOCK);
+            assert_eq!(parse_adip_id(&later).as_deref(), Some("RITEK F16"));
+        }
+
+        /// A block that does not have the shape of a code is not a code, and a
+        /// disc whose code cannot be read is left unnamed rather than named
+        /// wrongly.
+        #[test]
+        fn a_block_that_does_not_fit_is_not_read_as_a_code() {
+            // Without the count of the bytes the block uses.
+            let mut no_count = PIONEER_ADIP_ANSWER.to_vec();
+            no_count[35] = 0x00;
+            assert_eq!(parse_adip_id(&no_count), None);
+
+            // With a revision no block carries.
+            let mut odd_revision = PIONEER_ADIP_ANSWER.to_vec();
+            odd_revision[34] = 0x1F;
+            assert_eq!(parse_adip_id(&odd_revision), None);
+
+            // With a maker that is not text.
+            let mut odd_maker = PIONEER_ADIP_ANSWER.to_vec();
+            odd_maker[23] = 0x01;
+            assert_eq!(parse_adip_id(&odd_maker), None);
+        }
+
+        /// A DVD+R is asked for ADIP first, because that is where the standard
+        /// keeps its code, and for the physical format only after that.
+        #[test]
+        fn a_dvd_plus_disc_is_asked_for_adip_first() {
+            assert_eq!(media_id_formats("DVD+R"), &[0x11, 0x00]);
+            assert_eq!(media_id_formats("DVD+RW"), &[0x11, 0x00]);
+            assert_eq!(media_id_formats("DVD+R DL"), &[0x11, 0x00]);
+            // A DVD-R keeps its code in a table of records, and only the physical
+            // format has one.
+            assert_eq!(media_id_formats("DVD-R"), &[0x00]);
+            assert_eq!(media_id_formats("CD-R"), &[0x00]);
         }
 
         #[test]
