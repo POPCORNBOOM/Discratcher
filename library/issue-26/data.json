@@ -1,0 +1,21 @@
+{
+  "driveModel": "MATSHITA DVD-RAM SW810 8.05",
+  "mediaId": "",
+  "stamperCode": "DR5F6O-PW104",
+  "brand": "RIDATA",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.063109089576457,
+  "outerRadiusMm": 58.1981016547975,
+  "pitchLinear": 0.0000017436570044428208,
+  "pitchQuadratic": -0.000008463857597729454,
+  "pitchCubic": 0.000009195641910226954,
+  "basePitchUm": 0.745308004673948,
+  "rmsResidualDeg": 0.1874788652850184,
+  "measuredSpanMm": [
+    25.203080894460435,
+    57.22494074080563
+  ],
+  "createdAt": "2026-11-12T12:41:00.217Z",
+  "id": "issue-26"
+}

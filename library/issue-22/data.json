@@ -1,0 +1,21 @@
+{
+  "driveModel": "TSSTcorp DVD+-RW TS-L633C DW50",
+  "mediaId": "",
+  "stamperCode": "CPDR47G-CSMWP03-1239 39M00005",
+  "brand": "联想thinkplus",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.157953515295947,
+  "outerRadiusMm": 57.88114311167101,
+  "pitchLinear": 0.0003050921130870978,
+  "pitchQuadratic": -0.0007664179499570739,
+  "pitchCubic": 0.0005278098700814983,
+  "basePitchUm": 0.7343068417547537,
+  "rmsResidualDeg": 0.5784877064259176,
+  "measuredSpanMm": [
+    25.27724916425819,
+    56.91703791105777
+  ],
+  "createdAt": "2026-11-13T16:17:05.800Z",
+  "id": "issue-22"
+}

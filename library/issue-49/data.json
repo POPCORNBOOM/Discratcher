@@ -1,0 +1,21 @@
+{
+  "driveModel": "HL-DT-ST DVD+-RW GHB0N A1B0",
+  "mediaId": "",
+  "stamperCode": "CPDR47G-CSMWP03-6813 13AA0578",
+  "brand": "联想",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.90654434079474,
+  "outerRadiusMm": 57.96183019142481,
+  "pitchLinear": 0.00008509744131960365,
+  "pitchQuadratic": -0.00022460130319920335,
+  "pitchCubic": 0.00016147894952814516,
+  "basePitchUm": 0.7400108712086069,
+  "rmsResidualDeg": 0.33327949242007116,
+  "measuredSpanMm": [
+    25.04567599761876,
+    56.991601093430326
+  ],
+  "createdAt": "2026-11-19T10:34:07.572Z",
+  "id": "issue-49"
+}

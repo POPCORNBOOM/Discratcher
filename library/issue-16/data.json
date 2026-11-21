@@ -1,0 +1,21 @@
+{
+  "driveModel": "ASUS SDRW-08V1M-U B101",
+  "mediaId": "",
+  "stamperCode": "CPDR47G-CSMWP03-6813",
+  "brand": "联想",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.906536429895795,
+  "outerRadiusMm": 57.96179970670045,
+  "pitchLinear": 0.00007985161046357981,
+  "pitchQuadratic": -0.00018881083573998045,
+  "pitchCubic": 0.00012103055599928212,
+  "basePitchUm": 0.7400109298037167,
+  "rmsResidualDeg": 1.5183417418123195,
+  "measuredSpanMm": [
+    25.045685171081583,
+    56.99161725034426
+  ],
+  "createdAt": "2026-11-12T12:22:38.062Z",
+  "id": "issue-16"
+}

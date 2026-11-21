@@ -1,0 +1,21 @@
+{
+  "driveModel": "HL-DT-ST BD-RE BP71N 1.03",
+  "mediaId": "MILLENIA 001",
+  "stamperCode": "VR5MDS-00003-19",
+  "brand": "TRAXDATA",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.920089842502584,
+  "outerRadiusMm": 57.87084287436892,
+  "pitchLinear": -0.000060591327607598245,
+  "pitchQuadratic": 0.00018214570786839816,
+  "pitchCubic": -0.00014777163369302003,
+  "basePitchUm": 0.737053178190677,
+  "rmsResidualDeg": 0.28410431980812734,
+  "measuredSpanMm": [
+    25.05415306314238,
+    56.90309847522251
+  ],
+  "createdAt": "2026-11-15T02:54:10.066Z",
+  "id": "issue-30"
+}

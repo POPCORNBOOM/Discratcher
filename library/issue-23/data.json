@@ -1,0 +1,21 @@
+{
+  "driveModel": "TSSTcorp CDDVDW TS-H653J LJ01",
+  "mediaId": "",
+  "stamperCode": "Moserbaer-516S 003 030202",
+  "brand": "",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.911434309595677,
+  "outerRadiusMm": 57.90310809918288,
+  "pitchLinear": -0.000028056164611009577,
+  "pitchQuadratic": 0.00006890697442723886,
+  "pitchCubic": -0.0000460351433478184,
+  "basePitchUm": 0.7381510857419498,
+  "rmsResidualDeg": 0.07927990639940068,
+  "measuredSpanMm": [
+    25.04754058635481,
+    56.93439525085607
+  ],
+  "createdAt": "2026-11-13T15:12:59.043Z",
+  "id": "issue-23"
+}

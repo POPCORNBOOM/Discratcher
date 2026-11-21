@@ -1,0 +1,21 @@
+{
+  "driveModel": "LITEON DH-16AFSH PREMM2 NV9X",
+  "mediaId": "MCC 03RG20",
+  "stamperCode": "MCC 03RG20",
+  "brand": "CopyLife",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 23.93135573559526,
+  "outerRadiusMm": 57.95507540584851,
+  "pitchLinear": -0.000005296214208580659,
+  "pitchQuadratic": 0.000013841079344522236,
+  "pitchCubic": -0.000009710524793754208,
+  "basePitchUm": 0.7394946150848065,
+  "rmsResidualDeg": 0.11674723491308324,
+  "measuredSpanMm": [
+    25.06858076638505,
+    56.985462024901594
+  ],
+  "createdAt": "2026-11-17T11:26:36.733Z",
+  "id": "issue-36"
+}

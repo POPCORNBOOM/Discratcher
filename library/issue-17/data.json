@@ -1,0 +1,22 @@
+{
+  "driveModel": "HL-DT-ST DVDRAM GUD1N 1.01",
+  "mediaId": "",
+  "stamperCode": "RFD80M-79243",
+  "brand": "M&G",
+  "media": "cd",
+  "totalSectors": 359779,
+  "channelBitLengthNm": 277.66208524226016,
+  "innerRadiusMm": 24.92149398095895,
+  "outerRadiusMm": 57.83465001298511,
+  "pitchLinear": 0.0002298197427726937,
+  "pitchQuadratic": -0.0005704052656581839,
+  "pitchCubic": 0.0003850462370725724,
+  "basePitchUm": 1.4864645201040068,
+  "rmsResidualDeg": 0.17653814435290946,
+  "measuredSpanMm": [
+    25.99167931907393,
+    56.88490935302352
+  ],
+  "createdAt": "2026-11-12T15:52:35.039Z",
+  "id": "issue-17"
+}

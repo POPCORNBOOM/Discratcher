@@ -1,0 +1,21 @@
+{
+  "driveModel": "HL-DT-ST DVDRAM GUD1N 1.01",
+  "mediaId": "RITEK F16",
+  "stamperCode": "VR5F16-01294",
+  "brand": "RiTEK",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.04819171561359,
+  "outerRadiusMm": 58.02648539410113,
+  "pitchLinear": 0.000029787767002128376,
+  "pitchQuadratic": -0.00007586990915090608,
+  "pitchCubic": 0.00005228074175583158,
+  "basePitchUm": 0.7402026444599528,
+  "rmsResidualDeg": 0.12484862997712068,
+  "measuredSpanMm": [
+    25.181202798168577,
+    57.0571423824852
+  ],
+  "createdAt": "2026-11-18T04:06:45.808Z",
+  "id": "issue-44"
+}

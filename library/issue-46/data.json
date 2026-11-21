@@ -1,0 +1,21 @@
+{
+  "driveModel": "HL-DT-ST DVDRAM GUD1N 1.01",
+  "mediaId": "MKM A02",
+  "stamperCode": "14AA0412",
+  "brand": "unis",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 23.980267491074905,
+  "outerRadiusMm": 57.99216791861617,
+  "pitchLinear": 0.000008279154506836382,
+  "pitchQuadratic": 0.000024301274258633765,
+  "pitchCubic": -0.000051622413213776247,
+  "basePitchUm": 0.7400149905236585,
+  "rmsResidualDeg": 0.5787141920742933,
+  "measuredSpanMm": [
+    27.36519919849514,
+    57.022520890625835
+  ],
+  "createdAt": "2026-11-18T07:32:53.735Z",
+  "id": "issue-46"
+}

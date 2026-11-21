@@ -1,0 +1,21 @@
+{
+  "driveModel": "Min Yi U YZWY_TECH 10D1",
+  "mediaId": "",
+  "stamperCode": "CMDR47G-CFMWM03-6865",
+  "brand": "中环",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.966301688067,
+  "outerRadiusMm": 57.92540372242239,
+  "pitchLinear": 0.00007551189205438262,
+  "pitchQuadratic": -0.00018779790014208873,
+  "pitchCubic": 0.000127202385307051,
+  "basePitchUm": 0.7381321131980242,
+  "rmsResidualDeg": 0.3747189272440288,
+  "measuredSpanMm": [
+    25.099904316049074,
+    56.95706465485288
+  ],
+  "createdAt": "2026-11-12T19:44:40.952Z",
+  "id": "issue-18"
+}

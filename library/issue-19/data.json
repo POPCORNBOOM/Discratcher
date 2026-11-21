@@ -1,0 +1,21 @@
+{
+  "driveModel": "HL-DT-ST DVD+-RW GU90N A1C2",
+  "mediaId": "",
+  "stamperCode": "CPDR47G-CSMWP03-1239 393T1411",
+  "brand": "Lenovo",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.157939411755784,
+  "outerRadiusMm": 57.881151984935094,
+  "pitchLinear": 0.0003000404508349229,
+  "pitchQuadratic": -0.0007681186968671006,
+  "pitchCubic": 0.0005339904534137256,
+  "basePitchUm": 0.7343084914939711,
+  "rmsResidualDeg": 0.4828080565646598,
+  "measuredSpanMm": [
+    25.277255732593886,
+    56.91702026700137
+  ],
+  "createdAt": "2026-11-13T06:36:15.878Z",
+  "id": "issue-19"
+}
