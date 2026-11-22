@@ -99,6 +99,8 @@ cargo test -p disc-core --release
 
 ## 标定库
 
+<a href="https://github.com/POPCORNBOOM/Discratcher/issues?q=label%3Acalibration"><img src="https://raw.githubusercontent.com/POPCORNBOOM/Discratcher/catalog/library.zh.svg" alt="标定库：标定数量和更新时间" width="420"></a>
+
 标定数据来自本仓库带 `calibration` 标签的 Issue。Issue 变化时，工作流把它们发布到 `catalog` 分支：`index.json` 只有搜索要用的字段（名字、编号、评分），应用同步一次就能在本地过滤，输入时不用再联网；每份标定各占一个 `library/issue-<编号>/` 目录，`data.json` 是几何参数，`ratings.json` 是「账号 → 分数」的字典，`media.json` 是 Issue 里贴的图片地址——只有真的下载那一份时才会取它。两种文件都不需要账号。旧的 `catalog.json` 仍在发布，留给 0.1.4 及更早的版本。
 
 - **贡献**：标定参数须先完成一次实际刻录才能分享。应用会打开填好的 Issue 表单，提交由你在 GitHub 上确认，应用不存任何 token。表单里可以拖入原图和效果图；提交后同步进标定库，Issue 随即自动关闭。

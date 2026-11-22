@@ -42,6 +42,8 @@ jobs:
           # The app searches the index and fetches one folder only to download that calibration.
           jq -n --slurpfile c calibrations.json --slurpfile r ratings.json -f .github/catalog.jq > library.json
           jq .index library.json > site/index.json
+          # The README shows how many calibrations there are and when the last one came in.
+          node .github/catalog-card.mjs site/index.json site
           jq -r '.files | to_entries[] | [.key, (.value | tojson)] | @tsv' library.json |
             while IFS=$'\t' read -r path json; do
               mkdir -p "site/$(dirname "$path")"
