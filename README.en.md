@@ -17,6 +17,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/POPCORNBOOM/Discratcher/issues?q=label%3Acalibration"><img src="https://raw.githubusercontent.com/POPCORNBOOM/Discratcher/catalog/library.en.svg" alt="Calibration library: number of calibrations and last update" width="420"></a>
+</p>
+
+<p align="center">
   <img src="docs/carve.webp" alt="Preview in the app" height="300">
   &nbsp;
   <img src="docs/print.webp" alt="The burned disc" height="300">
@@ -98,8 +102,6 @@ cargo test -p disc-core --release
 The core logic lives in `crates/disc-core` and does not depend on Tauri; `src-tauri` is only a command shell.
 
 ## Calibration library
-
-<a href="https://github.com/POPCORNBOOM/Discratcher/issues?q=label%3Acalibration"><img src="https://raw.githubusercontent.com/POPCORNBOOM/Discratcher/catalog/library.en.svg" alt="Calibration library: number of calibrations and last update" width="420"></a>
 
 Calibration data comes from issues labelled `calibration` in this repository. When they change, a workflow publishes them to the `catalog` branch: `index.json` holds only what searching needs (names, codes, ratings), so the app syncs it once and filters locally without touching the network per keystroke. Each calibration then gets its own `library/issue-<number>/` folder: `data.json` is the geometry, `ratings.json` maps an account to its score, and `media.json` lists the pictures dropped into the issue — fetched only when that one calibration is downloaded. Neither file needs an account, and the old `catalog.json` is still published for 0.1.4 and earlier.
 
