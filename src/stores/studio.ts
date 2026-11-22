@@ -26,6 +26,8 @@ export const useStudio = defineStore('studio', () => {
   const drives = ref<OpticalDriveInfo[]>([])
   /** The system stopped answering about drives, so an empty list proves nothing. */
   const driveStuck = ref(false)
+  /** The drive is busy with a disc it struggles to read and is being left alone a while. */
+  const driveBusy = ref(false)
   const presets = ref<DiscGeometryPreset[]>([])
   const driveKey = ref('')
   const presetId = ref('')
@@ -71,7 +73,7 @@ export const useStudio = defineStore('studio', () => {
   // changes kind and exactly one calibration fits it, that one is selected.
   watch(
     // The calibrations may load after the drive is first seen.
-    [() => (drive.value?.mediaPresent && drive.value.supported ? isCd(drive.value) : null), () => presets.value.length] as const,
+    [() => (drive.value && drive.value.disc !== 'none' && drive.value.disc !== 'unsupported' ? isCd(drive.value) : null), () => presets.value.length] as const,
     ([cd]) => {
       if (cd === null || (preset.value?.media === 'cd') === cd) return
       const fits = presets.value.filter((p) => (p.media === 'cd') === cd)
@@ -106,19 +108,39 @@ export const useStudio = defineStore('studio', () => {
     view.value = to
   }
 
+  /** The disc in the drive can be written over, so a bad burn costs time rather than a disc. */
+
   function keyOf(d: OpticalDriveInfo) {
     return d.id || `${d.vendor}/${d.product}`
   }
 
-  async function refreshDrives() {
+  /** Answers in a row without a drive before it counts as gone. */
+  const MISSES_BEFORE_GONE = 3
+  let misses = 0
+  /** `fresh` asks the drive about the disc even when it is the one already known: worth it
+   *  for a user's refresh or the end of a job, not for the poll, which a slow disc would cost. */
+  async function refreshDrives(fresh = false) {
+    let found: OpticalDriveInfo[] = []
+    let stuck = false
     try {
-      drives.value = await call<OpticalDriveInfo[]>('list_optical_drives')
-      driveStuck.value = false
-    } catch {
-      // The system stopped answering about drives: the drive may well be plugged in.
-      drives.value = []
-      driveStuck.value = true
+      found = await call<OpticalDriveInfo[]>('list_optical_drives', { fresh })
+      driveBusy.value = false
+    } catch (e) {
+      // Busy with its disc: the drive and disc are still what they were.
+      if (String(e) === 'busy') {
+        driveBusy.value = true
+        if (drives.value.length) return
+      } else {
+        // The system stopped answering about drives: the drive may well be plugged in.
+        stuck = true
+      }
     }
+    // A drive busy with a bad sector, or just let go by a job, misses an answer or two
+    // without being gone: keep what was known, and only believe it gone when it stays so.
+    if (!found.length && drives.value.length && ++misses < MISSES_BEFORE_GONE) return
+    if (found.length) misses = 0
+    drives.value = found
+    driveStuck.value = stuck
     // A real drive's key changes with its disc, and the drive can drop out of the list
     // for a moment while one is swapped.
     if (!drive.value && drives.value.length) driveKey.value = keyOf(drives.value[0])
@@ -141,7 +163,8 @@ export const useStudio = defineStore('studio', () => {
       const m = String(e)
       if (m !== CANCELLED) {
         error.value = m
-        notifyError(m)
+        // The process page shows its own failure; the title bar only speaks when it is not in view.
+        if (view.value !== 'process') notifyError(m)
       }
       return null
     } finally {
@@ -149,5 +172,5 @@ export const useStudio = defineStore('studio', () => {
     }
   }
 
-  return { view, drives, driveStuck, presets, driveKey, presetId, drive, preset, config, error, job, carve, carveReady, canBack, origin, back, pendingCode, discPreview, discZoom, discPan, discRendered, codeFocus, keyOf, refreshDrives, refreshPresets, run }
+  return { view, drives, driveStuck, driveBusy, presets, driveKey, presetId, drive, preset, config, error, job, carve, carveReady, canBack, origin, back, pendingCode, discPreview, discZoom, discPan, discRendered, codeFocus, keyOf, refreshDrives, refreshPresets, run }
 })

@@ -37,11 +37,11 @@ impl Media {
     /// A closed CD-R answers as a CD-ROM (seen on the GUD1N straight after a burn), and a
     /// closed DVD-R as a DVD-ROM (a LITEON DH-16AFSH, #38), so those names have to pass or
     /// a calibration disc could never be measured. Nothing is burned on one: it is never
-    /// blank.
+    /// blank. CD-RW is left out: it did not carve reliably.
     pub fn of_type(media_type: &str) -> Option<Self> {
         match media_type.trim() {
             "DVD-R" | "DVD+R" | "DVD-RW" | "DVD+RW" | "DVD-ROM" => Some(Self::Dvd),
-            "CD-R" | "CD-RW" | "CD-ROM" => Some(Self::Cd),
+            "CD-R" | "CD-ROM" => Some(Self::Cd),
             _ => None,
         }
     }

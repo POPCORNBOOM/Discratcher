@@ -59,6 +59,8 @@ uniform vec2 uArtTurn;
 uniform int uLayers;
 uniform vec4 uLayerA[MAX_LAYERS];
 uniform vec4 uLayerB[MAX_LAYERS];
+uniform vec4 uLayerC[MAX_LAYERS];
+uniform vec4 uLayerD[MAX_LAYERS];
 uniform float uCodeLight;
 uniform vec3 uDye;
 uniform sampler2D uEtchA;
@@ -133,7 +135,7 @@ vec3 backdrop(vec2 p) {
 // in artwork.rs. xy is in disc units with y up. uArtGeo holds the recorded band's inner and
 // outer radius and the guard's floor. Per layer, bottom first, uLayerA holds the centre (a
 // share of the diameter, y down) and the turn's cosine and sine; uLayerB the picture's
-// width and height as shares of the diameter, the contrast gain and invert.
+// width and height as shares of the diameter, the contrast gain and invert; uLayerC the brightness shift (a share of the grey range), whether it is pixelated and the picture's own pixel size; uLayerD the tile grid: the share of a cell a tile fills (0 when the layer does not repeat), its turn in radians, and the row stagger.
 vec2 carvedAt(vec2 xy) {
   float r = length(xy) * DISC_MM;
   // uArtTurn: how far the disc has turned since the burn began, and the radius written so far.
@@ -141,13 +143,30 @@ vec2 carvedAt(vec2 xy) {
   xy = mat2(tc, -ts, ts, tc) * xy;
   vec2 p = vec2(xy.x, -xy.y) * DISC_MM / (2.0 * uArtGeo.y);
   float grey = 1.0;
+  // Tiling and pixel snapping jump in uv; the texture's own filtering reads the unbroken slope.
+  vec2 dpx = dFdx(p), dpy = dFdy(p);
   for (int i = 0; i < MAX_LAYERS; i++) {
     if (i >= uLayers) break;
-    vec4 a = uLayerA[i], b = uLayerB[i];
+    vec4 a = uLayerA[i], b = uLayerB[i], c = uLayerC[i], e = uLayerD[i];
     vec2 d = p - a.xy;
+    if (e.x > 0.0) {
+      vec2 cell = b.xy / e.x;
+      float gc = cos(e.y), gs = sin(e.y);
+      vec2 g = vec2(gc * d.x + gs * d.y, -gs * d.x + gc * d.y);
+      float row = floor(g.y / cell.y + 0.5);
+      g.x -= mod(row, 2.0) * e.z * cell.x;
+      g.x -= floor(g.x / cell.x + 0.5) * cell.x;
+      g.y -= row * cell.y;
+      d = vec2(gc * g.x - gs * g.y, gs * g.x + gc * g.y);
+    }
     vec2 uv = vec2(a.z * d.x + a.w * d.y, -a.w * d.x + a.z * d.y) / b.xy + 0.5;
-    vec2 t = texture(uArt, vec3(uv, float(i))).rg;
-    float y = clamp((t.r * 255.0 - 128.0) * b.z + 128.0, 0.0, 255.0) / 255.0;
+    vec2 duvx = vec2(a.z * dpx.x + a.w * dpx.y, -a.w * dpx.x + a.z * dpx.y) / b.xy;
+    vec2 duvy = vec2(a.z * dpy.x + a.w * dpy.y, -a.w * dpy.x + a.z * dpy.y) / b.xy;
+    vec2 at = uv;
+    // The texture is the picture stretched to a square, so the centre of a source pixel is still its own value.
+    if (c.y > 0.5) at = (clamp(floor(uv * c.zw), vec2(0.0), c.zw - 1.0) + 0.5) / c.zw;
+    vec2 t = textureGrad(uArt, vec3(at, float(i)), duvx, duvy).rg;
+    float y = clamp((t.r * 255.0 - 128.0) * b.z + 128.0 + c.x * 255.0, 0.0, 255.0) / 255.0;
     y = mix(y, 1.0 - y, b.w);
     float inside = step(0.0, uv.x) * step(0.0, uv.y) * step(uv.x, 1.0) * step(uv.y, 1.0);
     grey = mix(grey, y, t.g * inside);
@@ -358,7 +377,18 @@ export interface ArtLayer {
   height: number
   rotationRad: number
   contrast: number
+  /** -100 to 100, added after the contrast. */
+  brightness: number
   invert: boolean
+  /** Sample the nearest pixel; the picture's own pixel size is `pixelsW` by `pixelsH`. */
+  pixelated: boolean
+  pixelsW: number
+  pixelsH: number
+  /** Share of a grid cell a tile fills, 0 to 1; 0 when the picture does not repeat. */
+  repeat: number
+  repeatAngleRad: number
+  /** Share of a tile every other row slides along. */
+  repeatStagger: number
 }
 
 export interface ArtPlacement {
@@ -439,7 +469,7 @@ export function createDiscRenderer(canvas: HTMLCanvasElement) {
   const u = {
     res: at('uRes'), rot: at('uRot'), center: at('uCenter'), pointer: at('uPointer'), spin: at('uSpin'), time: at('uTime'),
     scale: at('uScale'), win: at('uWin'), pitch: at('uPitch'), seed: at('uSeed'), dim: at('uDim'), fx: at('uFx'), etchMix: at('uEtchMix'), artMix: at('uArtMix'),
-    artGeo: at('uArtGeo'), artTurn: at('uArtTurn'), layers: at('uLayers'), layerA: at('uLayerA'), layerB: at('uLayerB'), codeLight: at('uCodeLight'), dye: at('uDye'), etchA: at('uEtchA'), etchB: at('uEtchB'), art: at('uArt'),
+    artGeo: at('uArtGeo'), artTurn: at('uArtTurn'), layers: at('uLayers'), layerA: at('uLayerA'), layerB: at('uLayerB'), layerC: at('uLayerC'), layerD: at('uLayerD'), codeLight: at('uCodeLight'), dye: at('uDye'), etchA: at('uEtchA'), etchB: at('uEtchB'), art: at('uArt'),
   }
   gl.uniform1i(u.art, 2)
 
@@ -471,6 +501,8 @@ export function createDiscRenderer(canvas: HTMLCanvasElement) {
     if (shown.length) {
       gl!.uniform4fv(u.layerA, shown.flatMap((l) => [l.x, l.y, Math.cos(l.rotationRad), Math.sin(l.rotationRad)]))
       gl!.uniform4fv(u.layerB, shown.flatMap((l) => [l.width || 1, l.height || 1, contrastGain(l.contrast), l.invert ? 1 : 0]))
+      gl!.uniform4fv(u.layerC, shown.flatMap((l) => [Math.min(100, Math.max(-100, l.brightness || 0)) / 100, l.pixelated ? 1 : 0, Math.max(1, l.pixelsW), Math.max(1, l.pixelsH)]))
+      gl!.uniform4fv(u.layerD, shown.flatMap((l) => [l.repeat, l.repeatAngleRad, l.repeatStagger, 0]))
     }
     gl!.uniform1f(u.codeLight, s.codeLight)
     gl!.uniform1i(u.etchA, front)

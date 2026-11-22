@@ -11,9 +11,21 @@ const POLL: Duration = Duration::from_millis(100);
 /// How long the tool gets to shut down before it is killed outright.
 const TERMINATE_GRACE: Duration = Duration::from_secs(10);
 
+/// Which part of the burn a progress report belongs to. A rewritable disc that has been
+/// written is erased first, by a tool of its own, and its progress must never pass for the
+/// write's: the page reveals the picture on the disc as the write goes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BurnPhase {
+    Erase,
+    #[default]
+    Write,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BurnProgress {
+    pub phase: BurnPhase,
     pub percent: Option<f64>,
     pub message: String,
 }
@@ -27,10 +39,10 @@ pub fn parse_hdiutil_line(line: &str) -> Option<BurnProgress> {
     // The man page says PERCENTAGE, hdiutil has been seen printing PERCENT: take either.
     if let Some(v) = line.strip_prefix("PERCENTAGE:").or_else(|| line.strip_prefix("PERCENT:")) {
         let p: f64 = v.trim().parse().ok()?;
-        return Some(BurnProgress { percent: (p >= 0.0).then_some(p), message: String::new() });
+        return Some(BurnProgress { percent: (p >= 0.0).then_some(p), ..Default::default() });
     }
     let msg = line.strip_prefix("MESSAGE:").unwrap_or(line).trim();
-    Some(BurnProgress { percent: None, message: msg.to_string() })
+    Some(BurnProgress { message: msg.to_string(), ..Default::default() })
 }
 
 /// IMAPI_FORMAT2_DATA_WRITE_ACTION_FINALIZATION: from here on every sector is on the disc.
@@ -44,12 +56,11 @@ pub fn wrote_everything(furthest_action: i64, last_lba: i64, sectors: i64) -> bo
 }
 
 /// Command line for the platforms that burn with an external tool. Windows burns in process
-/// through IMAPI2 instead, so this is only reached from macOS and Linux. `erase` asks the
-/// tool to erase a rewritable disc first; it comes from a drive the app listed as reusable.
-pub fn burn_command(drive_id: &str, iso: &str, speed: u8, verify: bool, erase: bool) -> Result<Vec<String>, String> {
+/// through IMAPI2 instead, so this is only reached from macOS and Linux.
+pub fn burn_command(drive_id: &str, iso: &str, speed: u8, verify: bool) -> Result<Vec<String>, String> {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        let _ = (drive_id, iso, speed, verify, erase);
+        let _ = (drive_id, iso, speed, verify);
         return Err("这个平台没有刻录后端".into());
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -57,11 +68,6 @@ pub fn burn_command(drive_id: &str, iso: &str, speed: u8, verify: bool, erase: b
     #[cfg(target_os = "macos")]
     {
         let mut a = vec!["hdiutil".to_string(), "burn".into(), iso.into(), "-puppetstrings".into(), "-speed".into(), speed.to_string()];
-        // Quick erase of a CD-RW, DVD-RW or DVD+RW: the only way a written rewritable
-        // disc can be burned again. Nothing else in the app erases anything.
-        if erase {
-            a.push("-erase".into());
-        }
         if !verify {
             a.push("-noverifyburn".into());
         }
@@ -71,13 +77,24 @@ pub fn burn_command(drive_id: &str, iso: &str, speed: u8, verify: bool, erase: b
     {
         let mut a = vec!["growisofs".to_string(), "-dvd-compat".into(), format!("-speed={speed}")];
         // growisofs overwrites a DVD+RW by itself; nothing here erases anything yet.
-        let _ = (verify, erase);
+        let _ = verify;
         a.push("-Z".into());
         a.push(format!("{drive_id}={iso}"));
         return Ok(a);
     }
     #[allow(unreachable_code)]
     Err("这个平台没有刻录后端".into())
+}
+
+/// Command line for the quick erase a written rewritable disc needs before it can be
+/// burned again. Only macOS gets here: it is the one platform whose drives are listed as
+/// reusable. diskutil leaves the disc in the drive, where drutil's erase ejects it.
+pub fn erase_command(drive_id: &str) -> Result<Vec<String>, String> {
+    if cfg!(target_os = "macos") {
+        Ok(["diskutil", "eraseOptical", "quick", drive_id].map(String::from).to_vec())
+    } else {
+        Err("这个平台不能擦除光盘".into())
+    }
 }
 
 /// Asks the tool to stop, so it can release the drive itself.
@@ -88,10 +105,36 @@ fn terminate(child: &mut Child) {
     let _ = child.kill();
 }
 
-/// Blocks until the tool exits. Its own error text goes back unchanged: a refused drive
-/// or medium is reported better there than anything guessed here. Setting `cancel` stops
-/// the burn and returns `已取消`; a disc stopped mid-write is lost.
+/// Burns, reporting hdiutil's puppet strings as the write's progress. Blocks until the tool
+/// exits. Setting `cancel` stops the burn and returns `已取消`; a disc stopped mid-write is
+/// lost.
 pub fn burn(argv: &[String], cancel: &AtomicBool, on_progress: &mut dyn FnMut(BurnProgress)) -> Result<(), String> {
+    run(argv, cancel, &mut |line| {
+        if let Some(p) = parse_hdiutil_line(line) {
+            on_progress(p);
+        }
+    })
+    .map_err(|e| said("刻录失败", e))
+}
+
+/// The tool's own words, under a heading that says which step they are about: hdiutil and
+/// diskutil answer in English, and the page shows the error as it is.
+fn said(what: &str, e: String) -> String {
+    if e == "已取消" || e.starts_with(what) { e } else { format!("{what}：{e}") }
+}
+
+/// Erases, reporting one message and no percentage: diskutil draws its progress as a bar
+/// on a single line, which only arrives once the erase is over. The erase cannot be
+/// stopped once started; `cancel` only stops waiting for it, and nothing is burned after.
+pub fn erase(argv: &[String], cancel: &AtomicBool, on_progress: &mut dyn FnMut(BurnProgress)) -> Result<(), String> {
+    on_progress(BurnProgress { phase: BurnPhase::Erase, percent: None, message: "正在擦除光盘…".into() });
+    run(argv, cancel, &mut |_| {}).map_err(|e| said("擦除失败", e))
+}
+
+/// Runs a tool to the end, handing each line it prints to `on_line`. Its own error text
+/// goes back unchanged: a refused drive or medium is reported better there than anything
+/// guessed here.
+fn run(argv: &[String], cancel: &AtomicBool, on_line: &mut dyn FnMut(&str)) -> Result<(), String> {
     let mut child = Command::new(&argv[0])
         .args(&argv[1..])
         .stdout(Stdio::piped())
@@ -116,12 +159,10 @@ pub fn burn(argv: &[String], cancel: &AtomicBool, on_progress: &mut dyn FnMut(Bu
     loop {
         match rx.recv_timeout(POLL) {
             Ok(line) => {
-                if let Some(p) = parse_hdiutil_line(&line) {
-                    if !p.message.is_empty() {
-                        last = p.message.clone();
-                    }
-                    on_progress(p);
+                if !line.trim().is_empty() {
+                    last = line.trim().strip_prefix("MESSAGE:").unwrap_or(line.trim()).to_string();
                 }
+                on_line(&line);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -179,23 +220,27 @@ mod tests {
     }
 
     #[test]
-    fn a_rewritable_disc_is_erased_by_the_burner_itself() {
+    fn the_erase_is_a_tool_of_its_own() {
         if !cfg!(target_os = "macos") {
+            assert!(erase_command("disk8").is_err());
             return;
         }
-        let plain = burn_command("disk8", "a.iso", 4, true, false).unwrap();
-        assert!(!plain.iter().any(|a| a == "-erase"), "{plain:?}");
-        let again = burn_command("disk8", "a.iso", 4, true, true).unwrap();
-        assert!(again.iter().any(|a| a == "-erase"), "{again:?}");
-        // Still one burn command: the erase is part of writing, not a step of its own.
-        assert_eq!(again[0], "hdiutil");
-        assert_eq!(again[1], "burn");
+        // The burn itself never erases: the erase runs first and reports as such.
+        let burn = burn_command("disk8", "a.iso", 4, true).unwrap();
+        assert!(!burn.iter().any(|a| a.contains("erase")), "{burn:?}");
+        assert_eq!(erase_command("disk8").unwrap(), ["diskutil", "eraseOptical", "quick", "disk8"]);
+        let mut seen = Vec::new();
+        erase(&["true".to_string()], &AtomicBool::new(false), &mut |p| seen.push(p)).unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!((seen[0].phase, seen[0].percent), (BurnPhase::Erase, None));
+        // And the write's progress says it is the write's.
+        assert_eq!(parse_hdiutil_line("PERCENT:3").unwrap().phase, BurnPhase::Write);
     }
 
     #[test]
     fn reports_tool_failure_text() {
         let argv = ["sh", "-c", "echo boom 1>&2; exit 3"].map(String::from);
-        assert_eq!(burn(&argv, &AtomicBool::new(false), &mut |_| {}).unwrap_err(), "boom");
+        assert_eq!(burn(&argv, &AtomicBool::new(false), &mut |_| {}).unwrap_err(), "刻录失败：boom");
     }
 
     #[test]

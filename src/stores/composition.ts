@@ -11,6 +11,9 @@ const snapshot = (layers: Layer[]) => JSON.stringify(layers)
 /** The size that lets a picture fill the disc, as one picture usually should. */
 export const coverSize = (l: Pick<Layer, 'width' | 'height'>) => Math.max(l.width, l.height) / Math.max(1, Math.min(l.width, l.height))
 
+/** What a layer from an older file lacks. */
+const NEW_EFFECTS = { pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0 }
+
 /** The pictures on the disc, their places, and the file they were saved to. */
 export const useComposition = defineStore('composition', () => {
   /** Bottom first. */
@@ -57,7 +60,8 @@ export const useComposition = defineStore('composition', () => {
       const first = layers.value.length === 0
       const l: Layer = {
         id: crypto.randomUUID(), path: file, name: fileName(file), width: a.width, height: a.height,
-        x: 0, y: 0, size: 0, rotationDeg: 0, invert: a.suggestInvert, contrast: 0,
+        x: 0, y: 0, size: 0, rotationDeg: 0, invert: a.suggestInvert, contrast: 0, brightness: 0,
+        pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0,
       }
       // The first picture fills the disc; later ones arrive smaller, on top.
       l.size = first ? coverSize(l) : 0.5
@@ -66,6 +70,19 @@ export const useComposition = defineStore('composition', () => {
     } catch (e) {
       notifyError(String(e))
     }
+  }
+
+  /** A copy just above the original, nudged aside so it can be told apart, and selected. */
+  function duplicate(id: string) {
+    const i = layers.value.findIndex((l) => l.id === id)
+    if (i < 0 || full.value) return
+    const copy: Layer = { ...layers.value[i], id: crypto.randomUUID() }
+    copy.x += 0.03
+    copy.y += 0.03
+    const next = [...layers.value]
+    next.splice(i + 1, 0, copy)
+    layers.value = next
+    selectedId.value = copy.id
   }
 
   function remove(id: string) {
@@ -92,7 +109,7 @@ export const useComposition = defineStore('composition', () => {
 
   async function open(file: string) {
     const opened = await call<Layer[]>('open_composition', { path: file })
-    layers.value = opened.slice(0, MAX_LAYERS).map((l) => ({ ...l, id: l.id || crypto.randomUUID() }))
+    layers.value = opened.slice(0, MAX_LAYERS).map((l) => ({ ...NEW_EFFECTS, ...l, brightness: l.brightness ?? 0, id: l.id || crypto.randomUUID() }))
     selectedId.value = ''
     path.value = file
     saved.value = snapshot(layers.value)
@@ -104,5 +121,5 @@ export const useComposition = defineStore('composition', () => {
     saved.value = snapshot(layers.value)
   }
 
-  return { layers, selectedId, selected, fields, pictures, path, dirty, loading, full, add, remove, restack, clear, open, save }
+  return { layers, selectedId, selected, fields, pictures, path, dirty, loading, full, add, duplicate, remove, restack, clear, open, save }
 })

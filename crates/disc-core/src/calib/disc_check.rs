@@ -2,7 +2,7 @@
 //! disc holds what was written, and whether a measured geometry is a DVD at all.
 //! Everything here only reads.
 
-use crate::drive::{list_drives, open_reader, open_timed, TimedDrive};
+use crate::drive::{list_drives, open_reader, open_timed, DiscUse, TimedDrive};
 use crate::ecma267::DEFAULT_TOTAL_SECTORS;
 use crate::media::Media;
 use crate::iso9660::{calibration_sector, CALIBRATION_VOLUME, FS_LAST_LBA};
@@ -24,32 +24,34 @@ pub enum DiscKind {
     Calibration,
     /// Written with something else; calibrating needs another disc.
     Other,
+    /// Its first sectors do not read: a bad burn, or one the drive has not settled on yet.
+    Unreadable,
 }
 
 /// What the drive holds, decided from its listing and, for a written disc, the volume
 /// descriptor at LBA 16.
 pub fn inspect(id: &str) -> Result<DiscKind, String> {
     let d = list_drives().into_iter().find(|d| d.id == id).ok_or_else(|| format!("找不到光驱 {id}"))?;
-    if !d.media_present {
-        return Ok(DiscKind::None);
-    }
-    if !d.supported {
-        return Ok(DiscKind::Unsupported);
-    }
-    if d.is_blank {
-        return Ok(DiscKind::Blank);
+    match d.disc {
+        DiscUse::None => return Ok(DiscKind::None),
+        DiscUse::Unsupported => return Ok(DiscKind::Unsupported),
+        DiscUse::Blank => return Ok(DiscKind::Blank),
+        DiscUse::Erasable | DiscUse::Written => {}
     }
     // A DVD's raw node counts in the 2048-byte sectors this reader addresses, so one can
     // be read without taking it off the desktop. A CD's counts in 2352, so a CD goes
     // through the timing path, which was written for its layout.
-    let mut drive = if Media::of_type(&d.media_type) == Some(Media::Dvd) {
-        open_reader(id)?
-    } else {
-        open_timed(id)?
-    };
-    Ok(match volume(drive.as_mut()) {
-        Some((label, _)) if label == CALIBRATION_VOLUME => DiscKind::Calibration,
-        _ => DiscKind::Other,
+    let opened = if Media::of_type(&d.media_type) == Some(Media::Dvd) { open_reader(id) } else { open_timed(id) };
+    let mut b = [0u8; 2048];
+    let read = opened.and_then(|mut drive| drive.read_sector(16, &mut b));
+    // Unreadable is its own answer, never "another disc": right after a burn the drive takes
+    // a while to read the disc, and a bad burn on a rewritable disc is simply burned again.
+    Ok(match read {
+        Ok(()) => match parse_pvd(&b) {
+            Some((label, _)) if label == CALIBRATION_VOLUME => DiscKind::Calibration,
+            _ => DiscKind::Other,
+        },
+        Err(_) => DiscKind::Unreadable,
     })
 }
 
@@ -82,6 +84,9 @@ pub struct DiscCheck {
     /// burned by another tool with the same label, such as disc-probe. Timing only needs
     /// readable sectors, so it is still measured.
     pub foreign: bool,
+    /// Spots that would not read at all, scattered rather than a missing tail: dust or a
+    /// smudge, which the measurement steps around on its own.
+    pub unreadable: u32,
 }
 
 /// LBAs to read: evenly from just past the file system to the last sector.
@@ -124,20 +129,63 @@ pub fn check_calibration_disc(
     let lbas = spot_lbas(sectors);
     let (mut matched, mut read) = (0usize, [0u8; 2048]);
     let mut expected = [0u8; 2048];
+    // Where each unreadable spot was, and the first error, to name it if it decides.
+    let mut failed: Vec<usize> = Vec::new();
+    let mut first_error = String::new();
     for (i, &lba) in lbas.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Err("已取消".into());
         }
-        drive.read_sector(lba, &mut read).map_err(|e| {
-            format!("在盘面约 {}% 处（LBA {lba}）读不出来，可能没刻完或有坏块：{e}", lba as u64 * 100 / sectors as u64)
-        })?;
-        calibration_sector(lba, sectors, &mut expected);
-        if read == expected {
-            matched += 1;
+        match drive.read_sector(lba, &mut read) {
+            Ok(()) => {
+                calibration_sector(lba, sectors, &mut expected);
+                if read == expected {
+                    matched += 1;
+                }
+            }
+            Err(e) => {
+                if failed.is_empty() {
+                    first_error = e;
+                }
+                failed.push(i);
+                // Two misses in a row may be where the burn stopped. Ask the last spot at
+                // once: if it is unreadable too, the tail is missing, and every spot in
+                // between would only hold the drive in minutes of retries (the GUD1N spends
+                // two to five on each), long enough for the system to give up on it.
+                let last = lbas.len() - 1;
+                if i + 1 < last && failed.len() >= 2 && failed[failed.len() - 2] + 1 == i && drive.read_sector(lbas[last], &mut read).is_err() {
+                    let at = lbas[i - 1];
+                    return Err(format!(
+                        "从盘面约 {}% 处（LBA {at}）往后都读不出来，可能没刻完：{first_error}",
+                        at as u64 * 100 / sectors as u64
+                    ));
+                }
+            }
         }
         progress((i + 1) as f64 * 100.0 / lbas.len() as f64);
     }
-    verdict(sectors, matched, lbas.len())
+    // A burn that stopped short leaves everything from some point on unreadable: the last
+    // spots fail together. Dust fails one spot here and there, and the measurement skips
+    // whatever it cannot read, so only a missing tail or a disc that hardly reads at all
+    // stops the calibration here.
+    let tail = failed.iter().rev().zip((0..lbas.len()).rev()).take_while(|(f, i)| *f == i).count();
+    if tail >= 2 {
+        let at = lbas[lbas.len() - tail];
+        return Err(format!(
+            "从盘面约 {}% 处（LBA {at}）往后都读不出来，可能没刻完：{first_error}",
+            at as u64 * 100 / sectors as u64
+        ));
+    }
+    if failed.len() * 4 > lbas.len() {
+        return Err(format!(
+            "抽查的 {} 个位置里有 {} 个读不出来，先擦干净盘面再试：{first_error}",
+            lbas.len(),
+            failed.len()
+        ));
+    }
+    let mut c = verdict(sectors, matched, lbas.len() - failed.len())?;
+    c.unreadable = failed.len() as u32;
+    Ok(c)
 }
 
 /// A calibration image far smaller than a DVD was made for another disc (issue #8: a
@@ -156,8 +204,8 @@ fn short_image(sectors: u32, media: Media) -> Option<String> {
 
 fn verdict(sectors: u32, matched: usize, read: usize) -> Result<DiscCheck, String> {
     match matched {
-        m if m == read => Ok(DiscCheck { sectors, foreign: false }),
-        0 => Ok(DiscCheck { sectors, foreign: true }),
+        m if m == read => Ok(DiscCheck { sectors, foreign: false, unreadable: 0 }),
+        0 => Ok(DiscCheck { sectors, foreign: true, unreadable: 0 }),
         m => Err(format!("抽查的 {read} 个扇区里有 {} 个内容不对，这张盘可能刻坏了", read - m)),
     }
 }
@@ -248,6 +296,43 @@ mod tests {
     }
 
     /// A disc that stops reading partway, as an unfinished burn does.
+    /// Dust: two spots far apart do not read, and everything else does.
+    struct Dusty(SimDrive, Vec<u32>);
+    impl TimedDrive for Dusty {
+        fn read_timed(&mut self, lba: u32, fua: bool) -> Result<TimedRead, String> {
+            self.0.read_timed(lba, fua)
+        }
+        fn capacity(&mut self) -> Result<u32, String> {
+            self.0.capacity()
+        }
+        fn read_sector(&mut self, lba: u32, buf: &mut [u8; 2048]) -> Result<(), String> {
+            if self.1.contains(&lba) {
+                return Err("SCSI 状态 0x02，sense 03/11/00".into());
+            }
+            self.0.read_sector(lba, buf)
+        }
+        fn supports_fua(&self) -> bool {
+            true
+        }
+        fn set_read_speed(&mut self, _: u16) -> Result<(), String> {
+            Ok(())
+        }
+        fn host_wait(&mut self, _: u64) {}
+    }
+
+    #[test]
+    fn a_little_dust_does_not_stop_the_calibration() {
+        let spots = spot_lbas(DEFAULT_TOTAL_SECTORS);
+        let mut d = Dusty(SimDrive::demo(), vec![spots[1], spots[17]]);
+        let c = check_calibration_disc(&mut d, Media::Dvd, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(c.unreadable, 2);
+        assert!(!c.foreign);
+        // A disc that hardly reads at all is still turned away.
+        let mut d = Dusty(SimDrive::demo(), spots.iter().step_by(3).copied().collect());
+        let e = check_calibration_disc(&mut d, Media::Dvd, &AtomicBool::new(false), &mut |_| {}).unwrap_err();
+        assert!(e.contains("擦干净"), "{e}");
+    }
+
     struct Unfinished(SimDrive, u32);
     impl TimedDrive for Unfinished {
         fn read_timed(&mut self, lba: u32, fua: bool) -> Result<TimedRead, String> {
@@ -269,6 +354,37 @@ mod tests {
             Ok(())
         }
         fn host_wait(&mut self, _: u64) {}
+    }
+
+    /// Counts the reads that failed, which on a real drive cost minutes each.
+    struct Counting(Unfinished, u32);
+    impl TimedDrive for Counting {
+        fn read_timed(&mut self, lba: u32, fua: bool) -> Result<TimedRead, String> {
+            self.0.read_timed(lba, fua)
+        }
+        fn capacity(&mut self) -> Result<u32, String> {
+            self.0.capacity()
+        }
+        fn read_sector(&mut self, lba: u32, buf: &mut [u8; 2048]) -> Result<(), String> {
+            let r = self.0.read_sector(lba, buf);
+            self.1 += r.is_err() as u32;
+            r
+        }
+        fn supports_fua(&self) -> bool {
+            true
+        }
+        fn set_read_speed(&mut self, _: u16) -> Result<(), String> {
+            Ok(())
+        }
+        fn host_wait(&mut self, _: u64) {}
+    }
+
+    #[test]
+    fn a_missing_tail_is_found_without_reading_all_of_it() {
+        let mut d = Counting(Unfinished(SimDrive::demo(), DEFAULT_TOTAL_SECTORS * 2 / 3), 0);
+        let e = check_calibration_disc(&mut d, Media::Dvd, &AtomicBool::new(false), &mut |_| {}).unwrap_err();
+        assert!(e.contains("往后都读不出来"), "{e}");
+        assert_eq!(d.1, 3, "two misses and the last spot");
     }
 
     #[test]

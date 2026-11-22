@@ -3,11 +3,16 @@ export interface OpticalDriveInfo {
   mediaPresent: boolean; mediaType: string; mediaId: string
   totalSectors: number; isBlank: boolean
   writeSpeeds?: number[]; maxWriteSpeed?: number; supported?: boolean
-  /** A written rewritable disc the burner erases before writing, so it can be used again. */
-  reusable?: boolean
+  /** What the disc is good for, decided once in disc-core (`DiscUse`); every page goes by it. */
+  disc: DiscUse
+  /** A rewritable disc this platform can erase: a stopped or failed burn costs a retry, not the disc. */
+  rewritable?: boolean
 }
-export type DiscKind = 'none' | 'unsupported' | 'blank' | 'calibration' | 'other'
-export interface DiscCheck { sectors: number; foreign: boolean }
+/** `unreadable`: the first sectors did not read — a bad burn, or a drive still settling after one. */
+export type DiscKind = 'none' | 'unsupported' | 'blank' | 'calibration' | 'other' | 'unreadable'
+/** `erasable`: a written rewritable disc, burned after a quick erase the burn does itself. */
+export type DiscUse = 'none' | 'unsupported' | 'blank' | 'erasable' | 'written'
+export interface DiscCheck { sectors: number; foreign: boolean; unreadable: number }
 export interface DiscGeometryPreset {
   id: string; driveModel: string; mediaId: string; stamperCode: string
   /** Disc brand, filled in by whoever shares the calibration. */
@@ -55,7 +60,17 @@ export interface Layer {
   size: number
   /** Clockwise as seen. */
   rotationDeg: number
-  invert: boolean; contrast: number
+  invert: boolean; contrast: number; brightness: number
+  /** Nearest pixel instead of blending, for pixel art. */
+  pixelated: boolean
+  /** Tile the picture over the whole disc. */
+  repeat: boolean
+  /** Percent of a grid cell a tile fills: 100 abuts, less leaves gaps. */
+  repeatDensity: number
+  /** Turn of the grid in degrees; the pictures keep their own rotation. */
+  repeatAngle: number
+  /** Percent of a tile every other row slides along. */
+  repeatStagger: number
 }
 export interface CarveJobConfig {
   /** Bottom first. */
@@ -74,4 +89,5 @@ export interface CarveJobSummary {
 }
 export interface IsoAudit { sectors: number; foreignBytes: number; maxSectorDarkRatio: number; worstLba: number }
 export interface BuiltIso { summary: CarveJobSummary; audit: IsoAudit }
-export interface BurnProgress { percent: number | null; message: string }
+/** `erase` is the quick erase a written rewritable disc gets before the write: it reports apart, and never moves the picture. */
+export interface BurnProgress { phase: 'erase' | 'write'; percent: number | null; message: string }

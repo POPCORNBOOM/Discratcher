@@ -389,62 +389,189 @@ pub fn parse_drutil(text: &str) -> Option<OpticalDriveInfo> {
         write_speeds,
         max_write_speed,
         supported: false,
-        reusable: false,
+        disc: Default::default(),
+        rewritable: false,
     })
 }
 
-/// drutil answers in well under a second. When the system loses track of a drive (a held
-/// drive unplugged, say) it waits in the kernel for good, and not even SIGKILL ends it.
-const DRUTIL_TIMEOUT: Duration = Duration::from_secs(8);
+/// drutil answers in well under a second. A disc the drive struggles to read takes several:
+/// sampling one put it in `DriveReady` waiting on its own SCSI `TestUnitReady`. When the
+/// system loses track of a drive (a held drive unplugged, say) it waits in the kernel for
+/// good, and not even SIGKILL ends it.
+const DRUTIL_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// A drutil that never came back. While it waits, every new one would wait with it.
-static STUCK: Mutex<Option<Child>> = Mutex::new(None);
+/// A drutil that did not answer in time, when that was, and how long the drive is then left
+/// alone. A drive retrying a bad sector answers nothing for minutes, and each new question
+/// only joins the queue, so the next one waits, longer each time it is still busy.
+struct Hung {
+    child: Child,
+    at: Instant,
+    rest: Duration,
+}
+static HUNG: Mutex<Option<Hung>> = Mutex::new(None);
+const FIRST_REST: Duration = Duration::from_secs(30);
+const LONGEST_REST: Duration = Duration::from_secs(240);
+
+/// One drutil at a time: a poll and a refresh both reach the drive through the same device,
+/// and a second client waits on the first one's SCSI command.
+static PROBE: Mutex<()> = Mutex::new(());
+
+/// A parsed disc, with the registry key it was seen under. Asking drutil again costs the
+/// drive a SCSI command, which a marginal disc answers slowly, so a disc stays cached for
+/// a while: the poll then reads the cache instead of the drive.
+struct Cached {
+    key: String,
+    info: OpticalDriveInfo,
+    at: Instant,
+    ttl: Duration,
+}
+static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+/// A drive that answered at once is asked again soon; one that took its time, rarely.
+const FAST_TTL: Duration = Duration::from_secs(15);
+const SLOW_TTL: Duration = Duration::from_secs(120);
+const SLOW_ANSWER: Duration = Duration::from_secs(2);
 
 pub const STUCK_MESSAGE: &str = "系统的光驱服务没有响应。重新插拔光驱，还不行就重启电脑";
 
-/// Whether the system's optical drive service has stopped answering. Replugging the drive
-/// sometimes clears it; otherwise only a restart does.
+/// Whether the system's optical drive service has stopped answering: a drutil killed for
+/// taking too long is still there. A busy drive's drutil ends when killed; one waiting in the
+/// kernel for a drive the system lost track of does not, and only a replug or restart helps.
 pub fn stuck() -> bool {
-    let mut held = STUCK.lock().unwrap();
-    if let Some(c) = held.as_mut() {
-        if matches!(c.try_wait(), Ok(None)) {
-            return true;
-        }
-    }
-    *held = None;
-    false
+    let mut held = HUNG.lock().unwrap_or_else(|e| e.into_inner());
+    held.as_mut().is_some_and(|h| matches!(h.child.try_wait(), Ok(None)))
+}
+
+/// Whether the drive is being left alone after not answering: it is busy with the disc.
+pub fn busy() -> bool {
+    HUNG.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|h| h.at.elapsed() < h.rest)
 }
 
 /// Runs drutil, giving up after `DRUTIL_TIMEOUT`. Its output is a few kB, well inside what
 /// the pipe holds, so waiting for exit before reading cannot deadlock.
 fn drutil(args: &[&str]) -> Option<Output> {
-    if stuck() {
+    if busy() || stuck() {
         return None;
     }
     let mut child = Command::new("drutil").args(args).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
     let began = Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(Some(_)) => {
+                // It answered, so the drive is free again.
+                *HUNG.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                return child.wait_with_output().ok();
+            }
             Ok(None) if began.elapsed() < DRUTIL_TIMEOUT => std::thread::sleep(Duration::from_millis(20)),
             _ => {
                 let _ = child.kill();
-                *STUCK.lock().unwrap() = Some(child);
+                let mut held = HUNG.lock().unwrap_or_else(|e| e.into_inner());
+                let rest = held.as_ref().map_or(FIRST_REST, |h| (h.rest * 2).min(LONGEST_REST));
+                *held = Some(Hung { child, at: Instant::now(), rest });
                 return None;
             }
         }
     }
 }
 
-pub fn list() -> Vec<OpticalDriveInfo> {
+/// The disc the kernel has already identified, read from the registry. Unlike drutil this
+/// asks the drive nothing, so a disc it struggles to read is not poked. A disc keeps its
+/// key until it is swapped, which is the only thing worth telling drutil about.
+fn registry_media_key() -> String {
+    let Ok(out) = Command::new("ioreg").args(["-c", "IOCDMedia", "-r", "-d", "1"]).stderr(Stdio::null()).output() else {
+        return String::new();
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let value = |key: &str| -> String {
+        text.lines()
+            .find(|l| l.contains(key))
+            .and_then(|l| l.split('=').nth(1))
+            .map(|v| v.trim().trim_matches('"').to_string())
+            .unwrap_or_default()
+    };
+    let name = value("\"BSD Name\"");
+    // Two drives with a disc each: the cache holds one disc, so this one keeps asking.
+    if name.is_empty() || text.matches("\"BSD Name\"").count() != 1 {
+        return String::new();
+    }
+    format!("{name}/{}", value("\"Size\""))
+}
+
+/// The XML status of the disc `text` describes. The app asks every few seconds, and for a
+/// rewritable disc each ask makes the drive look at the disc again; the same disc answers the
+/// same, so the second command is only run when the first one's answer has changed.
+fn status_xml(text: &str) -> Option<String> {
+    static LAST: Mutex<Option<(String, String)>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((seen, xml)) = last.as_ref() {
+        if seen == text {
+            return Some(xml.clone());
+        }
+    }
+    let xml = String::from_utf8_lossy(&drutil(&["status", "-xml"])?.stdout).into_owned();
+    *last = Some((text.to_string(), xml.clone()));
+    Some(xml)
+}
+
+/// Lists the drives. `force` asks the drive about the disc even when it is the one already
+/// known: only a user's own refresh or the end of a job is worth that.
+pub fn list(force: bool) -> Vec<OpticalDriveInfo> {
+    let key = registry_media_key();
+    if !key.is_empty() && !force {
+        if let Some(c) = cached(&key) {
+            return vec![c];
+        }
+    }
+    let _one = PROBE.lock().unwrap_or_else(|e| e.into_inner());
+    // Another thread may have just done this while this one waited.
+    if !key.is_empty() && !force {
+        if let Some(c) = cached(&key) {
+            return vec![c];
+        }
+    }
+    // A drive left alone after not answering still holds the disc it held: say that, rather
+    // than nothing, until it can be asked again.
+    if busy() && !key.is_empty() {
+        if let Some(c) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|c| c.key == key) {
+            return vec![c.info.clone()];
+        }
+    }
+    let began = Instant::now();
+    let v = probe();
+    let took = began.elapsed();
+    if !key.is_empty() {
+        // The registry has a disc, so an answer without one is the drive still settling
+        // (right after a session it lists itself discless for a few seconds): ask again next time.
+        if let Some(d) = v.first().filter(|d| d.media_present) {
+            let ttl = if took > SLOW_ANSWER { SLOW_TTL } else { FAST_TTL };
+            *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Cached { key, info: d.clone(), at: Instant::now(), ttl });
+        }
+    }
+    v
+}
+
+/// The cached disc for `key`, while it is still fresh.
+fn cached(key: &str) -> Option<OpticalDriveInfo> {
+    let mut held = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let c = held.as_ref()?;
+    if c.key != key {
+        *held = None;
+        return None;
+    }
+    // Kept once stale: a drive resting after not answering is shown with it.
+    if c.at.elapsed() > c.ttl {
+        return None;
+    }
+    Some(c.info.clone())
+}
+
+fn probe() -> Vec<OpticalDriveInfo> {
     let Some(out) = drutil(&["status"]) else { return Vec::new() };
     let text = String::from_utf8_lossy(&out.stdout);
     let mut drive = parse_drutil(&text);
     let reported_max = parse_speed_multiplier(&field(&text, "Max Write")).or_else(|| parse_speed_multiplier(&field(&text, "Cur Write")));
     if let Some(ref mut d) = drive {
         if d.media_present && (d.is_blank || is_rewritable(&d.media_type)) {
-            if let Some(xml_out) = drutil(&["status", "-xml"]) {
-                let xml = String::from_utf8_lossy(&xml_out.stdout);
+            if let Some(xml) = status_xml(&text) {
                 let (xml_speeds, xml_max) = parse_burn_speeds_xml(&xml);
                 // The framework's own flag, in case the text it printed was in another
                 // language than the one this parser reads.
@@ -551,20 +678,6 @@ mod tests {
         }
     }
 
-    /// A used CD-RW, and one drutil could not size at all until it is erased again.
-    #[test]
-    fn sizes_a_used_cd_rw_to_the_disc_not_to_its_data() {
-        let t = " Vendor   Product           Rev \n HL-DT-ST DVDRAM GUD1N      1.01\n\n           Type: CD-RW                Name: /dev/disk9\n   Overwritable:   79:57:68         blocks:   359843 / 736.96MB / 702.82MiB\n     Space Free:   00:00:00         blocks:        0 /   0.00MB /   0.00MiB\n     Space Used:   79:57:68         blocks:   359843 / 736.96MB / 702.82MiB\n    Writability: overwritable\n";
-        let d = parse_drutil(t).unwrap();
-        assert_eq!((d.media_type.as_str(), d.is_blank), ("CD-RW", false));
-        assert_eq!(d.total_sectors, 359_843);
-
-        // Nothing reported: the nominal size of the disc, never zero.
-        let t = " Vendor   Product           Rev \n HL-DT-ST DVDRAM GUD1N      1.01\n\n           Type: CD-RW                Name: /dev/disk9\n   Overwritable:   00:00:00         blocks:        0 /   0.00MB /   0.00MiB\n     Space Free:   00:00:00         blocks:        0 /   0.00MB /   0.00MiB\n     Space Used:   00:00:00         blocks:        0 /   0.00MB /   0.00MiB\n    Writability: overwritable\n";
-        let d = parse_drutil(t).unwrap();
-        assert_eq!(d.total_sectors, 359_849);
-    }
-
     /// A formatted, never-written DVD-RW: drutil reports no free blocks and no used ones,
     /// and the disc still holds nothing. The block counts said this fresh disc was written.
     #[test]
@@ -573,15 +686,6 @@ mod tests {
         let d = parse_drutil(t).unwrap();
         assert!(d.is_blank);
         assert_eq!(d.total_sectors, 2_295_104);
-    }
-
-    /// An erased CD-RW, likewise: nothing free, nothing used, nothing on it.
-    #[test]
-    fn an_erased_cd_rw_is_blank() {
-        let t = " Vendor   Product           Rev \n HL-DT-ST DVDRAM GUD1N      1.01\n\n           Type: CD-RW                Name: /dev/disk9\n   Overwritable:   00:00:00         blocks:        0 /   0.00MB /   0.00MiB\n     Space Free:   00:00:00         blocks:        0 /   0.00MB /   0.00MiB\n     Space Used:   00:00:00         blocks:        0 /   0.00MB /   0.00MiB\n    Writability: overwritable, blank\n";
-        let d = parse_drutil(t).unwrap();
-        assert!(d.is_blank);
-        assert_eq!(d.total_sectors, 359_849);
     }
 
     /// A disc with something on it never carries the blank flag.

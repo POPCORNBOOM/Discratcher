@@ -28,6 +28,49 @@ pub struct Layer {
     /// -100 ..= 100.
     #[serde(default)]
     pub contrast: f32,
+    /// -100 ..= 100: shifts every grey by up to a full range, after the contrast.
+    #[serde(default)]
+    pub brightness: f32,
+    /// Sample the nearest pixel instead of blending the neighbours, so pixel art stays sharp.
+    #[serde(default)]
+    pub pixelated: bool,
+    /// Tile the picture over the whole disc.
+    #[serde(default)]
+    pub repeat: bool,
+    /// How much of its grid cell a tile fills, in percent: 100 abuts, less leaves gaps.
+    #[serde(default = "full_density")]
+    pub repeat_density: f32,
+    /// Turn of the tile grid, in degrees; the pictures keep the layer's own rotation.
+    #[serde(default)]
+    pub repeat_angle: f32,
+    /// How far every other row slides along, in percent of a tile: 50 lays bricks.
+    #[serde(default)]
+    pub repeat_stagger: f32,
+}
+
+fn full_density() -> f32 {
+    100.0
+}
+
+impl Layer {
+    /// A layer with every effect off, for the rest to be filled in.
+    pub fn plain() -> Self {
+        Layer {
+            path: String::new(),
+            x: 0.0,
+            y: 0.0,
+            size: 1.0,
+            rotation_deg: 0.0,
+            invert: false,
+            contrast: 0.0,
+            brightness: 0.0,
+            pixelated: false,
+            repeat: false,
+            repeat_density: 100.0,
+            repeat_angle: 0.0,
+            repeat_stagger: 0.0,
+        }
+    }
 }
 
 /// A decoded picture: luma and coverage per pixel, rows top first.
@@ -73,6 +116,15 @@ impl Picture {
         Self { width, height, alpha: vec![255; luma.len()], luma }
     }
 
+    /// The pixel `u`, `v` falls in, unblended.
+    #[inline]
+    fn nearest(&self, u: f64, v: f64) -> (f32, f32) {
+        let x = ((u * self.width as f64) as usize).min(self.width - 1);
+        let y = ((v * self.height as f64) as usize).min(self.height - 1);
+        let i = y * self.width + x;
+        (self.luma[i] as f32, self.alpha[i] as f32)
+    }
+
     /// Luma and coverage, both 0 ..= 255, at `u`, `v` in [0, 1]. Edges clamp, as the GPU does.
     #[inline]
     fn bilinear(&self, u: f64, v: f64) -> (f32, f32) {
@@ -98,6 +150,11 @@ pub fn contrast_gain(contrast: f32) -> f32 {
     259.0 * (c + 255.0) / (255.0 * (259.0 - c))
 }
 
+/// What `brightness` (-100 ..= 100) adds to a grey, in levels.
+pub fn brightness_shift(brightness: f32) -> f32 {
+    if brightness.is_finite() { brightness.clamp(-100.0, 100.0) * 2.55 } else { 0.0 }
+}
+
 struct Placed {
     picture: Arc<Picture>,
     cx: f64,
@@ -108,7 +165,36 @@ struct Placed {
     w: f64,
     h: f64,
     gain: f32,
+    /// In grey levels, 0 ..= 255 either way.
+    shift: f32,
     invert: bool,
+    pixelated: bool,
+    grid: Option<Grid>,
+}
+
+/// A layer's tiles: where the cells fall around the layer's own centre.
+struct Grid {
+    /// One cell's width and height, as shares of the diameter.
+    cell_w: f64,
+    cell_h: f64,
+    cos: f64,
+    sin: f64,
+    /// Share of a cell every odd row slides along.
+    stagger: f64,
+}
+
+impl Grid {
+    /// `(dx, dy)` from the layer's centre becomes the same offset from the centre of the tile it falls in.
+    #[inline]
+    fn tile_offset(&self, dx: f64, dy: f64) -> (f64, f64) {
+        // Into the grid's own axes, where rows run along x.
+        let (gx, gy) = (self.cos * dx + self.sin * dy, -self.sin * dx + self.cos * dy);
+        let row = (gy / self.cell_h).round();
+        let gx = gx - (row.rem_euclid(2.0)) * self.stagger * self.cell_w;
+        let lx = gx - (gx / self.cell_w).round() * self.cell_w;
+        let ly = gy - row * self.cell_h;
+        (self.cos * lx - self.sin * ly, self.sin * lx + self.cos * ly)
+    }
 }
 
 /// Layers ready to sample.
@@ -124,15 +210,25 @@ impl Composition {
                 let long = picture.width.max(picture.height) as f64;
                 let size = if l.size.is_finite() && l.size > 0.0 { l.size } else { 1.0 };
                 let (sin, cos) = l.rotation_deg.to_radians().sin_cos();
+                let (w, h) = (size * picture.width as f64 / long, size * picture.height as f64 / long);
+                let grid = l.repeat.then(|| {
+                    let fill = if l.repeat_density.is_finite() { l.repeat_density.clamp(10.0, 100.0) as f64 / 100.0 } else { 1.0 };
+                    let (gs, gc) = (if l.repeat_angle.is_finite() { l.repeat_angle as f64 } else { 0.0 }).to_radians().sin_cos();
+                    let stagger = if l.repeat_stagger.is_finite() { l.repeat_stagger.clamp(0.0, 100.0) as f64 / 100.0 } else { 0.0 };
+                    Grid { cell_w: w / fill, cell_h: h / fill, cos: gc, sin: gs, stagger }
+                });
                 Placed {
                     cx: l.x,
                     cy: l.y,
                     cos,
                     sin,
-                    w: size * picture.width as f64 / long,
-                    h: size * picture.height as f64 / long,
+                    w,
+                    h,
                     gain: contrast_gain(l.contrast),
+                    shift: brightness_shift(l.brightness),
                     invert: l.invert,
+                    pixelated: l.pixelated,
+                    grid,
                     picture,
                 }
             })
@@ -155,14 +251,15 @@ impl Composition {
         let mut grey = 255.0f32;
         for l in &self.layers {
             let (dx, dy) = (x - l.cx, y - l.cy);
+            let (dx, dy) = l.grid.as_ref().map_or((dx, dy), |g| g.tile_offset(dx, dy));
             // Undo the clockwise turn.
             let u = (l.cos * dx + l.sin * dy) / l.w + 0.5;
             let v = (-l.sin * dx + l.cos * dy) / l.h + 0.5;
             if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
                 continue;
             }
-            let (luma, alpha) = l.picture.bilinear(u, v);
-            let t = ((luma - 128.0) * l.gain + 128.0).clamp(0.0, 255.0);
+            let (luma, alpha) = if l.pixelated { l.picture.nearest(u, v) } else { l.picture.bilinear(u, v) };
+            let t = ((luma - 128.0) * l.gain + 128.0 + l.shift).clamp(0.0, 255.0);
             let t = if l.invert { 255.0 - t } else { t };
             grey += (t - grey) * alpha / 255.0;
         }
@@ -250,12 +347,12 @@ pub(crate) mod tests {
 
     /// A layer of `picture` covering the disc, centred and upright.
     pub(crate) fn whole(picture: Picture) -> Composition {
-        let l = Layer { path: String::new(), x: 0.0, y: 0.0, size: 1.0, rotation_deg: 0.0, invert: false, contrast: 0.0 };
+        let l = Layer { path: String::new(), x: 0.0, y: 0.0, size: 1.0, ..Layer::plain() };
         Composition::new([(l, Arc::new(picture))])
     }
 
     fn layer(x: f64, y: f64, size: f64, rotation_deg: f64) -> Layer {
-        Layer { path: String::new(), x, y, size, rotation_deg, invert: false, contrast: 0.0 }
+        Layer { path: String::new(), x, y, size, rotation_deg, ..Layer::plain() }
     }
 
     #[test]
@@ -321,7 +418,43 @@ pub(crate) mod tests {
         assert_eq!(Composition::new([(l.clone(), p.clone())]).sample(0.0, 0.0), 191.0);
         l.invert = false;
         l.contrast = 100.0;
+        assert_eq!(Composition::new([(l.clone(), p.clone())]).sample(0.0, 0.0), 0.0);
+        l.contrast = 0.0;
+        l.brightness = 50.0;
+        assert_eq!(Composition::new([(l.clone(), p.clone())]).sample(0.0, 0.0), 64.0 + 127.5);
+        l.brightness = -100.0;
         assert_eq!(Composition::new([(l, p)]).sample(0.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn pixelated_keeps_each_pixel_whole() {
+        let p = Arc::new(Picture::from_luma(2, 1, vec![0, 200]));
+        let mut l = layer(0.0, 0.0, 1.0, 0.0);
+        let at = |l: &Layer, x: f64| Composition::new([(l.clone(), p.clone())]).sample(x, 0.0);
+        assert!((at(&l, 0.0) - 100.0).abs() < 1.0, "the seam blends");
+        l.pixelated = true;
+        assert_eq!(at(&l, -0.01), 0.0);
+        assert_eq!(at(&l, 0.01), 200.0);
+    }
+
+    #[test]
+    fn repeat_tiles_the_picture() {
+        let p = Arc::new(Picture::from_luma(2, 1, vec![0, 255]));
+        let mut l = layer(0.0, 0.0, 0.2, 0.0);
+        let at = |l: &Layer, x: f64, y: f64| Composition::new([(l.clone(), p.clone())]).sample(x, y);
+        assert_eq!(at(&l, 0.15, 0.0), 255.0, "off the picture, bare disc");
+        l.repeat = true;
+        assert_eq!(at(&l, 0.15, 0.0), 0.0, "the next tile over, left half");
+        assert_eq!(at(&l, 0.25, 0.0), 255.0, "its right half");
+        l.repeat_density = 50.0;
+        assert_eq!(at(&l, 0.15, 0.0), 255.0, "a gap now");
+        l.repeat_density = 100.0;
+        l.repeat_angle = 90.0;
+        assert!((at(&l, 0.12, 0.0) - 178.5).abs() < 1.0, "the grid has turned, the pictures have not");
+        l.repeat_angle = 0.0;
+        l.repeat_stagger = 50.0;
+        // Row 1 slides half a tile: x = 0.1 is now a tile's centre.
+        assert!((at(&l, 0.1, 0.1) - 127.5).abs() < 1.0);
     }
 
     #[test]
@@ -336,7 +469,7 @@ pub(crate) mod tests {
 
     #[test]
     fn layer_json_is_what_the_front_end_sends() {
-        let l: Layer = serde_json::from_str(r#"{"id":"a","path":"/a.png","x":0.1,"y":-0.2,"size":0.8,"rotationDeg":15,"invert":true,"contrast":10,"width":10,"height":20}"#).unwrap();
-        assert_eq!(l, Layer { path: "/a.png".into(), x: 0.1, y: -0.2, size: 0.8, rotation_deg: 15.0, invert: true, contrast: 10.0 });
+        let l: Layer = serde_json::from_str(r#"{"id":"a","path":"/a.png","x":0.1,"y":-0.2,"size":0.8,"rotationDeg":15,"invert":true,"contrast":10,"brightness":-20,"width":10,"height":20}"#).unwrap();
+        assert_eq!(l, Layer { path: "/a.png".into(), x: 0.1, y: -0.2, size: 0.8, rotation_deg: 15.0, invert: true, contrast: 10.0, brightness: -20.0, ..Layer::plain() });
     }
 }

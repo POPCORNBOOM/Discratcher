@@ -88,13 +88,13 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
   switch (cmd) {
     case 'list_optical_drives': {
       const m = media()
-      return [{ id: '', vendor: 'HL-DT-ST', product: 'DVDRAM GUD1N', revision: '1.01', mediaPresent: m !== 'none', mediaType: m === 'none' ? 'None' : m === 'cd' ? 'CD-R' : m === 'rw' ? 'DVD+RW' : 'DVD-R', mediaId: m === 'none' ? '' : 'CMC MAG. AM3', totalSectors: m === 'cd' ? 359843 : 2295104, isBlank: m === 'blank' || m === 'cd', writeSpeeds: m === 'cd' ? [10, 16, 24] : m === 'rw' ? [2, 4] : undefined, supported: m !== 'none', reusable: m === 'rw' }]
+      return [{ id: '', vendor: 'HL-DT-ST', product: 'DVDRAM GUD1N', revision: '1.01', mediaPresent: m !== 'none', mediaType: m === 'none' ? 'None' : m === 'cd' ? 'CD-R' : m === 'rw' ? 'DVD+RW' : 'DVD-R', mediaId: m === 'none' ? '' : 'CMC MAG. AM3', totalSectors: m === 'cd' ? 359843 : 2295104, isBlank: m === 'blank' || m === 'cd', writeSpeeds: m === 'cd' ? [10, 16, 24] : m === 'rw' ? [2, 4] : undefined, supported: m !== 'none', disc: m === 'none' ? 'none' : m === 'rw' ? 'erasable' : 'blank', rewritable: m === 'rw' }]
     }
     case 'eject_disc': setMockDisc('none'); return null
     case 'inspect_disc':
       return ({ none: 'none', cd: 'blank', blank: 'blank', written: 'calibration', rw: 'other' } as Record<string, string>)[media()] ?? 'none'
     case 'check_calibration_disc':
-      return { sectors: 2295104, foreign: false }
+      return { sectors: 2295104, foreign: false, unreadable: 0 }
     case 'make_twist_chart': return '/Users/demo/twist-chart.png'
     case 'get_presets': return saved
     case 'save_preset': saved = [...saved.filter((p) => p.id !== a.preset.id), a.preset]; return null

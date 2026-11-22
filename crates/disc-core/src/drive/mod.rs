@@ -37,10 +37,53 @@ pub struct OpticalDriveInfo {
     /// `list_drives`, so no backend can forget it.
     #[serde(default)]
     pub supported: bool,
-    /// A written rewritable disc this platform's burner erases before it writes, so it
-    /// can be used again. Filled in by `list_drives`, so no backend can forget it.
+    /// What the disc is good for. Filled in by `list_drives`, so no backend can forget it,
+    /// and the one thing every page and the burn itself decide by.
     #[serde(default)]
-    pub reusable: bool,
+    pub disc: DiscUse,
+    /// A rewritable disc this platform can erase: a stopped or failed burn on it costs a
+    /// retry, not the disc. Only decides what the pages say, never what is burned.
+    #[serde(default)]
+    pub rewritable: bool,
+}
+
+/// What the disc in the drive can be used for. This is the only place that decides it:
+/// the pages show their buttons by it and the burn refuses or erases by it, so a button
+/// can never offer what the burn then turns down.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DiscUse {
+    /// No disc in the drive.
+    #[default]
+    None,
+    /// A disc Discratcher cannot calibrate or carve.
+    Unsupported,
+    /// Can be burned as it is.
+    Blank,
+    /// A written rewritable disc: burned after a quick erase, which the burn does itself.
+    Erasable,
+    /// Written once and for good: it can be read and measured, never burned again.
+    Written,
+}
+
+impl DiscUse {
+    pub fn of(media_present: bool, media_type: &str, is_blank: bool) -> Self {
+        if !media_present {
+            Self::None
+        } else if !is_supported_media(media_type) {
+            Self::Unsupported
+        } else if is_blank {
+            Self::Blank
+        } else if is_rewritable(media_type) && erases_before_burn() {
+            Self::Erasable
+        } else {
+            Self::Written
+        }
+    }
+
+    pub fn burnable(self) -> bool {
+        matches!(self, Self::Blank | Self::Erasable)
+    }
 }
 
 /// Single-layer DVD and CD only: calibration and carving count the channel bits of
@@ -50,9 +93,10 @@ pub fn is_supported_media(media_type: &str) -> bool {
     Media::of_type(media_type).is_some()
 }
 
-/// Discs that can be written again, and so do not have to be new to be used.
+/// Discs that can be written again, and so do not have to be new to be used. Only DVD±RW:
+/// CD-RW is not supported at all.
 pub fn is_rewritable(media_type: &str) -> bool {
-    matches!(media_type.trim(), "CD-RW" | "DVD-RW" | "DVD+RW")
+    matches!(media_type.trim(), "DVD-RW" | "DVD+RW")
 }
 
 /// Whether this platform's burner erases a rewritable disc on its own before writing it.
@@ -77,12 +121,14 @@ pub fn cd_user_offset() -> usize {
 /// an image that does not fit the disc. Every image Discratcher makes covers the whole
 /// disc, so one much smaller than the disc was made for another disc (issue #8).
 pub fn check_burnable(id: &str, iso: &str) -> Result<(), String> {
-    let d = list_drives().into_iter().find(|d| d.id == id).ok_or_else(|| format!("找不到光驱 {id}"))?;
-    if !d.media_present {
-        return Err("光驱里没有光盘".into());
-    }
-    if !d.supported {
-        return Err(format!("目前只支持 DVD 和 CD 光盘，这张是 {}", d.media_type));
+    // The disc as it is now, not as the poll last saw it: a burn that failed partway left it
+    // written, and only a fresh answer says whether it has to be erased first.
+    let d = list_drives_fresh().into_iter().find(|d| d.id == id).ok_or_else(|| format!("找不到光驱 {id}"))?;
+    match d.disc {
+        DiscUse::None => return Err("光驱里没有光盘".into()),
+        DiscUse::Unsupported => return Err(format!("目前只支持 DVD 和 CD 光盘，这张是 {}", d.media_type)),
+        DiscUse::Written => return Err("这张盘已经刻过，不能再写。请换一张空白光盘".into()),
+        DiscUse::Blank | DiscUse::Erasable => {}
     }
     let image = std::fs::metadata(iso).map_err(|e| format!("读不到镜像：{e}"))?.len().div_ceil(2048);
     image_fits(image, d.total_sectors as u64)
@@ -137,22 +183,47 @@ pub fn stuck() -> bool {
     false
 }
 
+/// Whether the drive did not answer and is being left alone for a while: it is busy reading
+/// a disc it struggles with, and asking again would only queue behind that.
+pub fn busy() -> bool {
+    #[cfg(target_os = "macos")]
+    return macos::busy();
+    #[allow(unreachable_code)]
+    false
+}
+
 pub fn list_drives() -> Vec<OpticalDriveInfo> {
-    let mut v = native_list();
+    decorate(native_list(false))
+}
+
+/// Asks the drive about the disc even if it is the one already known. For a user's own
+/// refresh, or the end of a job: what changed is the disc itself.
+pub fn list_drives_fresh() -> Vec<OpticalDriveInfo> {
+    decorate(native_list(true))
+}
+
+fn decorate(mut v: Vec<OpticalDriveInfo>) -> Vec<OpticalDriveInfo> {
     for d in &mut v {
         d.supported = d.media_present && is_supported_media(&d.media_type);
-        d.reusable = d.media_present && !d.is_blank && is_rewritable(&d.media_type) && erases_before_burn();
+        d.disc = DiscUse::of(d.media_present, &d.media_type, d.is_blank);
+        d.rewritable = d.media_present && is_rewritable(&d.media_type) && erases_before_burn();
     }
     v
 }
 
-fn native_list() -> Vec<OpticalDriveInfo> {
+fn native_list(force: bool) -> Vec<OpticalDriveInfo> {
     #[cfg(target_os = "macos")]
-    return macos::list();
+    return macos::list(force);
     #[cfg(target_os = "linux")]
-    return linux::list();
+    return {
+        let _ = force;
+        linux::list()
+    };
     #[cfg(target_os = "windows")]
-    return windows::list();
+    return {
+        let _ = force;
+        windows::list()
+    };
     #[allow(unreachable_code)]
     Vec::new()
 }
@@ -193,13 +264,6 @@ pub fn open_reader(id: &str) -> Result<Box<dyn TimedDrive>, String> {
     open_timed(id)
 }
 
-/// Whether the burn should ask the tool to erase first. Any rewritable disc, blank or not:
-/// on a fresh one the same step is what formats it, and on a written one it is the only
-/// way it can be written again. Nothing erases anything outside a burn the user started.
-pub fn needs_erase(media_type: &str) -> bool {
-    is_rewritable(media_type) && erases_before_burn()
-}
-
 /// Write speeds to offer for a blank disc, or for a rewritable one the burner erases
 /// first. "offered" is what the drive itself reported; "detected_max" is the drive's own
 /// limit, which wins over what the disc claims: a 16x disc in an 8x drive is 8x. With
@@ -218,11 +282,7 @@ pub fn derive_write_speeds(
     // An erased disc has no dye to read an optimum off, and the drive often reports
     // nothing for it, so a rewritable disc is only ever offered the slow, safe end.
     let default_ladder = if rewritable {
-        if is_cd {
-            vec![4]
-        } else {
-            vec![2, 4]
-        }
+        vec![2, 4]
     } else if is_cd {
         vec![4, 8, 10, 16, 24, 32, 40, 48]
     } else {
@@ -318,7 +378,7 @@ pub mod mmc {
     /// worse than the nominal size: the calibration would plan its reads around it.
     pub fn nominal_sectors(media_type: &str) -> u32 {
         match media_type {
-            "CD-R" | "CD-RW" | "CD-ROM" => 359_849,
+            "CD-R" | "CD-ROM" => 359_849,
             "DVD+R DL" => 4_173_824,
             m if m.starts_with("DVD") => 2_295_104,
             m if m.starts_with("BD") => 12_219_392,
@@ -581,21 +641,36 @@ mod tests {
     }
 
     #[test]
+    fn what_a_disc_is_good_for_is_decided_once() {
+        assert_eq!(DiscUse::of(false, "None", false), DiscUse::None);
+        assert_eq!(DiscUse::of(true, "BD-R", true), DiscUse::Unsupported);
+        assert_eq!(DiscUse::of(true, "DVD-R", true), DiscUse::Blank);
+        assert_eq!(DiscUse::of(true, "DVD-RW", true), DiscUse::Blank);
+        assert_eq!(DiscUse::of(true, "CD-RW", true), DiscUse::Unsupported);
+        assert_eq!(DiscUse::of(true, "DVD-R", false), DiscUse::Written);
+        // A written rewritable disc is burned again where the burn can erase it first.
+        let rw = if erases_before_burn() { DiscUse::Erasable } else { DiscUse::Written };
+        assert_eq!(DiscUse::of(true, "DVD+RW", false), rw);
+        assert!(DiscUse::Blank.burnable() && DiscUse::Erasable.burnable());
+        assert!(!DiscUse::Written.burnable() && !DiscUse::None.burnable() && !DiscUse::Unsupported.burnable());
+    }
+
+    #[test]
     fn only_single_layer_dvd_and_cd_are_supported() {
-        for m in ["DVD-R", "DVD+R", "DVD-RW", "DVD+RW", " DVD-R ", "DVD-ROM", "CD-R", "CD-RW", "CD-ROM"] {
+        for m in ["DVD-R", "DVD+R", "DVD-RW", "DVD+RW", " DVD-R ", "DVD-ROM", "CD-R", "CD-ROM"] {
             assert!(is_supported_media(m), "{m}");
         }
-        for m in ["BD-R", "BD-RE", "DVD+R DL", "DVD-RAM", "None", ""] {
+        for m in ["CD-RW", "BD-R", "BD-RE", "DVD+R DL", "DVD-RAM", "None", ""] {
             assert!(!is_supported_media(m), "{m}");
         }
     }
 
     #[test]
     fn only_rewritable_discs_can_be_written_again() {
-        for m in ["CD-RW", "DVD-RW", "DVD+RW", " DVD-RW "] {
+        for m in ["DVD-RW", "DVD+RW", " DVD-RW "] {
             assert!(is_rewritable(m), "{m}");
         }
-        for m in ["CD-R", "DVD-R", "DVD+R", "DVD+R DL", "BD-RE", "CD-ROM", "None", ""] {
+        for m in ["CD-RW", "CD-R", "DVD-R", "DVD+R", "DVD+R DL", "BD-RE", "CD-ROM", "None", ""] {
             assert!(!is_rewritable(m), "{m}");
         }
     }
@@ -605,8 +680,6 @@ mod tests {
         // A written disc is only worth a speed where the burner erases it first.
         let expected = if erases_before_burn() { (vec![2, 4], 4) } else { (Vec::new(), 0) };
         assert_eq!(derive_write_speeds("DVD+RW", false, Vec::new(), None), expected);
-        let cd_expected = if erases_before_burn() { (vec![4], 4) } else { (Vec::new(), 0) };
-        assert_eq!(derive_write_speeds("CD-RW", false, Vec::new(), None), cd_expected);
         // A written disc that cannot be written again is still offered nothing.
         assert_eq!(derive_write_speeds("DVD-R", false, vec![2, 4], Some(8)), (Vec::new(), 0));
         // What the drive reported is kept, up to the drive's own limit.

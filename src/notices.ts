@@ -15,6 +15,8 @@ const list = ref<Notice[]>([])
 let nextId = 1
 
 function add(tone: NoticeTone, icon: string, message: string) {
+  // The same thing said again straight away is not news: a retry failing the same way.
+  if (list.value.at(-1)?.message === message) return
   list.value = [...list.value.slice(-(HISTORY_LIMIT - 1)), { id: nextId++, tone, icon, message }]
 }
 

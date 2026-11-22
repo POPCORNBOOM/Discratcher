@@ -18,7 +18,7 @@ const TICK_MS = 1000
 
 export function formatRemaining(seconds: number) {
   if (seconds >= 90) return t('eta.minutes', { n: Math.ceil(seconds / 60) })
-  return t('eta.seconds', { n: Math.max(5, Math.ceil(seconds / 5) * 5) })
+  return t('eta.seconds', { n: Math.max(1, Math.ceil(seconds)) })
 }
 
 export function useEta(source: EtaSource): Ref<string> {

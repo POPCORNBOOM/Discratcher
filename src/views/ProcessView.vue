@@ -10,7 +10,7 @@
           <UiIcon :path="mdiAlertOutline" />
           <div>{{ warning }}</div>
         </div>
-        <p class="small muted">{{ t('burn.estimate', { n: minutes }) }}</p>
+        <p class="small muted">{{ t(s.drive?.rewritable ? 'burn.estimateRw' : 'burn.estimate', { n: minutes }) }}</p>
         <UiAdvanced>
           <div class="field">
             <div class="field-head">
@@ -27,7 +27,10 @@
           </div>
           <UiSwitch v-model="b.verify">{{ t('burn.verify') }}</UiSwitch>
         </UiAdvanced>
-        <div class="actions"><UiButton variant="solid" size="lg" :icon="mdiFire" :disabled="!usable" @click="p.start()">{{ t('burn.start') }}</UiButton></div>
+        <div class="actions">
+          <UiButton variant="solid" size="lg" :icon="mdiFire" :disabled="!usable" @click="p.start()">{{ t('burn.start') }}</UiButton>
+          <UiButton variant="ghost" size="lg" @click="p.close()">{{ t('common.back') }}</UiButton>
+        </div>
       </template>
 
       <template v-else>
@@ -47,9 +50,13 @@
           <UiIcon :path="mdiAlertOctagonOutline" />
           <div class="selectable">{{ p.failure }}</div>
         </div>
+        <div v-if="p.redo" class="notice warn">
+          <UiIcon :path="mdiRestart" />
+          <div class="selectable">{{ p.redo.note }}</div>
+        </div>
         <div v-if="confirmStop" class="notice warn">
           <UiIcon :path="mdiAlertOutline" />
-          <div>{{ t('burn.stopWarn') }}</div>
+          <div>{{ t(s.drive?.rewritable ? 'burn.stopWarnRw' : 'burn.stopWarn') }}</div>
         </div>
 
         <div v-if="rating" class="rate">
@@ -68,7 +75,11 @@
         </div>
 
         <div class="actions">
-          <UiButton v-if="p.status === 'done' || p.status === 'failed'" :variant="p.status === 'done' ? 'solid' : 'soft'" size="lg" @click="p.close()">{{ t(p.status === 'done' ? 'common.done' : 'common.back') }}</UiButton>
+          <template v-if="p.redo">
+            <UiButton variant="solid" size="lg" :icon="mdiRestart" @click="p.redo.run()">{{ p.redo.label }}</UiButton>
+            <UiButton variant="ghost" size="lg" @click="p.close()">{{ t('common.back') }}</UiButton>
+          </template>
+          <UiButton v-else-if="p.status === 'done' || p.status === 'failed'" :variant="p.status === 'done' ? 'solid' : 'soft'" size="lg" @click="p.close()">{{ t(p.status === 'done' ? 'common.done' : 'common.back') }}</UiButton>
           <UiButton v-else-if="p.stopping" variant="danger" size="lg" disabled>{{ t('burn.stopping') }}</UiButton>
           <template v-else-if="confirmStop">
             <UiButton variant="ghost" size="lg" @click="confirmStop = false">{{ t('burn.continue') }}</UiButton>
@@ -91,7 +102,7 @@
 </template>
 
 <script setup lang="ts">
-import { mdiAlertOctagonOutline, mdiAlertOutline, mdiCheck, mdiCircleOutline, mdiClose, mdiFire, mdiProgressClock, mdiStar, mdiStarOutline } from '@mdi/js'
+import { mdiAlertOctagonOutline, mdiAlertOutline, mdiCheck, mdiCircleOutline, mdiClose, mdiFire, mdiProgressClock, mdiRestart, mdiStar, mdiStarOutline } from '@mdi/js'
 import { computed, ref, watch } from 'vue'
 import ContributeDialog from '../components/ContributeDialog.vue'
 import DrivePicker from '../components/DrivePicker.vue'
@@ -103,6 +114,7 @@ import UiSelect from '../components/UiSelect.vue'
 import UiSwitch from '../components/UiSwitch.vue'
 import { openInBrowser } from '../api'
 import { ratingUrl } from '../catalog'
+import { canBurn } from '../disc'
 import { notifyError } from '../notices'
 import { t } from '../i18n'
 import { useEta } from '../eta'
@@ -133,15 +145,16 @@ async function rate(score: number) {
 const eta = useEta({ running: () => p.status === 'running', step: () => p.stepIndex, percent: () => p.percent, stepSeconds: p.stepSeconds, laterSeconds: p.laterSeconds })
 const minutes = computed(() => Math.ceil(p.totalSeconds / 60))
 
-const usable = computed(() => !!s.drive?.mediaPresent && !!s.drive.supported && (s.drive.isBlank || s.drive.reusable) && speedOptions.value.length > 0)
+const usable = computed(() => canBurn(s.drive) && speedOptions.value.length > 0)
 const warning = computed(() => {
-  if (!s.drive) return t('burn.warnNoDrive')
-  if (!s.drive.mediaPresent) return t('burn.warnNoDisc')
-  if (!s.drive.supported) return t('drive.unsupported', { type: s.drive.mediaType })
-  if (s.drive.reusable) return t('burn.warnErase')
-  if (!s.drive.isBlank) return t('burn.warnNotBlank')
-  if (!speedOptions.value.length) return t('burn.warnNoSpeed')
-  return ''
+  const d = s.drive
+  if (!d) return t('burn.warnNoDrive')
+  switch (d.disc) {
+    case 'none': return t('burn.warnNoDisc')
+    case 'unsupported': return t('drive.unsupported', { type: d.mediaType })
+    case 'written': return t('burn.warnNotBlank')
+  }
+  return speedOptions.value.length ? '' : t('burn.warnNoSpeed')
 })
 
 const speedOptions = computed(() => {
@@ -153,10 +166,10 @@ const speedOptions = computed(() => {
   } else if (d.maxWriteSpeed && d.maxWriteSpeed > 0) {
     const candidates = isCd(d) ? [4, 8, 10, 16, 24, 32, 40, 48] : [2, 4, 6, 8, 12, 16]
     speeds = candidates.filter((x) => x <= d.maxWriteSpeed!)
-  } else if (d.reusable) {
+  } else if (d.disc === 'erasable') {
     // Erased discs are only offered the safe end, as the native side does.
     speeds = isCd(d) ? [4] : [2, 4]
-  } else if (d.isBlank) {
+  } else if (d.disc === 'blank') {
     speeds = [2, 4, 8, 16]
   }
   speeds = Array.from(new Set(speeds)).sort((a, b) => a - b)

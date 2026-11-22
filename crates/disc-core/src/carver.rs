@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn offset_shifts_carved_pixels() {
         let half = Arc::new(Picture::from_luma(4, 4, vec![0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255]));
-        let at = |x| Composition::new([(Layer { path: String::new(), x, y: 0.0, size: 1.0, rotation_deg: 0.0, invert: false, contrast: 0.0 }, half.clone())]);
+        let at = |x| Composition::new([(Layer { path: String::new(), x, y: 0.0, size: 1.0, ..Layer::plain() }, half.clone())]);
         let (spiral, centred, lut) = ctx_parts(at(0.0));
         let shifted = at(0.2);
         let ctx_center = CarveCtx { spiral: &spiral, art: &centred, lut: &lut, tone: safe() };

@@ -37,6 +37,8 @@ import ProcessView from './views/ProcessView.vue'
 
 /** Often enough that inserting a disc feels noticed, with no refresh button to press. */
 const DRIVE_POLL_MS = 3000
+/** With a disc in, each look makes the drive read it again, and a rewritable one churns audibly: look less often. */
+const DISC_POLL_MS = 10000
 
 const s = useStudio()
 const process = useProcess()
@@ -51,12 +53,16 @@ const active = computed(() => (s.view === 'process' ? s.origin : s.view))
 let poll = 0
 onMounted(async () => {
   await s.refreshPresets()
-  await s.refreshDrives()
+  await s.refreshDrives(true)
   process.listen()
   void startUpdater()
-  poll = window.setInterval(() => s.job || s.refreshDrives(), DRIVE_POLL_MS)
+  const tick = async () => {
+    if (!s.job) await s.refreshDrives()
+    poll = window.setTimeout(tick, s.drive?.mediaPresent ? DISC_POLL_MS : DRIVE_POLL_MS)
+  }
+  poll = window.setTimeout(tick, DRIVE_POLL_MS)
 })
-onBeforeUnmount(() => clearInterval(poll))
+onBeforeUnmount(() => clearTimeout(poll))
 </script>
 
 <style scoped>

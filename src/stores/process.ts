@@ -3,12 +3,15 @@ import { computed, reactive, ref, shallowRef } from 'vue'
 import { call, CANCELLED, on } from '../api'
 import { t } from '../i18n'
 import { burnSeconds, COMPOSE_SECONDS, isCd } from '../etaModel'
-import { notifySuccess, notifyWarning } from '../notices'
+import { notifySuccess } from '../notices'
 import { removeTask, setTask } from '../tasks'
 import type { BurnProgress, CarveProgress, DiscGeometryPreset } from '../types'
+import { canBurn } from '../disc'
 import { useStudio } from './studio'
 
 const TASK_KEY = 'process'
+/** A quick erase of a written DVD+RW, start to finish; diskutil reports no percentage. */
+const ERASE_SECONDS = 60
 
 export interface StepContext {
   report: (percent: number | null, message?: string) => void
@@ -25,11 +28,25 @@ export interface ProcessStep {
   run: (ctx: StepContext) => Promise<unknown>
 }
 
+export interface ProcessRedo {
+  label: string
+  /** Why this one click is enough, said right where the failure is. */
+  note: string
+  /** Burns the disc again: offered only while the disc in the drive is rewritable and burnable. */
+  writes?: boolean
+  run: () => void
+}
+
 export interface ProcessRequest {
   title: string
   note: string
   /** Touches the disc: waits on the page until the user presses 开始刻录. */
   writes: boolean
+  /** What to do instead of walking away when this fails, when that can still help: one
+   *  offer for the whole job, or one per step that failed. */
+  redo?: ProcessRedo | ((failedStep: number) => ProcessRedo | undefined)
+  /** Asked when 开始刻录 is pressed: the steps for the disc as it is then, not when the page opened. */
+  restep?: () => Promise<Pick<ProcessRequest, 'steps' | 'revealStep'>>
   steps: ProcessStep[]
   /** Leave the page by itself when finished, for work with a next step of its own. */
   autoClose?: boolean
@@ -82,6 +99,8 @@ export const useProcess = defineStore('process', () => {
   /** A question a running step cannot answer itself; the page renders it as a dialog. */
   const pendingAsk = ref<{ question: string; accept: string } | null>(null)
   let askResolve: ((yes: boolean) => void) | null = null
+  /** Ends the erase step once the burn reports its first write progress. */
+  let eraseDone: (() => void) | null = null
 
   function ask(question: string, accept: string): Promise<boolean> {
     return new Promise((resolve) => {
@@ -117,6 +136,9 @@ export const useProcess = defineStore('process', () => {
     publish()
   }
 
+  /** The failed job's image is kept, because redo writes it again; leaving the page drops it. */
+  const keepImage = ref(false)
+
   function open(req: ProcessRequest) {
     if (status.value === 'running') {
       s.view = 'process'
@@ -125,6 +147,7 @@ export const useProcess = defineStore('process', () => {
     request.value = req
     status.value = 'confirm'
     stepIndex.value = 0
+    keepImage.value = !!req.writes && !!req.redo
     percent.value = null
     failure.value = ''
     pendingAsk.value = null
@@ -136,7 +159,71 @@ export const useProcess = defineStore('process', () => {
 
   function openBurn(plan: BurnPlan) {
     let path = ''
+    // One backend call does both: it erases a written rewritable disc, then writes. The
+    // page shows them as two steps, and the call's own phase says which one is running.
+    let burning: Promise<unknown> | null = null
+    // One call erases and writes: the erase step starts it and the write step waits on the
+    // same one. A call that failed is forgotten, so 重新刻录 can make a new one.
+    const burn = () => {
+      if (!burning) {
+        const p = call('burn_iso_to_drive', { driveId: s.drive!.id, isoPath: path, speed: burnSettings.speed, verify: burnSettings.verify })
+        burning = p.catch((e) => {
+          burning = null
+          throw e
+        })
+      }
+      return burning
+    }
+    const eraseStep: ProcessStep = {
+      label: t('process.eraseDisc'),
+      estimate: () => ERASE_SECONDS,
+      // Stopping it costs nothing: the disc is rewritable and the write has not begun.
+      run: () =>
+        new Promise((resolve, reject) => {
+          eraseDone = () => resolve(undefined)
+          burn().then(resolve, reject)
+        }).finally(() => (eraseDone = null)),
+    }
+    const writeStep: ProcessStep = {
+      label: t('process.writeDisc'),
+      estimate: () => burnSeconds(burnSettings.speed, burnSettings.verify, isCd(s.drive) ? 'cd' : 'dvd'),
+      dangerous: () => true,
+      run: burn,
+    }
+    const prepareStep: ProcessStep = {
+      label: plan.prepareLabel,
+      estimate: () => COMPOSE_SECONDS,
+      run: async (ctx) => {
+        path = await call<string>('cache_iso_path', { name: plan.fileName })
+        await plan.prepare(path, ctx)
+      },
+    }
+    const stepsFor = () => [prepareStep, ...(s.drive?.disc === 'erasable' ? [eraseStep] : []), writeStep, ...(plan.after ?? [])]
+    const steps = stepsFor()
+    // A rewritable disc that stopped partway is worth another write rather than a new disc:
+    // the erase and write steps run again, and the image is still on disk for them.
+    // The steps for the disc as it is now: a disc blank when the page opened is written once
+    // a burn on it failed, and then needs the erase.
+    const restep = async () => {
+      await s.refreshDrives(true)
+      const now = stepsFor()
+      return { steps: now, revealStep: plan.reveal ? now.indexOf(writeStep) : undefined }
+    }
+    // Starts again from the erase (or the write when there is none), with the image kept.
+    const redo: ProcessRedo = {
+      label: t('burn.retry'),
+      note: t('burn.retryNote'),
+      writes: true,
+      run: async () => {
+        burned.value = false
+        written.value = 0
+        request.value = { ...request.value!, ...(await restep()) }
+        const at = request.value.steps.findIndex((x) => x === eraseStep || x === writeStep)
+        void start(Math.max(at, 0))
+      },
+    }
     open({
+      redo,
       title: plan.title,
       note: plan.note,
       writes: true,
@@ -146,36 +233,24 @@ export const useProcess = defineStore('process', () => {
       rateIssue: plan.rateIssue,
       shareable: plan.shareable,
       onBurned: plan.onBurned,
-      revealStep: plan.reveal ? 1 : undefined,
+      revealStep: plan.reveal ? steps.indexOf(writeStep) : undefined,
+      restep,
       cleanup: () => (path ? call('remove_cached_iso', { path }) : Promise.resolve()),
-      steps: [
-        {
-          label: plan.prepareLabel,
-          estimate: () => COMPOSE_SECONDS,
-          run: async (ctx) => {
-            path = await call<string>('cache_iso_path', { name: plan.fileName })
-            await plan.prepare(path, ctx)
-          },
-        },
-        {
-          label: t('process.writeDisc'),
-          estimate: () => burnSeconds(burnSettings.speed, burnSettings.verify, isCd(s.drive) ? 'cd' : 'dvd'),
-          dangerous: () => true,
-          run: () => call('burn_iso_to_drive', { driveId: s.drive!.id, isoPath: path, speed: burnSettings.speed, verify: burnSettings.verify }),
-        },
-        ...(plan.after ?? []),
-      ],
+      steps,
     })
   }
 
-  async function start() {
-    const req = request.value!
-    let wrote = false
+  async function start(from = 0) {
     status.value = 'running'
     stopping.value = false
+    failure.value = ''
+    if (from === 0 && request.value?.restep) request.value = { ...request.value, ...(await request.value.restep()) }
+    const req = request.value!
+    let wrote = false
+    let failed = false
     const ok = await s.run(req.title, async () => {
       try {
-        for (let i = 0; i < req.steps.length; i++) {
+        for (let i = from; i < req.steps.length; i++) {
           // A stop landing as one step ends must not start the next: it may be the laser.
           if (stopping.value) throw CANCELLED
           stepIndex.value = i
@@ -186,13 +261,17 @@ export const useProcess = defineStore('process', () => {
           await req.steps[i].run({ report, ask })
         }
         return true
+      } catch (e) {
+        failed = true
+        throw e
       } finally {
-        await req.cleanup?.().catch(() => {})
+        // The image of a failed burn on a rewritable disc is what redo writes again.
+        if (!failed || !keepImage.value) await req.cleanup?.().catch(() => {})
       }
     })
     pendingAsk.value = null
     removeTask(TASK_KEY)
-    await s.refreshDrives()
+    await s.refreshDrives(true)
     if (ok) {
       notifySuccess(req.doneMessage ?? t('process.doneSuffix', { title: req.title }))
       status.value = 'done'
@@ -203,15 +282,29 @@ export const useProcess = defineStore('process', () => {
       burned.value = wrote
       if (burned.value) req.onBurned?.()
       req.onDone?.()
-    } else if (stopping.value && !wrote) {
-      notifyWarning(t('process.cancelled'))
+    } else if (stopping.value && !req.steps[stepIndex.value]?.dangerous?.()) {
+      // Stopped while nothing was being written: a cancel, whatever ran before it.
       close()
     } else {
-      failure.value = stopping.value ? t('process.terminatedBad') : s.error
-      if (stopping.value) notifyWarning(t('process.terminated'))
+      failedStep.value = stepIndex.value
+      failure.value = stopping.value ? t(s.drive?.rewritable ? 'process.terminatedRw' : 'process.terminatedBad') : s.error
       status.value = 'failed'
     }
+    stopping.value = false
   }
+
+  /** The step the job failed at, for an offer that depends on it. */
+  const failedStep = ref(0)
+
+  /** The job failed where one click still fixes it: the page offers that instead of 返回. */
+  // Offered only while the disc in the drive can still be burned: the drive was asked
+  // again as the job ended, so this is the disc as it is now.
+  const redo = computed(() => {
+    const r = request.value?.redo
+    const offer = status.value === 'failed' ? (typeof r === 'function' ? r(failedStep.value) : r) : undefined
+    if (!offer) return null
+    return !offer.writes || (canBurn(s.drive) && s.drive?.rewritable) ? offer : null
+  })
 
   function stop() {
     stopping.value = true
@@ -219,6 +312,11 @@ export const useProcess = defineStore('process', () => {
   }
 
   function close() {
+    // The image of a failed burn was kept for redo; leaving the page drops it.
+    if (keepImage.value) {
+      keepImage.value = false
+      void request.value?.cleanup?.().catch(() => {})
+    }
     status.value = 'idle'
     request.value = null
     if (s.view === 'process') s.back()
@@ -226,8 +324,14 @@ export const useProcess = defineStore('process', () => {
 
   function listen() {
     on<CarveProgress>('carve://progress', (p) => report(p.percent))
-    on<BurnProgress>('burn://progress', (p) => report(p.percent, p.message))
+    on<BurnProgress>('burn://progress', (p) => {
+      // The first word from the write ends the erase step; the picture only follows the
+      // write step, so nothing the erase reports can reveal it.
+      if (p.phase === 'write') eraseDone?.()
+      // The step's own label says what is happening; the tools' English lines do not.
+      report(p.percent)
+    })
   }
 
-  return { request, burned, written, status, stepIndex, percent, message, failure, stopping, burnSettings, dangerous, totalSeconds, stepSeconds, laterSeconds, open, openBurn, start, stop, close, listen, pendingAsk, answerAsk }
+  return { request, burned, written, status, stepIndex, percent, message, failure, stopping, burnSettings, dangerous, totalSeconds, stepSeconds, laterSeconds, open, openBurn, start, redo, stop, close, listen, pendingAsk, answerAsk }
 })

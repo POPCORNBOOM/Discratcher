@@ -26,7 +26,7 @@
 </p>
 
 > [!NOTE]
-> Discratcher is at an early stage and **supports DVD; CD has just been added and has not been verified on a real disc**. Blu-ray is not supported yet. The combinations tested so far are under [Platform support](#platform-support), and [issues](https://github.com/POPCORNBOOM/Discratcher/issues) are welcome. For CDs the more mature choice is [DiscImageStudio](https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio).
+> Discratcher is at an early stage and **supports DVD and CD-R (CD-R patterns come out faint)**. Blu-ray is not supported yet. The combinations tested so far are under [Platform support](#platform-support), and [issues](https://github.com/POPCORNBOOM/Discratcher/issues) are welcome. For CDs the more mature choice is [DiscImageStudio](https://github.com/JiaFeiMiao-K-Cat/DiscImageStudio).
 
 ## Features
 
@@ -78,8 +78,11 @@ The app looks for a new version at startup, or you can use Help → Check for up
 | Disc | Status |
 | --- | --- |
 | DVD-R | Tested (CMC MAG. AM3) |
-| DVD+R, DVD-RW, DVD+RW | Should work, unverified |
-| CD-R, CD-RW | Experimental: encoding and calibration pass in simulation only, not yet verified on a real disc. Each drive needs one extra twist chart burned the first time |
+| DVD+R | Tested (VR5F16-01294) |
+| DVD+RW | Tested (Unis, MKM A02, 14AA0412): a written disc is quick-erased before the burn |
+| DVD-RW | Should work, unverified |
+| CD-R | Tested: the pattern shows but is faint, possibly down to the discs used. Each drive needs one extra twist chart burned the first time |
+| CD-RW | Not supported: burns were unreliable in testing |
 | Blu-ray, DVD-RAM, dual-layer DVD | Not supported |
 
 ## Build from source

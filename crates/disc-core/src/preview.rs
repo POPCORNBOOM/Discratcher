@@ -98,7 +98,7 @@ mod tests {
     fn same_geometry_is_a_plain_placement() {
         let s = Spiral::new(reference_preset().spiral_params()).unwrap();
         let picture = Arc::new(Picture::from_luma(64, 48, (0..64 * 48).map(|i| ((i * 37) % 251) as u8).collect()));
-        let layer = Layer { path: String::new(), x: 0.12, y: -0.08, size: 0.9, rotation_deg: 40.0, invert: false, contrast: 0.0 };
+        let layer = Layer { path: String::new(), x: 0.12, y: -0.08, size: 0.9, rotation_deg: 40.0, ..Layer::plain() };
         let art = Composition::new([(layer, picture)]);
         let p = PreviewInput { design: &s, actual: &s, art: &art, min_luma: 0.0, size: 0 };
         let ro2 = 2.0 * s.params.ro;

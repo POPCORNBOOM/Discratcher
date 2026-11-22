@@ -83,12 +83,18 @@ fn add_calibration_record(app: AppHandle, record: serde_json::Value) -> Result<(
 /// Probing a drive costs tens of milliseconds, and the page asks every three
 /// seconds, so it runs on a blocking thread rather than the UI one.
 #[tauri::command]
-async fn list_optical_drives() -> Result<Vec<OpticalDriveInfo>, String> {
-    blocking(|| {
-        let drives = drive::list_drives();
+async fn list_optical_drives(fresh: Option<bool>) -> Result<Vec<OpticalDriveInfo>, String> {
+    blocking(move || {
+        // A disc the drive struggles to read answers drutil in seconds, so a poll reads the
+        // one already known; only a user's refresh or the end of a job asks the drive again.
+        let drives = if fresh.unwrap_or(false) { drive::list_drives_fresh() } else { drive::list_drives() };
         // An empty list from a service that stopped answering is not "no drive".
         if drives.is_empty() && drive::stuck() {
             return Err("stuck".into());
+        }
+        // Nor is one from a drive busy with its disc: the page keeps what it last saw.
+        if drives.is_empty() && drive::busy() {
+            return Err("busy".into());
         }
         Ok(drives)
     })
@@ -155,7 +161,7 @@ impl Drop for Holding {
 
 /// How long quitting waits for a job to release the drive. A timed read gives up after 30 s,
 /// but the ladder checks for cancel between reads, which take milliseconds.
-const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Quitting while a job holds the drive would leave the drive held and the disc unmounted:
 /// the tray then will not open until the drive is replugged. So the job is cancelled, the
@@ -271,8 +277,14 @@ async fn eject_disc(drive_id: String) -> Result<(), String> {
 
 /// What the drive holds, for deciding whether calibrating starts with a burn.
 #[tauri::command]
-async fn inspect_disc(drive_id: String) -> Result<DiscKind, String> {
-    blocking(move || disc_check::inspect(&drive_id)).await
+async fn inspect_disc(state: State<'_, Studio>, drive_id: String) -> Result<DiscKind, String> {
+    // Reading a CD takes it off the desktop until the read lets go: quitting waits for that.
+    let held = Holding::new(&state);
+    blocking(move || {
+        let _held = held;
+        disc_check::inspect(&drive_id)
+    })
+    .await
 }
 
 /// Reads a burned calibration disc back before it is timed. Only reads.
@@ -413,7 +425,10 @@ async fn burn_iso_to_drive(
     verify: bool,
 ) -> Result<(), String> {
     let cancel = fresh_cancel(&state);
+    // Quitting mid-burn stops the burner and waits for it, rather than leave it writing alone.
+    let held = Holding::new(&state);
     blocking(move || {
+        let _held = held;
         disc_core::drive::check_burnable(&drive_id, &iso_path)?;
         // Windows burns inside the app: IMAPI2 is called straight from Rust, so progress
         // arrives from the drive and no window or helper process is involved.
@@ -424,23 +439,30 @@ async fn burn_iso_to_drive(
                 .ok_or_else(|| format!("{drive_id} 没有盘符，无法交给刻录机"))?;
             let reporter = app.clone();
             return disc_core::drive::imapi::burn(&drive, &iso_path, speed, cancel, move |percent, phase| {
-                let p = burner::BurnProgress { percent: Some(percent), message: phase.to_string() };
+                let p = burner::BurnProgress { percent: Some(percent), message: phase.to_string(), ..Default::default() };
                 let _ = reporter.emit("burn://progress", p);
             });
         }
         #[cfg(not(target_os = "windows"))]
         {
-            // A rewritable disc is erased by the burner itself, as part of this same burn:
-            // a written one has no other way to be written again, and a fresh one is
-            // formatted by the same step. Nothing here erases anything on its own: the
-            // user pressed the burn button.
-            let erase = disc_core::drive::list_drives()
-                .into_iter()
-                .any(|d| d.id == drive_id && disc_core::drive::needs_erase(&d.media_type));
-            let argv = burner::burn_command(&drive_id, &iso_path, speed, verify, erase)?;
-            burner::burn(&argv, &cancel, &mut |p| {
+            let argv = burner::burn_command(&drive_id, &iso_path, speed, verify)?;
+            let mut emit = |p: burner::BurnProgress| {
                 let _ = app.emit("burn://progress", p);
-            })
+            };
+            // A written rewritable disc is erased first, here and nowhere else: the page
+            // warned about it before the user pressed the burn button. It is a step of its
+            // own, so its progress is never taken for the write's.
+            // Asked for now: a disc a failed burn left written has to be erased first.
+            let erasable = disc_core::drive::list_drives_fresh()
+                .into_iter()
+                .any(|d| d.id == drive_id && d.disc == disc_core::drive::DiscUse::Erasable);
+            if erasable {
+                burner::erase(&burner::erase_command(&drive_id)?, &cancel, &mut emit)?;
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err("已取消".into());
+                }
+            }
+            burner::burn(&argv, &cancel, &mut emit)
         }
     })
     .await

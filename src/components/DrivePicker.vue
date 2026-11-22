@@ -18,11 +18,14 @@ const options = computed(() => s.drives.map((d) => ({ value: s.keyOf(d), label: 
 const mid = computed(() => s.drive?.mediaId ?? '')
 const status = computed(() => {
   const d = s.drive
-  if (!d) return t(s.driveStuck ? 'drive.stuck' : 'drive.none')
-  if (!d.mediaPresent) return t('drive.noDisc')
-  if (!d.supported) return t('drive.unsupported', { type: d.mediaType })
-  if (d.reusable) return t('drive.rewritable')
-  return t(d.isBlank ? 'drive.blank' : 'drive.written')
+  if (!d) return t(s.driveStuck ? 'drive.stuck' : s.driveBusy ? 'drive.busy' : 'drive.none')
+  switch (d.disc) {
+    case 'none': return t('drive.noDisc')
+    case 'unsupported': return t('drive.unsupported', { type: d.mediaType })
+    case 'blank': return t('drive.blank')
+    case 'erasable': return t('drive.rewritable')
+    default: return t('drive.written')
+  }
 })
 </script>
 

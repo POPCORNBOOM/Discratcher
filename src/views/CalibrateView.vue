@@ -9,7 +9,7 @@
       </div>
       <div class="step">
         <span class="grow">{{ line }}</span>
-        <UiButton variant="solid" :disabled="!ready || !!s.job" @click="begin">{{ t('cal.start') }}</UiButton>
+        <UiButton variant="solid" :disabled="!ready || !!s.job || deciding" @click="begin()">{{ t('cal.start') }}</UiButton>
       </div>
       <div v-if="isMock" class="dev row small">
         <span class="grow muted">{{ t('cal.devNote') }}</span>
@@ -37,16 +37,18 @@ import DrivePicker from '../components/DrivePicker.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiButton from '../components/UiButton.vue'
 import UiSlider from '../components/UiSlider.vue'
-import { notifyError, notifySuccess, notifyWarning } from '../notices'
+import { notifyError } from '../notices'
 import { useProcess, type ProcessStep, type StepContext } from '../stores/process'
 import { useStudio } from '../stores/studio'
-import type { CalibRungEvent, CalibrationRecord, CalibrationResult, CalibrationRungRecord, DiscCheck, DiscGeometryPreset, DiscKind } from '../types'
+import type { CalibRungEvent, CalibrationRecord, CalibrationResult, CalibrationRungRecord, DiscCheck, DiscGeometryPreset, DiscKind, OpticalDriveInfo } from '../types'
 
 /** Every DVD calibration image is DVD sized, whatever the drive said a moment ago (issue #8). */
 const DVD_SECTORS = 2295104
 /** CD-Rs come in several lengths, so a CD image follows the disc, less a margin for the burner's run-out blocks. */
 const CD_NOMINAL_SECTORS = 359849
 const CD_MARGIN_SECTORS = 64
+/** Two seconds apart: a minute for a drive that dropped out to come back. */
+const DRIVE_WAIT_TRIES = 30
 
 const s = useStudio()
 const p = useProcess()
@@ -69,7 +71,8 @@ async function record(entry: Omit<CalibrationRecord, 'id' | 'durationSeconds' | 
   try {
     await call('add_calibration_record', { record: full })
   } catch (e) {
-    notifyError(t('cal.logFail', { e: String(e) }))
+    // The log only feeds the time estimate; the calibration itself is saved either way.
+    console.warn(t('cal.logFail', { e: String(e) }))
   }
 }
 let ctx: StepContext | null = null
@@ -81,42 +84,59 @@ let rungClock = 0
 /** The disc in the drive names itself, and calibrating uses up a blank disc of
  *  this model: the code says which one that is before anything is burned. */
 const discMid = computed(() => s.drive?.mediaId ?? '')
-/** What the disc is, found out before the button is pressed. `unknown` when the read failed: pressing the button says why. */
-const kind = ref<DiscKind | 'checking' | 'unknown'>('none')
+/**
+ * What pressing 开始 does, from the one judgement of the disc (`disc`, made in disc-core)
+ * and, for a written disc, what its first sectors say. The line above the button and the
+ * button itself both come from here, so they cannot disagree.
+ */
+type Action = 'none' | 'unsupported' | 'checking' | 'burn' | 'erase' | 'measure' | 'notCal' | 'unreadable'
+function actionFor(d: OpticalDriveInfo | null, found: DiscKind | 'checking' | null): Action {
+  if (!d || d.disc === 'none') return 'none'
+  if (d.disc === 'unsupported') return 'unsupported'
+  if (d.disc === 'blank') return 'burn'
+  if (found === 'checking') return 'checking'
+  if (found === 'calibration') return 'measure'
+  // A rewritable disc is burned again whatever it holds, even when it does not read.
+  if (d.disc === 'erasable') return 'erase'
+  return found === 'unreadable' || found === null ? 'unreadable' : 'notCal'
+}
+
+/** What a written disc carries; only a written one needs reading, once per disc. */
+const found = ref<DiscKind | 'checking' | null>(null)
 watch(
-  () => (s.drive ? [s.keyOf(s.drive), s.drive.mediaPresent, s.drive.supported, s.drive.isBlank, s.drive.reusable].join() : ''),
-  async (key, _, stale) => {
+  () => (s.drive ? `${s.keyOf(s.drive)}|${s.drive.disc}` : ''),
+  async (_, __, stale) => {
     const d = s.drive
-    // The listing settles everything but a written disc, so only that one is read.
-    if (!d?.mediaPresent) return (kind.value = 'none')
-    if (!d.supported) return (kind.value = 'unsupported')
-    if (d.isBlank || d.reusable) return (kind.value = 'blank')
+    found.value = null
+    if (d?.disc !== 'erasable' && d?.disc !== 'written') return
     let current = true
     stale(() => (current = false))
-    kind.value = 'checking'
-    const found = await call<DiscKind>('inspect_disc', { driveId: d.id }).catch(() => 'unknown' as const)
-    if (current) kind.value = found
+    found.value = 'checking'
+    const k = await call<DiscKind>('inspect_disc', { driveId: d.id }).catch(() => null)
+    if (current) found.value = k
   },
   { immediate: true },
 )
-const ready = computed(() => kind.value === 'blank' || kind.value === 'calibration' || kind.value === 'unknown')
-const line = computed(() => {
-  const d = s.drive
-  if (!d) return t(s.driveStuck ? 'drive.stuck' : 'drive.none')
-  switch (kind.value) {
+const action = computed(() => actionFor(s.drive, found.value))
+const ready = computed(() => ['burn', 'erase', 'measure'].includes(action.value))
+function say(a: Action, d: OpticalDriveInfo | null): string {
+  const type = d?.mediaType ?? ''
+  switch (a) {
+    case 'none': return t(!d ? (s.driveStuck ? 'drive.stuck' : s.driveBusy ? 'drive.busy' : 'drive.none') : 'cal.hintNoDisc')
+    case 'unsupported': return t('drive.unsupported', { type })
     case 'checking': return t('cal.checking')
-    case 'none': return t('cal.hintNoDisc')
-    case 'unsupported': return t('drive.unsupported', { type: d.mediaType })
-    case 'blank': return t(d.isBlank ? 'cal.willBurn' : 'cal.willErase', { type: d.mediaType, n: minutes.value + (cd.value ? 8 : 15) })
-    case 'calibration': return t('cal.willMeasure', { n: minutes.value })
-    case 'other': return t('cal.notCalDisc')
-    default: return t('drive.written')
+    case 'burn': return t('cal.willBurn', { type, n: minutes.value + (cd.value ? 8 : 15) })
+    case 'erase': return t('cal.willErase', { type, n: minutes.value + (cd.value ? 8 : 15) })
+    case 'measure': return t('cal.willMeasure', { n: minutes.value })
+    case 'notCal': return t('cal.notCalDisc')
+    case 'unreadable': return t('cal.unreadable')
   }
-})
+}
+const line = computed(() => say(action.value, s.drive))
 const cd = computed(() => isCd(s.drive))
 /** Held from the last time the drive showed its disc: it lists none for a moment after each session. */
 const mediaType = ref('DVD-R')
-watch(() => s.drive, (d) => d?.mediaPresent && d.supported && (mediaType.value = d.mediaType), { immediate: true })
+watch(() => s.drive, (d) => d && d.disc !== 'none' && d.disc !== 'unsupported' && (mediaType.value = d.mediaType), { immediate: true })
 const imageSectors = computed(() => (cd.value ? (s.drive?.totalSectors || CD_NOMINAL_SECTORS) - CD_MARGIN_SECTORS : DVD_SECTORS))
 const discSectors = computed(() => s.drive?.totalSectors || imageSectors.value)
 // disc-probe's CD ladder: fewer rungs cover a track a quarter as long.
@@ -128,14 +148,24 @@ const minutes = computed(() => Math.ceil(seconds.value / 60))
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /** After a burn the drive takes a while to read the disc again, and some eject it. */
+/** Right after a burn the drive lists no disc, or one it cannot read yet, for a while. */
+const SETTLE_MS = 20_000
+/** A disc that still does not read after this was not burned right. */
+const UNREADABLE_MS = 90_000
+
+/** After a burn the drive takes a while to read the disc again, and some eject it. */
 async function waitForDisc(step: StepContext) {
+  const began = Date.now()
   for (;;) {
     if (p.stopping) throw CANCELLED
-    await s.refreshDrives().catch(() => {})
+    await s.refreshDrives(true).catch(() => {})
     const kind = s.drive ? await call<DiscKind>('inspect_disc', { driveId: s.drive.id }).catch((): DiscKind => 'none') : 'none'
     if (kind === 'calibration') return
     if (kind === 'other' || kind === 'unsupported') throw t('cal.notCalDisc')
-    step.report(null, t(kind === 'none' ? 'cal.reinsert' : 'cal.waitDisc'))
+    const waited = Date.now() - began
+    if (kind === 'unreadable' && waited > UNREADABLE_MS) throw t('cal.burnedUnreadable')
+    // Only a disc gone for longer than the drive's own settling was really ejected.
+    step.report(null, t(kind === 'none' && waited > SETTLE_MS ? 'cal.reinsert' : 'cal.waitDisc'))
     await sleep(2000)
   }
 }
@@ -147,8 +177,8 @@ const checkStep: ProcessStep = {
   run: async (step) => {
     checkCtx = step
     try {
-      const c = await call<DiscCheck>('check_calibration_disc', { driveId: s.drive!.id, mediaType: mediaType.value })
-      if (c.foreign) notifyWarning(t('cal.foreign'))
+      // A foreign calibration disc or a few spots of dust are handled here; nothing to say.
+      await call<DiscCheck>('check_calibration_disc', { driveId: s.drive!.id, mediaType: mediaType.value })
     } finally {
       checkCtx = null
     }
@@ -156,39 +186,59 @@ const checkStep: ProcessStep = {
 }
 const measureStep: ProcessStep = { label: t('cal.measureStep'), estimate: () => seconds.value, run: measure }
 
-/**
- * One button. A blank DVD is burned, read back and measured in one job; a calibration
- * disc burned earlier is read back and measured; anything else is refused with the
- * reason. Every stage checks its input before the next one trusts it.
- */
+/** Burns a calibration disc, reads it back and measures it, in one job. */
+function burnCalibration() {
+  p.openBurn({
+    title: t('cal.title'),
+    note: t('cal.burnNote'),
+    fileName: 'calibration.iso',
+    prepareLabel: t('cal.prepare'),
+    prepare: (outputPath) => call('generate_calibration_iso', { outputPath, totalSectors: imageSectors.value }),
+    autoClose: true,
+    doneMessage: t('cal.measureDone'),
+    after: [{ label: t('cal.waitStep'), estimate: () => 10, run: waitForDisc }, checkStep, measureStep],
+  })
+}
+
+/** Reads back a calibration disc burned earlier and measures it. If it does not check out
+ *  and the disc can still be burned, the failure offers burning a new one over it. */
+function measureCalibration() {
+  const steps = [checkStep, measureStep]
+  // A disc that does not check out is burned again; one that checked out but measured
+  // unsteadily is only measured again.
+  const redo = (failedStep: number) =>
+    steps[failedStep] === measureStep
+      ? { label: t('cal.remeasure'), note: t('cal.remeasureNote'), run: measureCalibration }
+      : { label: t('cal.reburn'), note: t('cal.reburnNote'), writes: true, run: burnCalibration }
+  p.open({ title: t('cal.title'), note: t('cal.measureNote'), writes: false, autoClose: true, doneMessage: t('cal.measureDone'), redo, steps })
+}
+
+/** The one button: decided the same way as the line above it, from the disc as it is now. */
+/** Set while 开始 is deciding, so a second click cannot start the job twice. */
+const deciding = ref(false)
 async function begin() {
-  const d = s.drive
-  if (!d) return
-  let kind: DiscKind
+  if (deciding.value) return
+  deciding.value = true
   try {
-    kind = await call<DiscKind>('inspect_disc', { driveId: d.id })
-  } catch (e) {
-    notifyError(String(e))
-    return
+    await decide()
+  } finally {
+    deciding.value = false
   }
-  // A used rewritable disc is erased by the burn itself, so it needs a calibration image
-  // just as a blank one does.
-  if (kind === 'blank' || (kind === 'other' && d.reusable)) {
-    p.openBurn({
-      title: t('cal.title'),
-      note: t('cal.burnNote'),
-      fileName: 'calibration.iso',
-      prepareLabel: t('cal.prepare'),
-      prepare: (outputPath) => call('generate_calibration_iso', { outputPath, totalSectors: imageSectors.value }),
-      autoClose: true,
-      doneMessage: t('cal.measureDone'),
-      after: [{ label: t('cal.waitStep'), estimate: () => 10, run: waitForDisc }, checkStep, measureStep],
-    })
-  } else if (kind === 'calibration') {
-    p.open({ title: t('cal.title'), note: t('cal.measureNote'), writes: false, autoClose: true, doneMessage: t('cal.measureDone'), steps: [checkStep, measureStep] })
-  } else {
-    notifyError(t(kind === 'other' ? 'cal.notCalDisc' : kind === 'unsupported' ? 'cal.unsupported' : 'drive.noDisc'))
+}
+async function decide() {
+  let d = s.drive
+  // The drive drops out of the list while a disc is swapped or a long read lets go of it:
+  // wait for it quietly, and speak only if it stays gone.
+  for (let i = 0; !d && i < DRIVE_WAIT_TRIES; i++) {
+    if (i) await sleep(2000)
+    await s.refreshDrives(true).catch(() => {})
+    d = s.drive
   }
+  const k = d?.disc === 'erasable' || d?.disc === 'written' ? await call<DiscKind>('inspect_disc', { driveId: d.id }).catch(() => null) : null
+  const a = actionFor(d, k)
+  if (a === 'burn' || a === 'erase') burnCalibration()
+  else if (a === 'measure') measureCalibration()
+  else notifyError(say(a, d))
 }
 
 async function measure(step: StepContext) {
@@ -234,7 +284,6 @@ async function measure(step: StepContext) {
   s.pendingCode = ''
   // Nothing is offered for sharing yet: the parameters must first survive a real burn.
   s.view = 'carve'
-  notifySuccess(t('cal.saved'))
 }
 
 
@@ -243,7 +292,7 @@ function simulate() {
   if (!isMock) return
   mockDev?.setMockDisc('blank')
   s.pendingCode = 'MOCK-0001 A'
-  s.refreshDrives().then(begin)
+  s.refreshDrives(true).then(begin)
 }
 
 onMounted(() => {

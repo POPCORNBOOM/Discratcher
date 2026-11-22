@@ -19,6 +19,7 @@
               <span class="tools">
                 <UiButton icon-only variant="ghost" :icon="mdiArrowUp" :aria-label="t('carve.raise')" :disabled="i === 0" @click.stop="comp.restack(l.id, 1)" />
                 <UiButton icon-only variant="ghost" :icon="mdiArrowDown" :aria-label="t('carve.lower')" :disabled="i === stack.length - 1" @click.stop="comp.restack(l.id, -1)" />
+ <UiButton icon-only variant="ghost" :icon="mdiContentCopy" :aria-label="t('carve.duplicate')" :disabled="comp.full" @click.stop="comp.duplicate(l.id)" />
                 <UiButton icon-only variant="ghost" :icon="mdiClose" :aria-label="t('carve.remove')" @click.stop="comp.remove(l.id)" />
               </span>
             </div>
@@ -65,7 +66,19 @@
           <section v-if="sel" class="section">
             <div class="title">{{ t('carve.tone') }}</div>
             <UiSwitch v-model="sel.invert">{{ t('carve.invert') }}</UiSwitch>
+            <UiSlider v-model="sel.brightness" :label="t('carve.brightness')" :min="-100" :max="100" :step="1" />
             <UiSlider v-model="sel.contrast" :label="t('carve.contrast')" :min="-100" :max="100" :step="1" />
+            <UiSwitch v-model="sel.pixelated">{{ t('carve.pixelated') }}</UiSwitch>
+          </section>
+
+          <section v-if="sel" class="section">
+            <div class="title">{{ t('carve.effects') }}</div>
+            <UiSwitch v-model="sel.repeat">{{ t('carve.repeat') }}</UiSwitch>
+            <template v-if="sel.repeat">
+              <UiSlider v-model="sel.repeatDensity" :label="t('carve.repeatDensity')" :min="20" :max="100" :step="1" :format="(v) => `${Math.round(v)}%`" />
+              <UiSlider v-model="sel.repeatAngle" :label="t('carve.repeatAngle')" :min="-90" :max="90" :step="0.5" :format="(v) => `${v.toFixed(1)}°`" />
+              <UiSlider v-model="sel.repeatStagger" :label="t('carve.repeatStagger')" :min="0" :max="50" :step="1" :format="(v) => `${Math.round(v)}%`" />
+            </template>
           </section>
 
           <UiSwitch v-model="c.servoSafeDither">{{ t('carve.servoSafe') }}</UiSwitch>
@@ -114,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import { mdiAlertOctagonOutline, mdiAlertOutline, mdiArrowDown, mdiArrowUp, mdiClose, mdiFire, mdiImagePlusOutline, mdiPlus } from '@mdi/js'
+import { mdiAlertOctagonOutline, mdiAlertOutline, mdiArrowDown, mdiArrowUp, mdiClose, mdiContentCopy, mdiFire, mdiImagePlusOutline, mdiPlus } from '@mdi/js'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { call, pickComposition, pickCompositionSave, pickImage, pickSavePath } from '../api'
 import UiAdvanced from '../components/UiAdvanced.vue'
@@ -187,7 +200,7 @@ function loadTwistChart() {
       comp.clear()
       await comp.add(path)
       const l = comp.layers[0]
-      if (l) Object.assign(l, { name: t('carve.twistChart'), x: 0, y: 0, size: 1, rotationDeg: 0, invert: false, contrast: 0 })
+      if (l) Object.assign(l, { name: t('carve.twistChart'), x: 0, y: 0, size: 1, rotationDeg: 0, invert: false, contrast: 0, brightness: 0, pixelated: false, repeat: false })
     } catch (e) {
       notifyError(String(e))
     }
@@ -253,7 +266,8 @@ async function refreshFallback() {
     const url = await call<string>('simulate_disc_preview', { config: { ...c, layers: comp.layers, outputIsoPath: '', preset: s.preset }, previewSize: 1024 })
     if (mine === ticket) previewUrl.value = url
   } catch (e) {
-    notifyError(String(e))
+    // A preview that could not be drawn keeps the last one; it is redrawn on the next edit.
+    console.warn(e)
   }
 }
 
@@ -383,6 +397,11 @@ function keydown(e: KeyboardEvent) {
     return
   }
   const l = sel.value
+  if (l && mod && e.key.toLowerCase() === 'd') {
+    e.preventDefault()
+    comp.duplicate(l.id)
+    return
+  }
   if (!l || mod) return
   const step = e.shiftKey ? 0.05 : 0.005
   const moves: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }
@@ -413,7 +432,7 @@ async function compose(path: string, ctx?: StepContext) {
 /** A DVD calibration on a CD, or the other way round, can only fail: say so before composing. */
 function checkFamily() {
   const d = s.drive
-  if (!d?.mediaPresent || !d.supported) return
+  if (!d || d.disc === 'none' || d.disc === 'unsupported') return
   const [disc, preset] = [isCd(d) ? 'CD' : 'DVD', s.preset?.media === 'cd' ? 'CD' : 'DVD']
   if (disc !== preset) throw t('carve.familyMismatch', { disc, preset })
 }
@@ -423,7 +442,8 @@ async function markBurned(preset: DiscGeometryPreset) {
     await call('save_preset', { preset: { ...preset, burnedAt: new Date().toISOString() } })
     await s.refreshPresets()
   } catch (e) {
-    notifyError(String(e))
+    // Only gates sharing later; the burn itself went fine.
+    console.warn(e)
   }
 }
 function burn() {
