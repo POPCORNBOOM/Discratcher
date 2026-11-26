@@ -37,6 +37,13 @@
 <table>
   <tr>
     <td width="40%" valign="top">
+      <h3>Pseudo-hologram engraving (experimental)</h3>
+      <p>Drop in 3D models, place them, and burn them to a DVD. Light the disc from the side with a phone flashlight and turn it: the models change with the angle and look three-dimensional. DVD only for now.</p>
+    </td>
+    <td width="60%"><img src="docs/hologram.gif" alt="The hologram page's preview and the burned disc" width="100%"></td>
+  </tr>
+  <tr>
+    <td width="40%" valign="top">
       <h3>Automatic calibration</h3>
       <p>No manual measuring. The drive's own read timing reveals the disc's spiral geometry.</p>
     </td>

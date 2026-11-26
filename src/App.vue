@@ -13,6 +13,7 @@
         <ModelsView v-show="s.view === 'models'" />
         <CalibrateView v-show="s.view === 'calibrate'" />
         <CarveView v-show="s.view === 'carve'" />
+        <HoloView v-if="holoVisited" v-show="s.view === 'holo'" />
         <ProcessView v-if="s.view === 'process'" />
       </main>
     </div>
@@ -20,8 +21,8 @@
 </template>
 
 <script setup lang="ts">
-import { mdiCrosshairsGps, mdiDisc, mdiHomeOutline, mdiImageEditOutline } from '@mdi/js'
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { mdiCrosshairsGps, mdiDisc, mdiFlaskOutline, mdiHomeOutline, mdiImageEditOutline } from '@mdi/js'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { t } from './i18n'
 import DiscStage from './components/DiscStage.vue'
 import TitleBar from './components/TitleBar.vue'
@@ -35,6 +36,9 @@ import HomeView from './views/HomeView.vue'
 import ModelsView from './views/ModelsView.vue'
 import ProcessView from './views/ProcessView.vue'
 
+// Lazy-loaded so Three.js is split into its own chunk and never slows app startup.
+const HoloView = defineAsyncComponent(() => import('./views/HoloView.vue'))
+
 /** Often enough that inserting a disc feels noticed, with no refresh button to press. */
 const DRIVE_POLL_MS = 3000
 /** With a disc in, each look makes the drive read it again, and a rewritable one churns audibly: look less often. */
@@ -42,11 +46,19 @@ const DISC_POLL_MS = 10000
 
 const s = useStudio()
 const process = useProcess()
+const holoVisited = ref(s.view === 'holo')
+watch(
+  () => s.view,
+  (v) => {
+    if (v === 'holo') holoVisited.value = true
+  },
+)
 const nav = computed<{ id: View; label: string; icon: string }[]>(() => [
   { id: 'home', label: t('nav.home'), icon: mdiHomeOutline },
   { id: 'models', label: t('nav.models'), icon: mdiDisc },
   { id: 'calibrate', label: t('nav.calibrate'), icon: mdiCrosshairsGps },
   { id: 'carve', label: t('nav.carve'), icon: mdiImageEditOutline },
+  { id: 'holo', label: t('nav.holo'), icon: mdiFlaskOutline },
 ])
 // The process page belongs to whichever page started it.
 const active = computed(() => (s.view === 'process' ? s.origin : s.view))

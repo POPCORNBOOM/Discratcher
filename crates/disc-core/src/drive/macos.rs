@@ -391,6 +391,7 @@ pub fn parse_drutil(text: &str) -> Option<OpticalDriveInfo> {
         supported: false,
         disc: Default::default(),
         rewritable: false,
+        probing: false,
     })
 }
 
@@ -473,27 +474,149 @@ fn drutil(args: &[&str]) -> Option<Output> {
     }
 }
 
-/// The disc the kernel has already identified, read from the registry. Unlike drutil this
-/// asks the drive nothing, so a disc it struggles to read is not poked. A disc keeps its
-/// key until it is swapped, which is the only thing worth telling drutil about.
-fn registry_media_key() -> String {
-    let Ok(out) = Command::new("ioreg").args(["-c", "IOCDMedia", "-r", "-d", "1"]).stderr(Stdio::null()).output() else {
-        return String::new();
+/// One `IODVDMedia` or `IOCDMedia` entry parsed from `ioreg -w 0 -c <class> -r -d 1`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegistryMedia {
+    /// Device name without the trailing `" Media"` suffix (e.g. `"HL-DT-ST DVDRAM GUD1N"`).
+    pub name: String,
+    /// `"BSD Name"` (e.g. `"disk4"`), empty until the BSD client attaches.
+    pub bsd_name: String,
+    /// `"Type"` (e.g. `"DVD+RW"`, `"DVD-R"`, `"CD-R"`).
+    pub media_type: String,
+    /// `"Size"` in bytes, 0 if absent.
+    pub size: u64,
+    /// True while IOKit is still probing the media: missing `"BSD Name"`, `busy N` with
+    /// `N > 0`, or `!matched`.
+    pub probing: bool,
+}
+
+/// Parse `ioreg -w 0 -c IODVDMedia|IOCDMedia -r -d 1` output into entries.
+pub fn parse_ioreg_media(text: &str) -> Vec<RegistryMedia> {
+    let mut entries = Vec::new();
+    let mut cur: Option<(RegistryMedia, bool)> = None;
+    let finish = |item: Option<(RegistryMedia, bool)>, out: &mut Vec<RegistryMedia>| {
+        if let Some((mut m, busy_or_unmatched)) = item {
+            m.probing = busy_or_unmatched;
+            out.push(m);
+        }
     };
-    let text = String::from_utf8_lossy(&out.stdout);
-    let value = |key: &str| -> String {
-        text.lines()
-            .find(|l| l.contains(key))
-            .and_then(|l| l.split('=').nth(1))
-            .map(|v| v.trim().trim_matches('"').to_string())
-            .unwrap_or_default()
-    };
-    let name = value("\"BSD Name\"");
-    // Two drives with a disc each: the cache holds one disc, so this one keeps asking.
-    if name.is_empty() || text.matches("\"BSD Name\"").count() != 1 {
+    for line in text.lines() {
+        if let Some(after) = line.split_once("+-o ").map(|(_, r)| r) {
+            finish(cur.take(), &mut entries);
+            let (raw_name, meta) = after.split_once('<').unwrap_or((after, ""));
+            let name = raw_name.trim().strip_suffix(" Media").unwrap_or(raw_name.trim()).trim().to_string();
+            let meta = meta.trim_end_matches('>');
+            // Only matching still running counts. A plain `busy` count also rises while a
+            // mounted disc is read, and a blank disc has no BSD name for good: neither is a
+            // probe, and taking them for one would block a burn.
+            let busy_or_unmatched = meta.split(',').map(str::trim).any(|tok| tok == "!matched");
+            cur = Some((
+                RegistryMedia { name, bsd_name: String::new(), media_type: String::new(), size: 0, probing: false },
+                busy_or_unmatched,
+            ));
+        } else if let Some((ref mut m, _)) = cur {
+            if let Some((k, v)) = line.trim().split_once(" = ") {
+                let val = v.trim().trim_matches('"');
+                match k {
+                    "\"BSD Name\"" => m.bsd_name = val.to_string(),
+                    "\"Type\"" => m.media_type = val.to_string(),
+                    "\"Size\"" => m.size = val.parse().unwrap_or(0),
+                    _ => {}
+                }
+            }
+        }
+    }
+    finish(cur, &mut entries);
+    entries
+}
+
+/// Discs the kernel has registered, read from the IOKit registry. Unlike drutil this asks
+/// the drive nothing, so a disc it struggles to read is not poked.
+fn registry_media() -> Vec<RegistryMedia> {
+    let mut all = Vec::new();
+    for class in ["IODVDMedia", "IOCDMedia"] {
+        if let Ok(out) = Command::new("ioreg")
+            .args(["-w", "0", "-c", class, "-r", "-d", "1"])
+            .stderr(Stdio::null())
+            .output()
+        {
+            all.extend(parse_ioreg_media(&String::from_utf8_lossy(&out.stdout)));
+        }
+    }
+    all
+}
+
+/// Cache key for a single ready (non-probing) disc. Empty while probing or with multiple
+/// discs, so the caller asks again until settled.
+fn registry_media_key(media: &[RegistryMedia]) -> String {
+    if media.len() != 1 || media[0].probing || media[0].bsd_name.is_empty() {
         return String::new();
     }
-    format!("{name}/{}", value("\"Size\""))
+    format!("{}/{}", media[0].bsd_name, media[0].size)
+}
+
+fn split_media_name(name: &str) -> (String, String) {
+    let parts: Vec<&str> = name.split_whitespace().collect();
+    match parts.as_slice() {
+        [] => (String::new(), String::new()),
+        [only] => (String::new(), (*only).to_string()),
+        [vendor, rest @ ..] => ((*vendor).to_string(), rest.join(" ")),
+    }
+}
+
+/// Overlay probing media from `ioreg` onto `drutil`'s drive list. While the kernel is
+/// probing an inserted disc, `drutil status` answers "No Media Inserted" (or times out);
+/// this reports the drive with `media_present: true`, the media type from `ioreg`, and
+/// `probing: true` so the UI tells the user the system is reading the disc.
+pub fn apply_probing(mut drives: Vec<OpticalDriveInfo>, media: &[RegistryMedia]) -> Vec<OpticalDriveInfo> {
+    for pm in media.iter().filter(|m| m.probing) {
+        let mtype = if pm.media_type.is_empty() { "DVD".to_string() } else { pm.media_type.clone() };
+        let sectors = (pm.size / 2048) as u32;
+        let idx = if !pm.bsd_name.is_empty() {
+            drives.iter().position(|d| d.id == pm.bsd_name && !d.media_present)
+        } else {
+            None
+        }
+        .or_else(|| {
+            drives.iter().position(|d| !d.media_present && !d.product.is_empty() && pm.name.contains(&d.product))
+        })
+        .or_else(|| drives.iter().position(|d| !d.media_present));
+        if let Some(i) = idx {
+            let d = &mut drives[i];
+            if !pm.bsd_name.is_empty() {
+                d.id = pm.bsd_name.clone();
+            }
+            d.media_present = true;
+            d.media_type = mtype;
+            if sectors > 0 {
+                d.total_sectors = sectors;
+            }
+            d.is_blank = false;
+            d.write_speeds.clear();
+            d.max_write_speed = 0;
+            d.probing = true;
+        } else {
+            let (vendor, product) = split_media_name(&pm.name);
+            drives.push(OpticalDriveInfo {
+                id: pm.bsd_name.clone(),
+                vendor,
+                product,
+                revision: String::new(),
+                media_present: true,
+                media_type: mtype,
+                media_id: String::new(),
+                total_sectors: sectors,
+                is_blank: false,
+                write_speeds: Vec::new(),
+                max_write_speed: 0,
+                supported: false,
+                disc: Default::default(),
+                rewritable: false,
+                probing: true,
+            });
+        }
+    }
+    drives
 }
 
 /// The XML status of the disc `text` describes. The app asks every few seconds, and for a
@@ -515,7 +638,8 @@ fn status_xml(text: &str) -> Option<String> {
 /// Lists the drives. `force` asks the drive about the disc even when it is the one already
 /// known: only a user's own refresh or the end of a job is worth that.
 pub fn list(force: bool) -> Vec<OpticalDriveInfo> {
-    let key = registry_media_key();
+    let media = registry_media();
+    let key = registry_media_key(&media);
     if !key.is_empty() && !force {
         if let Some(c) = cached(&key) {
             return vec![c];
@@ -536,12 +660,21 @@ pub fn list(force: bool) -> Vec<OpticalDriveInfo> {
         }
     }
     let began = Instant::now();
-    let v = probe();
+    let found = probe();
+    // The registry has a disc but drutil saw none, or did not answer: the system is still
+    // reading it (the filesystem probes come after the kernel has matched the disc, and they
+    // wait on the same drive). Show the disc as being read rather than no drive at all.
+    let reading: Vec<RegistryMedia> = if found.iter().any(|d| d.media_present) {
+        media
+    } else {
+        media.into_iter().map(|m| RegistryMedia { probing: true, ..m }).collect()
+    };
+    let v = apply_probing(found, &reading);
     let took = began.elapsed();
     if !key.is_empty() {
         // The registry has a disc, so an answer without one is the drive still settling
         // (right after a session it lists itself discless for a few seconds): ask again next time.
-        if let Some(d) = v.first().filter(|d| d.media_present) {
+        if let Some(d) = v.first().filter(|d| d.media_present && !d.probing) {
             let ttl = if took > SLOW_ANSWER { SLOW_TTL } else { FAST_TTL };
             *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Cached { key, info: d.clone(), at: Instant::now(), ttl });
         }
@@ -716,6 +849,102 @@ mod tests {
         assert!(!parse_mount(t, "disk4"));
         assert!(!parse_mount(t, "disk80"));
         assert!(!parse_mount("", "disk8"));
+    }
+
+    #[test]
+    fn parses_ioreg_ready_and_probing_media() {
+        // Real ioreg format for a settled disc: `busy 0 (630037 ms)` must not count as busy.
+        let ready = r#"
++-o HL-DT-ST DVDRAM GUD1N Media  <class IODVDMedia, id 0x100084161, registered, matched, active, busy 0 (630037 ms), retain 13>
+    {
+      "Size" = 4700372992
+      "BSD Name" = "disk4"
+      "Type" = "DVD+RW"
+    }
+"#;
+        let entries = parse_ioreg_media(ready);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "HL-DT-ST DVDRAM GUD1N");
+        assert_eq!(entries[0].bsd_name, "disk4");
+        assert_eq!(entries[0].media_type, "DVD+RW");
+        assert_eq!(entries[0].size, 4_700_372_992);
+        assert!(!entries[0].probing);
+        assert_eq!(registry_media_key(&entries), "disk4/4700372992");
+
+        // While IOKit is still probing: busy > 0, !matched, and no BSD Name yet.
+        let probing_unmatched = r#"
++-o HL-DT-ST DVDRAM GUD1N Media  <class IODVDMedia, id 0x100084161, registered, !matched, active, busy 1 (120000 ms), retain 11>
+    {
+      "Size" = 4700372992
+      "Type" = "DVD+RW"
+    }
+"#;
+        let entries = parse_ioreg_media(probing_unmatched);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].probing);
+        assert!(entries[0].bsd_name.is_empty());
+        assert_eq!(entries[0].media_type, "DVD+RW");
+        assert!(registry_media_key(&entries).is_empty());
+
+        // Matched and attached, merely busy reading: not a probe.
+        let probing_busy = r#"
++-o HL-DT-ST DVDRAM GUD1N Media  <class IOCDMedia, id 0x100084162, registered, matched, active, busy 2 (500 ms), retain 11>
+    {
+      "BSD Name" = "disk5"
+      "Type" = "CD-R"
+    }
+"#;
+        let entries = parse_ioreg_media(probing_busy);
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].probing);
+        assert_eq!(entries[0].media_type, "CD-R");
+
+        // Matched with no BSD Name (a blank disc): not a probe, or burning would be blocked.
+        let no_bsd = r#"
++-o HL-DT-ST DVDRAM GUD1N Media  <class IODVDMedia, id 0x100084163, registered, matched, active, busy 0 (10 ms), retain 9>
+    {
+      "Type" = "DVD-R"
+    }
+"#;
+        let entries = parse_ioreg_media(no_bsd);
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].probing);
+        assert_eq!(entries[0].media_type, "DVD-R");
+    }
+
+    #[test]
+    fn apply_probing_overlays_no_media_drive_and_synthesizes_when_drutil_empty() {
+        let probing_media = parse_ioreg_media(
+            r#"
++-o HL-DT-ST DVDRAM GUD1N Media  <class IODVDMedia, id 0x100084161, registered, !matched, active, busy 1 (630037 ms), retain 11>
+    {
+      "Size" = 4700372992
+      "Type" = "DVD+RW"
+    }
+"#,
+        );
+        // Case 1: drutil answered "No Media Inserted".
+        let empty = parse_drutil(
+            " Vendor   Product           Rev \n HL-DT-ST DVDRAM GUD1N      1.01\n\n           Type: No Media Inserted\n",
+        )
+        .unwrap();
+        let patched = apply_probing(vec![empty], &probing_media);
+        assert_eq!(patched.len(), 1);
+        assert!(patched[0].media_present);
+        assert!(patched[0].probing);
+        assert_eq!(patched[0].media_type, "DVD+RW");
+        assert_eq!(patched[0].vendor, "HL-DT-ST");
+        assert_eq!(patched[0].product, "DVDRAM GUD1N");
+        assert_eq!(patched[0].total_sectors, 2_295_104);
+
+        // Case 2: drutil timed out / returned nothing; synthesize drive from ioreg.
+        let synth = apply_probing(Vec::new(), &probing_media);
+        assert_eq!(synth.len(), 1);
+        assert!(synth[0].media_present);
+        assert!(synth[0].probing);
+        assert_eq!(synth[0].media_type, "DVD+RW");
+        assert_eq!(synth[0].vendor, "HL-DT-ST");
+        assert_eq!(synth[0].product, "DVDRAM GUD1N");
     }
 
     #[test]

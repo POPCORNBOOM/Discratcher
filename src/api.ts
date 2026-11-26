@@ -66,6 +66,33 @@ export async function pickImage(): Promise<string | null> {
   return typeof r === 'string' ? r : null
 }
 
+let mockModels = 0
+
+export async function pickModel(): Promise<string | null> {
+  if (mock) return ['/Users/demo/star.obj', '/Users/demo/gem.glb'][mockModels++ % 2]
+  const r = await open({
+    multiple: false,
+    filters: [{ name: t('dialog.modelFilter'), extensions: ['obj', 'gltf', 'glb'] }],
+  })
+  return typeof r === 'string' ? r : null
+}
+
+let mockHoloScene = '/Users/demo/scene.holo.json'
+
+export async function pickHoloScene(): Promise<string | null> {
+  if (mock) return mockHoloScene
+  const r = await open({
+    multiple: false,
+    filters: [{ name: t('dialog.sceneFilter'), extensions: ['json'] }],
+  })
+  return typeof r === 'string' ? r : null
+}
+
+export async function pickHoloSceneSave(defaultPath: string): Promise<string | null> {
+  if (mock) return (mockHoloScene = `/Users/demo/${defaultPath}`)
+  return save({ defaultPath, filters: [{ name: t('dialog.sceneFilter'), extensions: ['json'] }] })
+}
+
 let mockSaved = '/Users/demo/flowers.discratch'
 const COMPOSITION = { name: '', extensions: ['discratch'] }
 

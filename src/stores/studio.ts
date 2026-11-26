@@ -7,7 +7,7 @@ import { notifyError } from '../notices'
 import { useComposition } from './composition'
 import type { DiscGeometryPreset, OpticalDriveInfo, PresetLook } from '../types'
 
-export type View = 'home' | 'models' | 'calibrate' | 'carve' | 'process'
+export type View = 'home' | 'models' | 'calibrate' | 'carve' | 'holo' | 'process'
 
 /** What the menu bar can ask of the carve page. */
 export interface CarveCommands {

@@ -1,5 +1,8 @@
 // Development stand-in for the native commands. Never bundled into the Tauri app.
 import type { CatalogEntry } from './catalog'
+import { DEFAULT_DISTANCE_MM, DEFAULT_HEAD_SPAN_MM, DEFAULT_TILT_DEG, LAMP_HELD_MM } from './holo/constants'
+import { buildMockGemBuffer, buildSampleStarBuffer } from './holo/sampleMesh'
+import { sceneToDiscVec3, viewerEyeDiscMm, type HoloScene } from './holo/scene'
 import type { DiscGeometryPreset } from './types'
 const handlers = new Map<string, Set<(p: unknown) => void>>()
 const emit = (e: string, p: unknown) => handlers.get(e)?.forEach((h) => h(p))
@@ -8,11 +11,11 @@ export function on(e: string, cb: (p: unknown) => void) {
   handlers.get(e)!.add(cb)
   return () => handlers.get(e)!.delete(cb)
 }
-// Set from the console to try each state: 'none', 'blank', 'written', 'cd' or 'rw'.
+// Set from the console to try each state: 'none', 'blank', 'written', 'cd', 'rw' or 'probing'.
 declare global { var __mockDisc: string | undefined }
 const media = () => globalThis.__mockDisc ?? 'none'
 /** Browser-only: put a disc in the mock drive so the whole flow can run. */
-export function setMockDisc(state: 'none' | 'blank' | 'written' | 'cd' | 'rw') {
+export function setMockDisc(state: 'none' | 'blank' | 'written' | 'cd' | 'rw' | 'probing') {
   globalThis.__mockDisc = state
 }
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -23,10 +26,34 @@ const demo = {
   pitchLinear: -1.85716e-5, pitchQuadratic: 1.191945e-4, pitchCubic: -1.373621e-4, basePitchUm: 0.7340606,
   rmsResidualDeg: 0.402, measuredSpanMm: [25.292, 56.914], createdAt: '2026-11-06T21:53:00+08:00',
 }
+/** Two sequences: one bright at the top of the disc, one dark for the rest. */
+function mockWeights(grid: number): ArrayBuffer {
+  const out = new Uint8Array(8 + grid * grid * 4)
+  new Uint32Array(out.buffer, 0, 2).set([grid, 2])
+  for (let i = 0; i < grid * grid; i++) {
+    const top = Math.floor(i / grid) < grid / 4 && Math.abs((i % grid) / grid - 0.5) < 0.1
+    out.set(top ? [255, 0] : [0, 255], 8 + i * 4)
+  }
+  return out.buffer
+}
+function mockTables(): ArrayBuffer {
+  const [options, gt, gr, groove] = [2, 400, 64, 64]
+  const out = new ArrayBuffer(24 + (options * gt * gr + groove) * 12)
+  new Uint32Array(out, 0, 4).set([options, gt, gr, groove])
+  new Float32Array(out, 16, 2).set([2, 0.01])
+  const rgb = new Float32Array(out, 24)
+  for (let i = 0; i < gt * gr; i++) {
+    const g = (Math.floor(i / gr) / (gt - 1)) * 2
+    const v = Math.exp(-(((g - 0.35) / 0.12) ** 2))
+    rgb.set([v, v * 0.8, v * 0.6], i * 3)
+  }
+  return out
+}
 let saved: { id: string }[] = []
 const log: { id: string }[] = []
 let stop = false
 const compositions = new Map<string, unknown>()
+const holoScenes = new Map<string, string>()
 const disc = (size: number, dark: number) => {
   const c = document.createElement('canvas')
   c.width = c.height = size
@@ -88,7 +115,8 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
   switch (cmd) {
     case 'list_optical_drives': {
       const m = media()
-      return [{ id: '', vendor: 'HL-DT-ST', product: 'DVDRAM GUD1N', revision: '1.01', mediaPresent: m !== 'none', mediaType: m === 'none' ? 'None' : m === 'cd' ? 'CD-R' : m === 'rw' ? 'DVD+RW' : 'DVD-R', mediaId: m === 'none' ? '' : 'CMC MAG. AM3', totalSectors: m === 'cd' ? 359843 : 2295104, isBlank: m === 'blank' || m === 'cd', writeSpeeds: m === 'cd' ? [10, 16, 24] : m === 'rw' ? [2, 4] : undefined, supported: m !== 'none', disc: m === 'none' ? 'none' : m === 'rw' ? 'erasable' : 'blank', rewritable: m === 'rw' }]
+      const probing = m === 'probing'
+      return [{ id: '', vendor: 'HL-DT-ST', product: 'DVDRAM GUD1N', revision: '1.01', mediaPresent: m !== 'none', mediaType: m === 'none' ? 'None' : m === 'cd' ? 'CD-R' : m === 'rw' || probing ? 'DVD+RW' : 'DVD-R', mediaId: m === 'none' || probing ? '' : 'CMC MAG. AM3', totalSectors: m === 'cd' ? 359843 : 2295104, isBlank: m === 'blank' || m === 'cd', writeSpeeds: probing ? [] : m === 'cd' ? [10, 16, 24] : m === 'rw' ? [2, 4] : undefined, supported: m !== 'none' && !probing, disc: m === 'none' || probing ? 'none' : m === 'rw' ? 'erasable' : 'blank', rewritable: m === 'rw', probing }]
     }
     case 'eject_disc': setMockDisc('none'); return null
     case 'inspect_disc':
@@ -142,6 +170,84 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     }
     case 'add_calibration_record': log.push(a.record); return null
     case 'cancel_job': stop = true; return null
+    case 'holo_design_preview': {
+      // A rainbow that reacts to tilt, azimuth, head position, distance, and light mode so previews stay lively.
+      const n = a.size as number, d = new Uint8ClampedArray(n * n * 4)
+      const eye = a.view?.eyeMm as [number, number, number] | undefined
+      const lamp = a.view?.lightMm as [number, number, number] | undefined
+      const deg = (a.view?.angleDeg as number | undefined) ?? 16.5
+      let dir = (((a.view?.dirDeg as number | undefined) ?? -90) * Math.PI) / 180
+      let gain = a.view?.lightMode === 'far' ? 6 : 9 * (350 / Math.max(150, (a.view?.distanceMm as number | undefined) ?? 350))
+      if (a.view?.lightMode === 'lamp' && eye) {
+        const l = lamp ?? [250, 0, 400]
+        const en = Math.hypot(eye[0], eye[1], eye[2]) || 1
+        const ln = Math.hypot(l[0], l[1], l[2]) || 1
+        const gx = eye[0] / en + l[0] / ln
+        const gy = eye[1] / en + l[1] / ln
+        dir = Math.atan2(gy, gx)
+        gain = 10 * Math.hypot(gx, gy) / Math.max(0.15, Math.sin((deg * Math.PI) / 180))
+      }
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+        const i = (y * n + x) * 4, dx = x / n - 0.5, dy = y / n - 0.5, r = Math.hypot(dx, dy)
+        if (r > 0.5 || r < 0.2) continue
+        const h = (Math.abs(Math.sin(dir - Math.atan2(dy, dx))) * deg * gain) % 360
+        d[i] = 128 + 127 * Math.cos((h * Math.PI) / 180); d[i + 1] = 128 + 127 * Math.cos(((h - 120) * Math.PI) / 180); d[i + 2] = 128 + 127 * Math.cos(((h + 120) * Math.PI) / 180); d[i + 3] = 255
+      }
+      await wait(80)
+      return d.buffer
+    }
+    case 'holo_build_design_iso':
+    case 'holo_build_swatch_iso':
+      for (let p = 0; p <= 100; p += 10) { emit('carve://progress', { percent: p, mbPerS: 512, maxSectorDarkRatio: 0 }); await wait(40) }
+      return { outputIsoPath: a.outputIsoPath, totalSectors: 2295104, mismatchedBytes: 0, usage: [], rings: 16, layoutPath: '/data/holo/swatch.json' }
+    case 'holo_test3d_views': {
+      const tiltRad = (20 * Math.PI) / 180
+      const ey = -350 * Math.sin(tiltRad)
+      const ez = 350 * Math.cos(tiltRad)
+      return Array.from({ length: 8 }, (_, i) => {
+        const hx = -80 + (160 * i) / 7
+        const d = Math.hypot(hx, ey, ez)
+        return {
+          imagePath: `/data/holo/test3d/view-${i}.png`,
+          angleDeg: (Math.acos(ez / d) * 180) / Math.PI,
+          lightDeg: 0,
+          dirDeg: (Math.atan2(ey, hx) * 180) / Math.PI,
+          distanceMm: d,
+          lightMode: 'lamp',
+          lightMm: [250, 0, 400],
+          eyeMm: [hx, ey, ez],
+        }
+      })
+    }
+    case 'holo_load_mesh': {
+      const p = String(a.path ?? '')
+      if (p.includes('missing') || p.includes('nonexistent')) {
+        throw `找不到模型文件：${p}`
+      }
+      await wait(25)
+      return p.toLowerCase().includes('gem') ? buildMockGemBuffer() : buildSampleStarBuffer()
+    }
+    case 'holo_solve_scene': {
+      await wait(40)
+      const at = (a.scene as HoloScene).positions
+      return { overlapping: at.filter((q) => at.some((r) => r !== q && Math.abs(r.phiDeg - q.phiDeg) < 15)).map((q) => q.id) }
+    }
+    case 'holo_scene_weights':
+      return (globalThis as { __weights?: ArrayBuffer }).__weights ?? mockWeights(Number((a.options as { grid: number }).grid))
+    case 'holo_response_tables':
+      return (globalThis as { __tables?: ArrayBuffer }).__tables ?? mockTables()
+    case 'holo_build_scene_iso':
+      await wait(300)
+      return { outputIsoPath: a.outputIsoPath, totalSectors: 2295104, usage: [] }
+    case 'holo_save_scene': {
+      holoScenes.set(String(a.path), JSON.stringify(a.scene))
+      return null
+    }
+    case 'holo_open_scene': {
+      const raw = holoScenes.get(String(a.path))
+      if (!raw) throw '不是有效的全息场景文件'
+      return JSON.parse(raw)
+    }
     case 'cache_iso_path': return `/cache/${a.name}`
     case 'burn_iso_to_drive':
       stop = false

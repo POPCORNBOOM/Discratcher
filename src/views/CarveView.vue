@@ -113,7 +113,7 @@
       <div v-if="!comp.layers.length" class="hint">{{ t('carve.hint') }}</div>
       <div v-if="comp.loading" class="spin small muted">{{ t('carve.updating') }}</div>
       <div class="float mono muted">{{ Math.round(zoom * 100) }}%</div>
-      <div v-if="sel" class="float left mono muted">{{ t('carve.center', { x: formatOffset(sel.x * 100), y: formatOffset(sel.y * 100) }) }} · {{ Math.round(sel.size * 100) }}% · {{ sel.rotationDeg.toFixed(1) }}°</div>
+      <div v-if="sel" class="float left mono muted">{{ t('carve.center', { x: formatOffset(sel.x * 100), y: formatOffset(sel.y * 100) }) }}&nbsp; {{ Math.round(sel.size * 100) }}%&nbsp; {{ sel.rotationDeg.toFixed(1) }}°</div>
     </div>
 
     <UiDialog v-if="pending" :title="t('carve.discardTitle')" @close="pending = null">

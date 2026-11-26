@@ -7,6 +7,7 @@ pub mod composition;
 pub mod drive;
 pub mod ecma130;
 pub mod ecma267;
+pub mod holo;
 pub mod iso9660;
 pub mod media;
 pub mod preset;

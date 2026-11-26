@@ -45,6 +45,10 @@ pub struct OpticalDriveInfo {
     /// retry, not the disc. Only decides what the pages say, never what is burned.
     #[serde(default)]
     pub rewritable: bool,
+    /// True while the OS is still probing an inserted disc (e.g. macOS IODVDMedia /
+    /// IOCDMedia is busy or has no BSD Name yet). Burning is never offered while set.
+    #[serde(default)]
+    pub probing: bool,
 }
 
 /// What the disc in the drive can be used for. This is the only place that decides it:
@@ -124,6 +128,9 @@ pub fn check_burnable(id: &str, iso: &str) -> Result<(), String> {
     // The disc as it is now, not as the poll last saw it: a burn that failed partway left it
     // written, and only a fresh answer says whether it has to be erased first.
     let d = list_drives_fresh().into_iter().find(|d| d.id == id).ok_or_else(|| format!("找不到光驱 {id}"))?;
+    if d.probing {
+        return Err("系统正在读取这张光盘，请稍候".into());
+    }
     match d.disc {
         DiscUse::None => return Err("光驱里没有光盘".into()),
         DiscUse::Unsupported => return Err(format!("目前只支持 DVD 和 CD 光盘，这张是 {}", d.media_type)),
@@ -205,8 +212,12 @@ pub fn list_drives_fresh() -> Vec<OpticalDriveInfo> {
 fn decorate(mut v: Vec<OpticalDriveInfo>) -> Vec<OpticalDriveInfo> {
     for d in &mut v {
         d.supported = d.media_present && is_supported_media(&d.media_type);
-        d.disc = DiscUse::of(d.media_present, &d.media_type, d.is_blank);
-        d.rewritable = d.media_present && is_rewritable(&d.media_type) && erases_before_burn();
+        d.disc = if d.probing {
+            DiscUse::None
+        } else {
+            DiscUse::of(d.media_present, &d.media_type, d.is_blank)
+        };
+        d.rewritable = !d.probing && d.media_present && is_rewritable(&d.media_type) && erases_before_burn();
     }
     v
 }
@@ -696,5 +707,23 @@ mod tests {
         assert_eq!(derive_write_speeds("DVD-R", false, vec![2, 4], Some(8)), (Vec::new(), 0));
         // Offered speeds above the drive limit are dropped.
         assert_eq!(derive_write_speeds("DVD-R", true, vec![2, 4, 8, 12, 16], Some(8)), (vec![2, 4, 8], 8));
+    }
+
+    #[test]
+    fn probing_drive_is_not_burnable() {
+        let v = decorate(vec![OpticalDriveInfo {
+            media_present: true,
+            media_type: "DVD+RW".into(),
+            is_blank: false,
+            probing: true,
+            ..Default::default()
+        }]);
+        let d = &v[0];
+        assert!(d.probing);
+        assert!(d.media_present);
+        assert_eq!(d.media_type, "DVD+RW");
+        assert_eq!(d.disc, DiscUse::None);
+        assert!(!d.disc.burnable());
+        assert!(!d.rewritable);
     }
 }

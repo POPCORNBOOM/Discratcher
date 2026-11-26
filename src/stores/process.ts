@@ -61,6 +61,8 @@ export interface ProcessRequest {
   onDone?: () => void
   /** The step that writes the composition: as it runs, the picture appears on the disc. */
   revealStep?: number
+  /** Show the hologram phone-light viewing diagram on the burn screen. */
+  viewingGuide?: boolean
 }
 
 export interface BurnPlan {
@@ -76,6 +78,8 @@ export interface BurnPlan {
   onDone?: () => void
   /** Show the composition growing on the disc while it burns. */
   reveal?: boolean
+  /** Show the hologram phone-light viewing diagram on the burn screen. */
+  viewingGuide?: boolean
   /** Work on the burned disc that belongs to the same job, such as measuring it. */
   after?: ProcessStep[]
   doneMessage?: string
@@ -234,6 +238,7 @@ export const useProcess = defineStore('process', () => {
       shareable: plan.shareable,
       onBurned: plan.onBurned,
       revealStep: plan.reveal ? steps.indexOf(writeStep) : undefined,
+      viewingGuide: plan.viewingGuide,
       restep,
       cleanup: () => (path ? call('remove_cached_iso', { path }) : Promise.resolve()),
       steps,

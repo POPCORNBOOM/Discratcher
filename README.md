@@ -37,6 +37,13 @@
 <table>
   <tr>
     <td width="40%" valign="top">
+      <h3>伪全息雕刻（实验）</h3>
+      <p>拖入 3D 模型，摆好位置，刻到 DVD 上。用手机手电筒从侧面照，转动光盘，模型会随角度变化，呈现立体感。目前只支持 DVD。</p>
+    </td>
+    <td width="60%"><img src="docs/hologram.gif" alt="全息页的预览和刻出来的盘" width="100%"></td>
+  </tr>
+  <tr>
+    <td width="40%" valign="top">
       <h3>自动标定</h3>
       <p>无需手工测量，基于光驱的读取时序测定光盘的螺旋几何。</p>
     </td>

@@ -1,6 +1,6 @@
 <template>
   <UiSelect v-if="s.drives.length > 1" v-model="s.driveKey" :label="t('drive.label')" :options="options" :disabled="!!s.job" />
-  <div v-if="!bare" class="small muted">{{ status }}<span v-if="mid" class="mono mid" :data-tooltip="t('drive.midTip')"> · {{ mid }}</span></div>
+  <div v-if="!bare" class="small muted">{{ status }}<span v-if="mid" class="mono mid" :data-tooltip="t('drive.midTip')">&nbsp; {{ mid }}</span></div>
 </template>
 
 <script setup lang="ts">
@@ -19,6 +19,7 @@ const mid = computed(() => s.drive?.mediaId ?? '')
 const status = computed(() => {
   const d = s.drive
   if (!d) return t(s.driveStuck ? 'drive.stuck' : s.driveBusy ? 'drive.busy' : 'drive.none')
+  if (d.probing) return t('drive.probing')
   switch (d.disc) {
     case 'none': return t('drive.noDisc')
     case 'unsupported': return t('drive.unsupported', { type: d.mediaType })

@@ -89,9 +89,11 @@ const discMid = computed(() => s.drive?.mediaId ?? '')
  * and, for a written disc, what its first sectors say. The line above the button and the
  * button itself both come from here, so they cannot disagree.
  */
-type Action = 'none' | 'unsupported' | 'checking' | 'burn' | 'erase' | 'measure' | 'notCal' | 'unreadable'
+type Action = 'none' | 'probing' | 'unsupported' | 'checking' | 'burn' | 'erase' | 'measure' | 'notCal' | 'unreadable'
 function actionFor(d: OpticalDriveInfo | null, found: DiscKind | 'checking' | null): Action {
-  if (!d || d.disc === 'none') return 'none'
+  if (!d) return 'none'
+  if (d.probing) return 'probing'
+  if (d.disc === 'none') return 'none'
   if (d.disc === 'unsupported') return 'unsupported'
   if (d.disc === 'blank') return 'burn'
   if (found === 'checking') return 'checking'
@@ -123,6 +125,7 @@ function say(a: Action, d: OpticalDriveInfo | null): string {
   const type = d?.mediaType ?? ''
   switch (a) {
     case 'none': return t(!d ? (s.driveStuck ? 'drive.stuck' : s.driveBusy ? 'drive.busy' : 'drive.none') : 'cal.hintNoDisc')
+    case 'probing': return t('drive.probing')
     case 'unsupported': return t('drive.unsupported', { type })
     case 'checking': return t('cal.checking')
     case 'burn': return t('cal.willBurn', { type, n: minutes.value + (cd.value ? 8 : 15) })
@@ -159,6 +162,11 @@ async function waitForDisc(step: StepContext) {
   for (;;) {
     if (p.stopping) throw CANCELLED
     await s.refreshDrives(true).catch(() => {})
+    if (s.drive?.probing) {
+      step.report(null, t('drive.probing'))
+      await sleep(2000)
+      continue
+    }
     const kind = s.drive ? await call<DiscKind>('inspect_disc', { driveId: s.drive.id }).catch((): DiscKind => 'none') : 'none'
     if (kind === 'calibration') return
     if (kind === 'other' || kind === 'unsupported') throw t('cal.notCalDisc')

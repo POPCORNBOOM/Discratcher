@@ -7,6 +7,8 @@ export interface OpticalDriveInfo {
   disc: DiscUse
   /** A rewritable disc this platform can erase: a stopped or failed burn costs a retry, not the disc. */
   rewritable?: boolean
+  /** The kernel is still probing the inserted disc; burning is not offered until it settles. */
+  probing?: boolean
 }
 /** `unreadable`: the first sectors did not read — a bad burn, or a drive still settling after one. */
 export type DiscKind = 'none' | 'unsupported' | 'blank' | 'calibration' | 'other' | 'unreadable'

@@ -257,10 +257,13 @@ pub fn build_iso_from(
         if cancel.load(Ordering::Relaxed) {
             return Err(());
         }
-        let st = carve_block(&ctx, b as u32, out);
-        dark.fetch_add(st.dark_bytes, Ordering::Relaxed);
-        max_dark.fetch_max(st.max_sector_dark as u64, Ordering::Relaxed);
-        max_run.fetch_max(st.max_dark_run as u64, Ordering::Relaxed);
+        let first_lba = (b * ECC_BLOCK_SECTORS) as u32;
+        if !crate::iso9660::is_system_sector(first_lba, total) {
+            let st = carve_block(&ctx, b as u32, out);
+            dark.fetch_add(st.dark_bytes, Ordering::Relaxed);
+            max_dark.fetch_max(st.max_sector_dark as u64, Ordering::Relaxed);
+            max_run.fetch_max(st.max_dark_run as u64, Ordering::Relaxed);
+        }
         let d = done.fetch_add(1, Ordering::Relaxed) + 1;
         if d % tick == 0 {
             let dt = start.elapsed().as_secs_f64().max(1e-6);
@@ -277,6 +280,7 @@ pub fn build_iso_from(
         let _ = std::fs::remove_file(path);
         return Err("已取消".into());
     }
+    crate::iso9660::write_system_area(&mut map, crate::iso9660::CARVE_VOLUME, total);
     map.flush().map_err(|e| e.to_string())?;
     let dt = start.elapsed().as_secs_f64().max(1e-6);
     let max_ratio = max_dark.load(Ordering::Relaxed) as f64 / SECTOR_BYTES as f64;
@@ -404,7 +408,11 @@ fn build_cd_iso(
             return Err(());
         }
         for (i, sector) in out.chunks_exact_mut(SECTOR_BYTES).enumerate() {
-            let d = carve_cd_sector(&ctx, (chunk * CD_CHUNK_SECTORS + i) as u32, sector);
+            let lba = (chunk * CD_CHUNK_SECTORS + i) as u32;
+            if crate::iso9660::is_system_sector(lba, total) {
+                continue;
+            }
+            let d = carve_cd_sector(&ctx, lba, sector);
             dark.fetch_add(d as u64, Ordering::Relaxed);
             max_dark.fetch_max(d as u64, Ordering::Relaxed);
         }
@@ -424,6 +432,7 @@ fn build_cd_iso(
         let _ = std::fs::remove_file(path);
         return Err("已取消".into());
     }
+    crate::iso9660::write_system_area(&mut map, crate::iso9660::CARVE_VOLUME, total);
     map.flush().map_err(|e| e.to_string())?;
     let dt = start.elapsed().as_secs_f64().max(1e-6);
     let max_ratio = max_dark.load(Ordering::Relaxed) as f64 / SECTOR_BYTES as f64;
@@ -466,6 +475,7 @@ pub fn audit_iso(path: &Path, encoding: &Encoding) -> Result<IsoAudit, String> {
     if map.len() % SECTOR_BYTES != 0 {
         return Err("镜像大小不是 2048 的倍数".into());
     }
+    let total_sectors = (map.len() / SECTOR_BYTES) as u32;
     let (cd_mask, dark_byte, light_byte) = match encoding {
         Encoding::Dvd => (None, DARK_BYTE, LIGHT_BYTE),
         Encoding::Cd { user_offset } => (Some(ecma130::user_mask(*user_offset)), ecma130::DARK_BYTE, ecma130::LIGHT_BYTE),
@@ -475,6 +485,11 @@ pub fn audit_iso(path: &Path, encoding: &Encoding) -> Result<IsoAudit, String> {
         .par_chunks(SECTOR_BYTES)
         .enumerate()
         .map(|(i, s)| {
+            let mut want = [0u8; SECTOR_BYTES];
+            if crate::iso9660::system_sector(i as u32, crate::iso9660::CARVE_VOLUME, total_sectors, &mut want) {
+                let foreign = s.iter().zip(want.iter()).filter(|(a, b)| a != b).count() as u64;
+                return (foreign, 0u32, i as u32);
+            }
             let table = cd_mask.as_ref().unwrap_or(&lut[seed_index(i as u32)]);
             let (mut dark, mut foreign) = (0u32, 0u64);
             for (b, k) in s.iter().zip(table.iter()) {
@@ -488,7 +503,7 @@ pub fn audit_iso(path: &Path, encoding: &Encoding) -> Result<IsoAudit, String> {
         })
         .reduce(|| (0, 0, 0), |a, b| (a.0 + b.0, a.1.max(b.1), if b.1 > a.1 { b.2 } else { a.2 }));
     Ok(IsoAudit {
-        sectors: (map.len() / SECTOR_BYTES) as u64,
+        sectors: total_sectors as u64,
         foreign_bytes: foreign,
         max_sector_dark_ratio: worst as f64 / SECTOR_BYTES as f64,
         worst_lba,
@@ -612,6 +627,7 @@ mod tests {
         assert_eq!(a.foreign_bytes, 0);
         assert_eq!(a.sectors, 6400);
         assert!((a.max_sector_dark_ratio - s.max_sector_dark_ratio).abs() < 1e-12);
+        crate::iso9660::tests::assert_system_area(&std::fs::read(&out).unwrap(), crate::iso9660::CARVE_VOLUME, 6400);
         std::fs::remove_file(&out).unwrap();
     }
 
@@ -693,6 +709,7 @@ mod tests {
         assert!(s.limit_ok, "{}", s.max_sector_dark_ratio);
         let a = audit_iso(&out, &Encoding::of(&cfg)).unwrap();
         assert_eq!((a.foreign_bytes, a.sectors), (0, 3000));
+        crate::iso9660::tests::assert_system_area(&std::fs::read(&out).unwrap(), crate::iso9660::CARVE_VOLUME, 3000);
         // Read as the other layout, or as a DVD, the same file is noise.
         assert!(audit_iso(&out, &Encoding::Cd { user_offset: 24 }).unwrap().foreign_bytes > 1_000_000);
         assert!(audit_iso(&out, &Encoding::Dvd).unwrap().foreign_bytes > 1_000_000);

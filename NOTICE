@@ -30,5 +30,9 @@ docs/research/CD_GEOMETRY_INVESTIGATION.md): the point where a timed read ends,
 the ladder's starting values, the CIRC delay table used as a test vector and the
 along-track constant. The dark and light bytes for CD are DiscImageStudio's.
 
+The experimental hologram (crates/disc-core/src/holo/) follows Hans Chiu's public
+posts on choosing byte sequences per sync frame so that a DVD diffracts a picture.
+His "Blue" sequence is transcribed from one of those posts as a test reference.
+
 The source code of Discratcher and of these changes is available at
 https://github.com/POPCORNBOOM/Discratcher

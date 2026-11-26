@@ -159,6 +159,9 @@ function poseFor(aspect: number): Pose {
       return { x: aspect * 0.72, y: -0.05, scale: 1.05, tiltX: -0.6, tiltY: -0.3, dim: 0.62, fx: 1, lean: 0.14, spin: IDLE_SPIN }
     case 'carve':
       return carvePose(hero)
+    case 'holo':
+      // The editor draws its own disc: this one rolls out of the window.
+      return { ...hero, x: aspect + 1.6, lean: 0 }
     case 'process':
       return { ...hero, spin: process.status === 'running' ? BURN_SPIN : IDLE_SPIN }
     default:

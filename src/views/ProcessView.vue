@@ -4,6 +4,8 @@
       <h1>{{ r.title }}</h1>
       <p class="lede">{{ r.note }}</p>
 
+      <HoloViewingGuide v-if="r.viewingGuide" />
+
       <template v-if="p.status === 'confirm'">
         <DrivePicker />
         <div v-if="warning" class="notice warn">
@@ -106,6 +108,7 @@ import { mdiAlertOctagonOutline, mdiAlertOutline, mdiCheck, mdiCircleOutline, md
 import { computed, ref, watch } from 'vue'
 import ContributeDialog from '../components/ContributeDialog.vue'
 import DrivePicker from '../components/DrivePicker.vue'
+import HoloViewingGuide from '../components/HoloViewingGuide.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiButton from '../components/UiButton.vue'
 import UiDialog from '../components/UiDialog.vue'
@@ -149,6 +152,7 @@ const usable = computed(() => canBurn(s.drive) && speedOptions.value.length > 0)
 const warning = computed(() => {
   const d = s.drive
   if (!d) return t('burn.warnNoDrive')
+  if (d.probing) return t('drive.probing')
   switch (d.disc) {
     case 'none': return t('burn.warnNoDisc')
     case 'unsupported': return t('drive.unsupported', { type: d.mediaType })
@@ -159,7 +163,7 @@ const warning = computed(() => {
 
 const speedOptions = computed(() => {
   const d = s.drive
-  if (!d || !d.mediaPresent) return []
+  if (!d || !d.mediaPresent || d.probing) return []
   let speeds: number[] = []
   if (d.writeSpeeds && d.writeSpeeds.length > 0) {
     speeds = [...d.writeSpeeds]
@@ -238,7 +242,7 @@ function stepIcon(i: number) {
 .steps .current svg { color: var(--oc-fg-accent); }
 .steps .failed { color: var(--oc-fg-default); }
 .steps .failed svg { color: var(--oc-fg-danger); }
-.figure { font-size: 64px; line-height: 1; font-weight: 500; letter-spacing: -0.03em; color: #f5f5f7; }
+.figure { font-size: 64px; line-height: 1; font-weight: 500; letter-spacing: -0.03em; color: var(--oc-fg-strong); }
 .actions { display: flex; gap: var(--oc-space-sm); margin-top: var(--oc-space-sm); }
 .rate { display: flex; flex-direction: column; gap: var(--oc-space-xs); padding: var(--oc-space-sm) var(--oc-space-md); border-radius: var(--oc-radius-control); background: var(--oc-bg-glass); backdrop-filter: blur(18px); }
 .actions-inline { display: flex; }

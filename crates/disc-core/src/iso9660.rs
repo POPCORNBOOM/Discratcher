@@ -11,7 +11,33 @@ use std::path::Path;
 
 /// Source: the volume label in discprobe `randomdisc.py`.
 pub const CALIBRATION_VOLUME: &str = "DISCPROBE_RANDOM";
+pub const CARVE_VOLUME: &str = "DISCRATCHER";
+pub const HOLO_VOLUME: &str = "DISCRATCHER_HOLO";
+pub const SWATCH_VOLUME: &str = "DISCRATCHER_SWATCH";
 pub const FS_LAST_LBA: usize = 19;
+
+/// Leading sectors kept as plain user data (zeros plus the ISO 9660 volume at LBA 16..=19).
+///
+/// 512 sectors = 32 DVD ECC blocks. Covers MBR/APM/GPT primary (LBA 0..33), ISO 9660
+/// descriptors/root (16..=19), and the UDF primary AVDP (256), while costing only ~0.013 mm
+/// at a DVD's inner rim (~0.079 mm on a CD).
+pub const SYSTEM_HEAD_SECTORS: usize = 512;
+
+/// Trailing sectors kept as plain zero user data.
+///
+/// 272 sectors = 17 DVD ECC blocks (ECC-block aligned on any 16-sector-multiple DVD image).
+/// Covers UDF backup AVDPs at N-257 and N-1, backup GPT at N-33..N-1, and HFS+ alternate
+/// volume headers at N-1, while costing only ~0.003 mm at a DVD's outer rim (~0.018 mm on a CD).
+pub const SYSTEM_TAIL_SECTORS: usize = 272;
+
+/// True if `lba` lies in the reserved head (`0..SYSTEM_HEAD_SECTORS`) or tail
+/// (`total_sectors - SYSTEM_TAIL_SECTORS .. total_sectors`) system area.
+#[inline]
+pub fn is_system_sector(lba: u32, total_sectors: u32) -> bool {
+    let i = lba as usize;
+    let total = total_sectors as usize;
+    i < SYSTEM_HEAD_SECTORS || i >= total.saturating_sub(SYSTEM_TAIL_SECTORS)
+}
 
 fn both_u32(b: &mut [u8], v: u32) {
     b[..4].copy_from_slice(&v.to_le_bytes());
@@ -74,6 +100,43 @@ pub fn write_volume(image: &mut [u8], label: &str, total_sectors: u32) {
     let root = &mut image[at(19)..at(20)];
     dir_record(&mut root[0..34], ROOT, SECTOR_BYTES as u32, 0);
     dir_record(&mut root[34..68], ROOT, SECTOR_BYTES as u32, 1);
+}
+
+/// Stamp the readable system area onto an image built for burning: plain zero user data
+/// in LBA `0..SYSTEM_HEAD_SECTORS` and `total_sectors - SYSTEM_TAIL_SECTORS..total_sectors`,
+/// with a minimal ISO 9660 volume (including its Volume Descriptor Set Terminator) at
+/// LBA `16..=19`.
+///
+/// Every image builder stores host user-data bytes in the ISO file: on write, the drive
+/// scrambles zeros with its LFSR key (`key ^ 0 == key`, the same on-disc plain stream
+/// `holo::design` uses), so the OS can read LBA 0, 16..=19, 256, N-257 and N-1 cleanly
+/// and `cd9660` claims the disc immediately without minutes of retry timeouts.
+pub fn write_system_area(image: &mut [u8], label: &str, total_sectors: u32) {
+    let sectors = (image.len() / SECTOR_BYTES).min(total_sectors as usize);
+    let head = SYSTEM_HEAD_SECTORS.min(sectors);
+    image[..head * SECTOR_BYTES].fill(0);
+    if sectors > FS_LAST_LBA {
+        write_volume(image, label, total_sectors);
+    }
+    let tail_start = sectors.saturating_sub(SYSTEM_TAIL_SECTORS).max(head);
+    image[tail_start * SECTOR_BYTES..sectors * SECTOR_BYTES].fill(0);
+}
+
+/// Fill `out` with the exact host bytes `write_system_area` writes at `lba`, returning
+/// `true` if `lba` belongs to the system area and `false` otherwise.
+pub fn system_sector(lba: u32, label: &str, total_sectors: u32, out: &mut [u8; SECTOR_BYTES]) -> bool {
+    if !is_system_sector(lba, total_sectors) {
+        return false;
+    }
+    let i = lba as usize;
+    if (16..=FS_LAST_LBA).contains(&i) && total_sectors as usize > FS_LAST_LBA {
+        let mut vol = vec![0u8; (FS_LAST_LBA + 1) * SECTOR_BYTES];
+        write_volume(&mut vol, label, total_sectors);
+        out.copy_from_slice(&vol[i * SECTOR_BYTES..(i + 1) * SECTOR_BYTES]);
+    } else {
+        out.fill(0);
+    }
+    true
 }
 
 /// Sectors per write. 4 MiB keeps the write count low and still lets progress move.
@@ -174,8 +237,77 @@ pub fn generate_calibration_iso(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::preset::{cd_test_preset, reference_preset};
+    use crate::spiral::Spiral;
+
+    /// Shared verifier used by every builder's tests: checks plain head (0..512), consistent
+    /// ISO 9660 volume + terminator at 16..=19, and plain tail (N-272..N).
+    pub(crate) fn assert_system_area(image: &[u8], expected_label: &str, total_sectors: u32) {
+        let total = total_sectors as usize;
+        assert_eq!(image.len(), total * SECTOR_BYTES);
+        let sec = |lba: usize| &image[lba * SECTOR_BYTES..(lba + 1) * SECTOR_BYTES];
+
+        for lba in 0..16 {
+            assert!(sec(lba).iter().all(|&b| b == 0), "LBA {lba} must be plain zero");
+        }
+
+        // LBA 16: Primary Volume Descriptor.
+        let pvd = sec(16);
+        assert_eq!(pvd[0], 1, "PVD type code");
+        assert_eq!(&pvd[1..6], b"CD001", "PVD standard identifier");
+        assert_eq!(pvd[6], 1, "PVD version");
+        let label = std::str::from_utf8(&pvd[40..72]).unwrap().trim_end();
+        assert_eq!(label, expected_label, "PVD volume label");
+        assert_eq!(u32::from_le_bytes(pvd[80..84].try_into().unwrap()), total_sectors, "PVD volume space size LE");
+        assert_eq!(u32::from_be_bytes(pvd[84..88].try_into().unwrap()), total_sectors, "PVD volume space size BE");
+        assert_eq!(u16::from_le_bytes(pvd[128..130].try_into().unwrap()), SECTOR_BYTES as u16, "PVD block size LE");
+        assert_eq!(u16::from_be_bytes(pvd[130..132].try_into().unwrap()), SECTOR_BYTES as u16, "PVD block size BE");
+        assert_eq!(u32::from_le_bytes(pvd[132..136].try_into().unwrap()), 10, "PVD path table size");
+        assert_eq!(u32::from_le_bytes(pvd[140..144].try_into().unwrap()), 18, "PVD L-path table LBA");
+        assert_eq!(pvd[156], 34, "PVD root dir record length");
+        assert_eq!(u32::from_le_bytes(pvd[158..162].try_into().unwrap()), 19, "PVD root extent LE");
+        assert_eq!(u32::from_be_bytes(pvd[162..166].try_into().unwrap()), 19, "PVD root extent BE");
+        assert_eq!(pvd[156 + 25], 0x02, "PVD root directory flag");
+        assert_eq!(pvd[881], 1, "PVD file structure version");
+
+        // LBA 17: Volume Descriptor Set Terminator (stops ISO/UDF VRS probing).
+        let term = sec(17);
+        assert_eq!(term[0], 255, "VDST type code");
+        assert_eq!(&term[1..6], b"CD001", "VDST standard identifier");
+        assert_eq!(term[6], 1, "VDST version");
+        assert!(term[7..].iter().all(|&b| b == 0), "VDST unused bytes");
+
+        // LBA 18: L-Path Table pointing at root LBA 19.
+        let path = sec(18);
+        assert_eq!(path[0], 1);
+        assert_eq!(u32::from_le_bytes(path[2..6].try_into().unwrap()), 19);
+        assert_eq!(u16::from_le_bytes(path[6..8].try_into().unwrap()), 1);
+
+        // LBA 19: Root Directory ('.' and '..' self-entries).
+        let root = sec(19);
+        assert_eq!(root[0], 34);
+        assert_eq!(u32::from_le_bytes(root[2..6].try_into().unwrap()), 19);
+        assert_eq!(root[33], 0);
+        assert_eq!(root[34], 34);
+        assert_eq!(u32::from_le_bytes(root[36..40].try_into().unwrap()), 19);
+        assert_eq!(root[34 + 33], 1);
+
+        for lba in (FS_LAST_LBA + 1)..SYSTEM_HEAD_SECTORS.min(total) {
+            assert!(sec(lba).iter().all(|&b| b == 0), "LBA {lba} must be plain zero");
+        }
+        let tail_start = total.saturating_sub(SYSTEM_TAIL_SECTORS).max(SYSTEM_HEAD_SECTORS.min(total));
+        for lba in tail_start..total {
+            assert!(sec(lba).iter().all(|&b| b == 0), "tail LBA {lba} must be plain zero");
+        }
+        // Explicitly check UDF AVDP anchor sectors when the image is large enough.
+        if total >= SYSTEM_HEAD_SECTORS + SYSTEM_TAIL_SECTORS {
+            assert!(sec(256).iter().all(|&b| b == 0), "UDF primary AVDP (LBA 256) must be plain");
+            assert!(sec(total - 257).iter().all(|&b| b == 0), "UDF backup AVDP (N-257) must be plain");
+            assert!(sec(total - 1).iter().all(|&b| b == 0), "UDF backup AVDP (N-1) must be plain");
+        }
+    }
 
     #[test]
     fn descriptors_are_well_formed_and_random_fill_survives() {
@@ -197,5 +329,40 @@ mod tests {
             assert_eq!(&one[..], &d[lba as usize * 2048..(lba as usize + 1) * 2048], "LBA {lba}");
         }
         std::fs::remove_file(&p).unwrap();
+    }
+
+    #[test]
+    fn write_system_area_and_single_sector_agree() {
+        let total = 1024u32;
+        let mut img = vec![0xA5u8; total as usize * SECTOR_BYTES];
+        write_system_area(&mut img, HOLO_VOLUME, total);
+        assert_system_area(&img, HOLO_VOLUME, total);
+        // Middle sectors are untouched.
+        assert!(img[512 * SECTOR_BYTES..(1024 - SYSTEM_TAIL_SECTORS) * SECTOR_BYTES].iter().all(|&b| b == 0xA5));
+        let mut one = [0xFFu8; SECTOR_BYTES];
+        for lba in 0..total {
+            let expected = is_system_sector(lba, total);
+            assert_eq!(system_sector(lba, HOLO_VOLUME, total, &mut one), expected);
+            if expected {
+                assert_eq!(&one[..], &img[lba as usize * SECTOR_BYTES..(lba as usize + 1) * SECTOR_BYTES], "LBA {lba}");
+            }
+        }
+    }
+
+    #[test]
+    fn system_area_radial_width_is_well_under_a_tenth_millimetre() {
+        let dvd = Spiral::new(reference_preset().spiral_params()).unwrap();
+        let dvd_head_mm = dvd.radius_of_lba(SYSTEM_HEAD_SECTORS as u32) - dvd.radius_of_lba(0);
+        let n = reference_preset().total_sectors;
+        let dvd_tail_mm = dvd.radius_of_lba(n) - dvd.radius_of_lba(n - SYSTEM_TAIL_SECTORS as u32);
+        assert!(dvd_head_mm > 0.012 && dvd_head_mm < 0.014, "DVD head band: {dvd_head_mm:.6} mm");
+        assert!(dvd_tail_mm > 0.002 && dvd_tail_mm < 0.004, "DVD tail band: {dvd_tail_mm:.6} mm");
+
+        let cd = Spiral::new(cd_test_preset().spiral_params()).unwrap();
+        let cd_head_mm = cd.radius_of_lba(SYSTEM_HEAD_SECTORS as u32) - cd.radius_of_lba(0);
+        let cd_n = cd_test_preset().total_sectors;
+        let cd_tail_mm = cd.radius_of_lba(cd_n) - cd.radius_of_lba(cd_n - SYSTEM_TAIL_SECTORS as u32);
+        assert!(cd_head_mm > 0.070 && cd_head_mm < 0.085, "CD head band: {cd_head_mm:.6} mm");
+        assert!(cd_tail_mm > 0.015 && cd_tail_mm < 0.025, "CD tail band: {cd_tail_mm:.6} mm");
     }
 }

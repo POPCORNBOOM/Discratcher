@@ -1,0 +1,43 @@
+# Faceted 3D five-pointed star for DVD hologram testing
+# Right-handed Y-up, +Z toward viewer (front apex floats above rim)
+# 12 vertices, 20 triangles (closed manifold)
+
+# Perimeter alternating outer tip (r=1.0, z=-0.30) and inner valley (r=0.44, z=0.05), CCW
+v  0.0000  1.0000 -0.3000
+v -0.2586  0.3560  0.0500
+v -0.9511  0.3090 -0.3000
+v -0.4185 -0.1360  0.0500
+v -0.5878 -0.8090 -0.3000
+v  0.0000 -0.4400  0.0500
+v  0.5878 -0.8090 -0.3000
+v  0.4185 -0.1360  0.0500
+v  0.9511  0.3090 -0.3000
+v  0.2586  0.3560  0.0500
+
+# Front apex (+Z) and back apex (-Z)
+v  0.0000  0.0000  1.0500
+v  0.0000  0.0000 -0.4500
+
+# Front facets
+f 11 1 2
+f 11 2 3
+f 11 3 4
+f 11 4 5
+f 11 5 6
+f 11 6 7
+f 11 7 8
+f 11 8 9
+f 11 9 10
+f 11 10 1
+
+# Back facets
+f 12 2 1
+f 12 3 2
+f 12 4 3
+f 12 5 4
+f 12 6 5
+f 12 7 6
+f 12 8 7
+f 12 9 8
+f 12 10 9
+f 12 1 10
