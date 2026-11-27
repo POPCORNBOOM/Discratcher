@@ -9,11 +9,11 @@
 
 <script setup lang="ts">
 import { mdiChevronRight } from '@mdi/js'
-import { ref } from 'vue'
 import { t } from '../i18n'
 import UiIcon from './UiIcon.vue'
 
-const open = ref(false)
+/** Whether the advanced settings are shown; bind it to swap simple controls for exact ones. */
+const open = defineModel<boolean>('open', { default: false })
 </script>
 
 <style scoped>

@@ -165,26 +165,28 @@
               <span class="grow ellipsis">{{ selectedObj.name }}</span>
               <a class="action-link" role="button" tabindex="0" @click="resetSelected" @keydown.enter="resetSelected">{{ t('holo.reset') }}</a>
             </div>
-            <UiSlider
-              :model-value="selectedObj.positionMm[2]"
-              :label="t('holo.depth')"
-              :min="-30"
-              :max="30"
-              :step="0.5"
-              :format="(v) => formatDepthWords(v, t)"
-              @pointerdown="beginControlEdit"
-              @update:model-value="setSelectedDepth"
-            />
-            <UiSlider
-              :model-value="selectedObj.scaleMm"
-              :label="t('holo.size')"
-              :min="6"
-              :max="60"
-              :step="1"
-              :format="mm"
-              @pointerdown="beginControlEdit"
-              @update:model-value="setSelectedScale"
-            />
+            <template v-if="!modelExact">
+              <UiSlider
+                :model-value="selectedObj.positionMm[2]"
+                :label="t('holo.depth')"
+                :min="-30"
+                :max="30"
+                :step="0.5"
+                :format="(v) => formatDepthWords(v, t)"
+                @pointerdown="beginControlEdit"
+                @update:model-value="setSelectedDepth"
+              />
+              <UiSlider
+                :model-value="selectedObj.scaleMm"
+                :label="t('holo.size')"
+                :min="6"
+                :max="60"
+                :step="1"
+                :format="mm"
+                @pointerdown="beginControlEdit"
+                @update:model-value="setSelectedScale"
+              />
+            </template>
             <template v-if="position.mode === 'transform'">
               <div class="field">
                 <span class="small muted">{{ t('holo.motionPreset') }}</span>
@@ -251,7 +253,52 @@
                 <div class="grow">{{ motionError }}</div>
               </div>
             </template>
-            <UiAdvanced>
+            <UiAdvanced v-model:open="modelExact">
+            <div class="field">
+              <span class="small muted">{{ t('holo.pos') }}</span>
+              <div class="num-grid">
+                <label v-for="(axis, idx) in ['X', 'Y', 'Z']" :key="axis" class="num-field">
+                  <span class="small muted">{{ axis }}</span>
+                  <input
+                    type="number"
+                    class="num-input mono"
+                    :value="selectedObj.positionMm[idx]"
+                    step="0.5"
+                    @focus="beginControlEdit"
+                    @change="setSelectedPosAxis(idx, $event)"
+                  />
+                </label>
+              </div>
+            </div>
+            <div class="field">
+              <span class="small muted">{{ t('holo.rot') }}</span>
+              <div class="num-grid">
+                <label v-for="(axis, idx) in ['X', 'Y', 'Z']" :key="axis" class="num-field">
+                  <span class="small muted">{{ axis }}</span>
+                  <input
+                    type="number"
+                    class="num-input mono"
+                    :value="selectedObj.rotationDeg[idx]"
+                    step="5"
+                    @focus="beginControlEdit"
+                    @change="setSelectedRotAxis(idx, $event)"
+                  />
+                </label>
+              </div>
+            </div>
+            <div class="field">
+              <span class="small muted">{{ t('holo.size') }} (mm)</span>
+              <input
+                type="number"
+                class="num-input mono"
+                :value="selectedObj.scaleMm"
+                min="4"
+                max="120"
+                step="1"
+                @focus="beginControlEdit"
+                @change="setSelectedScaleInput"
+              />
+            </div>
             <UiSlider
               :model-value="selectedObj.style.lines"
               :label="t('holo.lines')"
@@ -306,51 +353,6 @@
                   </div>
                 </div>
               </template>
-            <div class="field">
-              <span class="small muted">{{ t('holo.pos') }}</span>
-              <div class="num-grid">
-                <label v-for="(axis, idx) in ['X', 'Y', 'Z']" :key="axis" class="num-field">
-                  <span class="small muted">{{ axis }}</span>
-                  <input
-                    type="number"
-                    class="num-input mono"
-                    :value="selectedObj.positionMm[idx]"
-                    step="0.5"
-                    @focus="beginControlEdit"
-                    @change="setSelectedPosAxis(idx, $event)"
-                  />
-                </label>
-              </div>
-            </div>
-            <div class="field">
-              <span class="small muted">{{ t('holo.rot') }}</span>
-              <div class="num-grid">
-                <label v-for="(axis, idx) in ['X', 'Y', 'Z']" :key="axis" class="num-field">
-                  <span class="small muted">{{ axis }}</span>
-                  <input
-                    type="number"
-                    class="num-input mono"
-                    :value="selectedObj.rotationDeg[idx]"
-                    step="5"
-                    @focus="beginControlEdit"
-                    @change="setSelectedRotAxis(idx, $event)"
-                  />
-                </label>
-              </div>
-            </div>
-            <div class="field">
-              <span class="small muted">{{ t('holo.size') }} (mm)</span>
-              <input
-                type="number"
-                class="num-input mono"
-                :value="selectedObj.scaleMm"
-                min="4"
-                max="120"
-                step="1"
-                @focus="beginControlEdit"
-                @change="setSelectedScaleInput"
-              />
-            </div>
             </UiAdvanced>
           </section>
         </template>
@@ -792,6 +794,8 @@ const opts = reactive<{
 
 // Editor-only preview parameter for transform mode (not saved, not sent to solver).
 const previewT = ref(0.5)
+/** The selected model's exact position, turn and size replace its depth and size sliders. */
+const modelExact = ref(false)
 /** How a transform position is tilted, as `turntable::Tilt`. */
 interface Tilt { id: string; deg: number; autoDeg: number; ok: boolean }
 const tilts = ref<Tilt[]>([])
@@ -1732,8 +1736,8 @@ onBeforeUnmount(() => {
 .num-field { display: flex; align-items: center; gap: var(--oc-space-2xs); min-width: 0; }
 .num-input { width: 100%; min-width: 0; height: var(--oc-size-md); padding: 0 var(--oc-space-xs); border: 0; border-radius: var(--oc-radius-control); background: var(--oc-bg-input); appearance: textfield; -moz-appearance: textfield; }
 .num-input::-webkit-inner-spin-button, .num-input::-webkit-outer-spin-button { appearance: none; -webkit-appearance: none; margin: 0; }
-.var-row { display: flex; align-items: center; gap: var(--oc-space-2xs); }
-.var-name { flex: 1; min-width: 0; color: var(--oc-fg-muted); }
+.var-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; gap: var(--oc-space-2xs); }
+.var-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--oc-fg-muted); }
 .action-link.end { align-self: flex-end; }
 .mat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--oc-space-2xs); }
 .mat-input { width: 100%; min-width: 0; height: var(--oc-size-sm); padding: 0 var(--oc-space-2xs); border: 0; border-radius: 4px; background: var(--oc-bg-input); color: var(--oc-fg-default); font-size: var(--oc-text-xs); text-align: center; }
