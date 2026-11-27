@@ -64,6 +64,8 @@ export interface HoloPosition {
   parallax: number
   /** How far the disc tilts either way in transform mode, degrees; 0 picks it from the lamp. */
   tiltDeg: number
+  /** How hard every view is held white rather than sharper and in colour; absent takes the mode's default. */
+  neutral?: number
 }
 
 export interface HoloScene {
@@ -275,6 +277,7 @@ export function validateScene(raw: unknown): HoloScene {
         mode,
         parallax,
         tiltDeg: typeof q.tiltDeg === 'number' && Number.isFinite(q.tiltDeg) ? Math.min(30, Math.max(0, q.tiltDeg)) : 0,
+        ...(typeof q.neutral === 'number' && Number.isFinite(q.neutral) ? { neutral: Math.min(3, Math.max(0, q.neutral)) } : {}),
       })
     }
   }

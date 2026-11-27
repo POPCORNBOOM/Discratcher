@@ -84,9 +84,11 @@
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
             </div>
-            <UiAdvanced v-if="position.mode === 'real'" :label="t('holo.colour')">
+            <UiAdvanced :label="t('holo.colour')">
               <UiSlider
-                v-model="opts.chromaWeight"
+                :model-value="neutralNow"
+                @pointerdown="beginControlEdit"
+                @update:model-value="setNeutral"
                 :label="t('holo.chroma')"
                 :min="0"
                 :max="3"
@@ -987,6 +989,13 @@ function setMode(mode: HoloPositionMode) {
   if (position.value.mode === mode) return
   pushHistory()
   position.value.mode = mode
+}
+
+/** The position's neutral colour, or its mode's default (`turntable::default_neutral`). */
+const neutralNow = computed(() => position.value.neutral ?? (position.value.mode === 'real' ? opts.chromaWeight : 0))
+
+function setNeutral(v: number) {
+  position.value.neutral = Math.round(v * 100) / 100
 }
 
 function setTilt(deg: number) {

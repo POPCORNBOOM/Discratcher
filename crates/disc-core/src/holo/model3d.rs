@@ -480,6 +480,10 @@ pub struct Position {
     /// How far the disc is tilted either way in `Mode::Transform`, degrees; 0 picks it from the lamp.
     #[serde(default)]
     pub tilt_deg: f64,
+    /// How hard the solve holds every view white rather than letting it take the colour that is
+    /// sharper; none takes the mode's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub neutral: Option<f64>,
 }
 
 /// Versioned 3D hologram scene contract shared between the editor UI, project files, and renderer.

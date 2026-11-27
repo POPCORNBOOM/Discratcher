@@ -175,8 +175,23 @@ pub fn tilt_for(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Op
     Tilt { id: pos.id.clone(), deg, auto_deg, auto_ok: auto.is_some(), ok: sweep_fits(opts, lamp_mm, deg, angle, &points) }
 }
 
-fn transform_options(opts: &Options) -> Options {
-    Options { chroma_weight: 0.0, wide: 0.0, exposure: TRANSFORM_EXPOSURE, ..opts.clone() }
+/// How hard a mode holds views white when the position does not say: real parallax as the
+/// scene's options ask, transform animation not at all.
+pub fn default_neutral(mode: model3d::Mode, opts: &Options) -> f64 {
+    match mode {
+        model3d::Mode::Real => opts.chroma_weight,
+        model3d::Mode::Transform => 0.0,
+    }
+}
+
+/// The options a position is solved with: its own neutral colour, and for transform animation no
+/// evenness outside the sweep and a fixed exposure.
+fn position_options(pos: &Position, opts: &Options) -> Options {
+    let chroma_weight = pos.neutral.unwrap_or_else(|| default_neutral(pos.mode, opts)).max(0.0);
+    match pos.mode {
+        model3d::Mode::Real => Options { chroma_weight, ..opts.clone() },
+        model3d::Mode::Transform => Options { chroma_weight, wide: 0.0, exposure: TRANSFORM_EXPOSURE, ..opts.clone() },
+    }
 }
 
 /// Pick the codebook option (or plain data last) with the lowest peak rendered luminance over
@@ -291,6 +306,7 @@ fn grouped(scene: &Scene) -> Vec<(Position, Vec<&SceneObject>)> {
                 mode: model3d::Mode::Real,
                 parallax: model3d::DEFAULT_PARALLAX,
                 tilt_deg: 0.0,
+                neutral: None,
             },
             vec![],
         ));
@@ -492,10 +508,9 @@ fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, tilt_de
             Ok(solve_patch(&poses, &wide_poses, &sharp, true, opts, resp, preset))
         }
         model3d::Mode::Transform => {
-            let t_opts = transform_options(opts);
-            let poses = transform_poses(&t_opts, lamp_mm, tilt_deg, angle);
-            let sharp = position_targets(pos, objects, lamp_mm, &t_opts, preset)?;
-            Ok(solve_patch(&poses, &[], &sharp, false, &t_opts, resp, preset))
+            let poses = transform_poses(opts, lamp_mm, tilt_deg, angle);
+            let sharp = position_targets(pos, objects, lamp_mm, opts, preset)?;
+            Ok(solve_patch(&poses, &[], &sharp, false, opts, resp, preset))
         }
     }
 }
@@ -524,16 +539,17 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
                 (SceneObject { id: String::new(), name: String::new(), position_id: String::new(), ..(*o).clone() }, modified)
             })
             .collect();
-        let (eff_lamp, eff_opts, eff_parallax) = match pos.mode {
-            model3d::Mode::Real => (lamp, opts.clone(), pos.parallax),
-            model3d::Mode::Transform => (lamp, transform_options(&opts), tilt.deg),
+        let p_opts = position_options(pos, &opts);
+        let shape = match pos.mode {
+            model3d::Mode::Real => pos.parallax,
+            model3d::Mode::Transform => tilt.deg,
         };
-        let key = serde_json::to_string(&(pos.phi_deg, pos.mode, eff_parallax, &same, eff_lamp, &eff_opts, preset)).map_err(|e| e.to_string())?;
+        let key = serde_json::to_string(&(pos.phi_deg, pos.mode, shape, &same, lamp, &p_opts, preset)).map_err(|e| e.to_string())?;
         let held = CACHE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|c| c.0 == key).map(|c| c.1.clone());
         let patch = match held {
             Some(p) => p,
             None => {
-                let p = Arc::new(solve_position(pos, objects, lamp, tilt.deg, &opts, resp, preset)?);
+                let p = Arc::new(solve_position(pos, objects, lamp, tilt.deg, &p_opts, resp, preset)?);
                 let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
                 if cache.len() >= KEEP {
                     cache.remove(0);
@@ -590,8 +606,7 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
             continue;
         }
         let phi_rad = pos.phi_deg.to_radians();
-        let t_opts = transform_options(&opts);
-        let poses = transform_poses(&t_opts, lamp, tilt.deg, phi_rad);
+        let poses = transform_poses(&position_options(pos, &opts), lamp, tilt.deg, phi_rad);
         let (t_bg, _) = transform_background(pos, &poses, resp, preset);
         if t_bg == bg {
             continue;
@@ -677,6 +692,7 @@ mod tests {
             mode: model3d::Mode::Real,
             parallax: model3d::DEFAULT_PARALLAX,
             tilt_deg: 0.0,
+            neutral: None,
         }
     }
 
@@ -1487,6 +1503,7 @@ mod frames_study {
             mode: model3d::Mode::Transform,
             parallax: model3d::DEFAULT_PARALLAX,
             tilt_deg: 0.0,
+            neutral: None,
         };
         let opts = Options { grid, ..Default::default() };
         position_targets_n(&pos, &[&obj], LAMP_MM, &opts, preset, views).unwrap()
