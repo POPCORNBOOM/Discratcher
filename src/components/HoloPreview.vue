@@ -331,6 +331,9 @@ onBeforeUnmount(() => {
   disc?.children.forEach((m) => (m as Mesh).geometry.dispose())
   material?.dispose()
   renderer?.dispose()
+  // dispose() keeps the WebGL context; WebKit allows only a few, and every hot reload or remount
+  // would leak one until the page stalls.
+  renderer?.forceContextLoss()
 })
 </script>
 

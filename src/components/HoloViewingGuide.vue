@@ -267,6 +267,9 @@ onBeforeUnmount(() => {
   controls?.dispose()
   for (const d of disposables) d.dispose()
   renderer?.dispose()
+  // dispose() keeps the WebGL context; WebKit allows only a few, and every hot reload or remount
+  // would leak one until the page stalls.
+  renderer?.forceContextLoss()
   renderer?.domElement.remove()
   renderer = null
 })

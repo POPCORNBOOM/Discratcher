@@ -585,6 +585,7 @@
           :inner-radius-mm="radii.inner"
           :outer-radius-mm="radii.outer"
           :lamp-mm="opts.lampMm"
+          :show-light="openGroup === 'lighting' || selectedId === LAMP_ID"
           :distance-mm="opts.distanceMm"
           :preview-t="previewT"
           :images="scene.images"

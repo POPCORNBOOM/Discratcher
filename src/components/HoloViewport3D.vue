@@ -17,6 +17,7 @@
 
 <script setup lang="ts">
 import {
+  AdditiveBlending,
   AmbientLight,
   BufferGeometry,
   CircleGeometry,
@@ -40,9 +41,10 @@ import {
   Raycaster,
   RingGeometry,
   Scene,
-  type ShaderMaterial,
+  ShaderMaterial,
   ShadowMaterial,
   SphereGeometry,
+  Uint16BufferAttribute,
   Uint32BufferAttribute,
   Vector2,
   Vector3,
@@ -81,6 +83,7 @@ const props = defineProps<{
   innerRadiusMm: number
   outerRadiusMm: number
   lampMm: Vec3
+  showLight: boolean
   distanceMm: number
   previewT: number
   /** The flat positions' pictures, and their thumbnails by path. */
@@ -105,6 +108,8 @@ const SNAP_ROTATE_RAD = MathUtils.degToRad(15)
 const SNAP_SCALE_MM = 2
 const CAMERA_FOV_DEG = 32
 const CAMERA_VIEW_DIST_MM = 275
+const LAMP_CONE_SEGMENTS = 96
+const LIGHT_FADE_MS = 200
 
 const host = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
@@ -136,7 +141,9 @@ let markers: Group | null = null
 /** The angle at the top as drawn, easing to the current position's. */
 let shownPhi = 0
 let lampMesh: Mesh | null = null
-let lampBeam: LineLoop | null = null
+let lampCone: Mesh<BufferGeometry, ShaderMaterial> | null = null
+let lightFade = 0
+let lastFrameMs = 0
 
 /** Each object: the mesh you place, and in transform mode a ghost of it moved by T at the preview tilt. */
 type ObjectEntry = { mesh: Mesh; ghost: Mesh; wrapper: Group; path: string }
@@ -553,24 +560,92 @@ function syncObjects() {
   updateDropIndicator(props.objects.find((o) => o.id === props.selectedId && o.positionId === props.positionId))
 }
 
-/** The lamp and the cone of light it throws on the disc. */
+/** The lamp and the soft oblique cone of light it casts onto the disc. */
 function buildLamp() {
   if (!scene) return
   lampMesh = new Mesh(new SphereGeometry(7, 24, 16), new MeshBasicMaterial({ color: 0xfff3d6 }))
   lampMesh.userData.objectId = LAMP_ID
-  lampBeam = new LineLoop(new BufferGeometry(), new LineBasicMaterial({ color: 0xfff3d6, transparent: true, opacity: 0.22 }))
-  scene.add(lampMesh, lampBeam)
+
+  // Vertex 0 is the apex at the lamp (along = 0); vertices 1..N are the disc outer circle (along = 1).
+  const positions = new Float32Array((LAMP_CONE_SEGMENTS + 1) * 3)
+  const along = new Float32Array(LAMP_CONE_SEGMENTS + 1)
+  const indices = new Uint16Array(LAMP_CONE_SEGMENTS * 3)
+  for (let i = 0; i < LAMP_CONE_SEGMENTS; i++) {
+    along[i + 1] = 1
+    indices[i * 3] = 0
+    indices[i * 3 + 1] = i + 1
+    indices[i * 3 + 2] = ((i + 1) % LAMP_CONE_SEGMENTS) + 1
+  }
+  const coneGeo = new BufferGeometry()
+  coneGeo.setAttribute('position', new Float32BufferAttribute(positions, 3))
+  coneGeo.setAttribute('along', new Float32BufferAttribute(along, 1))
+  coneGeo.setIndex(new Uint16BufferAttribute(indices, 1))
+
+  lightFade = props.showLight ? 1 : 0
+  const coneMat = new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+    side: DoubleSide,
+    uniforms: {
+      fade: { value: lightFade },
+    },
+    vertexShader: `
+      attribute float along;
+      varying float vAlong;
+      void main() {
+        vAlong = along;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float fade;
+      varying float vAlong;
+      void main() {
+        float f = fade * fade * (3.0 - 2.0 * fade);
+        float alpha = mix(0.02, 0.10, vAlong) * f;
+        gl_FragColor = vec4(1.0, 0.953, 0.839, alpha);
+      }
+    `,
+  })
+  lampCone = new Mesh(coneGeo, coneMat)
+  lampCone.renderOrder = 11
+  lampCone.raycast = () => {}
+  lampCone.visible = lightFade > 0
+
+  scene.add(lampMesh, lampCone)
   syncLamp()
 }
 
 function syncLamp() {
-  if (!lampMesh || !lampBeam) return
-  lampBeam.visible = props.selectedId === LAMP_ID
+  if (!lampMesh || !lampCone) return
   if (!(gizmoDragging && gizmo?.object === lampMesh)) lampMesh.position.set(...props.lampMm)
+  const pos = lampCone.geometry.getAttribute('position') as Float32BufferAttribute
   const at = lampMesh.position
-  const side = Math.atan2(at.y, at.x) + Math.PI / 2
-  const edge = (sign: number) => new Vector3(Math.cos(side) * DISC_PHYSICAL_OUTER_MM * sign, Math.sin(side) * DISC_PHYSICAL_OUTER_MM * sign, 0)
-  lampBeam.geometry.setFromPoints([at.clone(), edge(1), edge(-1)])
+  pos.setXYZ(0, at.x, at.y, at.z)
+  const r = props.outerRadiusMm
+  for (let i = 0; i < LAMP_CONE_SEGMENTS; i++) {
+    const a = (i / LAMP_CONE_SEGMENTS) * Math.PI * 2
+    pos.setXYZ(i + 1, Math.cos(a) * r, Math.sin(a) * r, 0)
+  }
+  pos.needsUpdate = true
+  lampCone.geometry.computeBoundingSphere()
+}
+
+/** Fade the light cone in or out over LIGHT_FADE_MS, hiding it once fully transparent. */
+function stepLightFade(dtMs: number) {
+  if (!lampCone) return
+  const target = props.showLight ? 1 : 0
+  if (lightFade !== target) {
+    if (reducedMotion) {
+      lightFade = target
+    } else {
+      const step = dtMs / LIGHT_FADE_MS
+      lightFade = lightFade < target ? Math.min(target, lightFade + step) : Math.max(target, lightFade - step)
+    }
+    lampCone.material.uniforms.fade.value = lightFade
+  }
+  lampCone.visible = lightFade > 0
 }
 
 function syncGizmoAttachment() {
@@ -866,14 +941,21 @@ function handleResize() {
 function animate() {
   animFrame = requestAnimationFrame(animate)
   // Hidden behind the preview or another page: leave the graphics card to them.
-  if (!host.value?.offsetParent) return
+  if (!host.value?.offsetParent) {
+    lastFrameMs = 0
+    return
+  }
+  const now = performance.now()
+  const dt = lastFrameMs ? Math.min(100, now - lastFrameMs) : 0
+  lastFrameMs = now
   const left = turnLeft()
   if (left !== 0) {
     const jump = Math.abs(left) < 0.05 || reducedMotion
     shownPhi = jump ? currentPhi() : shownPhi + left * 0.16
     turnGroups()
   }
-  stepFlight(performance.now())
+  stepLightFade(dt)
+  stepFlight(now)
   orbit?.update()
   if (renderer && scene && camera) {
     renderer.render(scene, camera)
@@ -1027,6 +1109,7 @@ onMounted(() => {
 watch(() => [props.innerRadiusMm, props.outerRadiusMm], () => {
   buildDisc()
   buildMarkers()
+  syncLamp()
 })
 watch(() => [props.positions, props.positionId], () => {
   buildMarkers()
@@ -1104,11 +1187,18 @@ onBeforeUnmount(() => {
     dropDot.geometry.dispose()
     ;(dropDot.material as MeshBasicMaterial).dispose()
   }
-  for (const o of [lampMesh, lampBeam]) {
-    o?.geometry.dispose()
-    ;(o?.material as MeshBasicMaterial | undefined)?.dispose()
+  if (lampMesh) {
+    lampMesh.geometry.dispose()
+    ;(lampMesh.material as MeshBasicMaterial).dispose()
+  }
+  if (lampCone) {
+    lampCone.geometry.dispose()
+    lampCone.material.dispose()
   }
   renderer?.dispose()
+  // dispose() keeps the WebGL context; WebKit allows only a few, and every hot reload or remount
+  // would leak one until the page stalls.
+  renderer?.forceContextLoss()
   renderer = null
   scene = null
   camera = null
