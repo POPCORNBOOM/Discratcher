@@ -1,25 +1,6 @@
 <template>
   <div ref="host" class="preview" :class="{ dragging }" @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up" @pointerleave="leave" @wheel.prevent="wheel">
     <canvas ref="canvas" />
-    <div v-if="mode === 'transform'" class="play-bar" @pointerdown.stop @pointermove.stop @pointerup.stop @wheel.stop>
-      <UiButton
-        icon-only
-        variant="soft"
-        :icon="playing ? mdiPause : mdiPlay"
-        :aria-label="playing ? t('holo.pause') : t('holo.play')"
-        @click="togglePlay"
-      />
-      <UiSlider
-        class="play-slider"
-        :model-value="transformTiltDeg(tiltDeg, previewT)"
-        :label="t('holo.playSlider')"
-        :min="-tiltDeg"
-        :max="tiltDeg"
-        :step="0.1"
-        :format="formatDeg"
-        @update:model-value="scrubDeg"
-      />
-    </div>
     <div v-if="error" class="notice warn fallback">{{ error }}</div>
   </div>
 </template>
@@ -27,14 +8,11 @@
 <script setup lang="ts">
 // The solved disc, drawn on the graphics card: every pixel adds up what its cell's sequences
 // look like from where the eye and the lamp are, the same sum as design::render.
-import { mdiPause, mdiPlay } from '@mdi/js'
 import { Camera, DataArrayTexture, DataTexture, DataUtils, GLSL3, Group, HalfFloatType, LinearFilter, Mesh, NearestFilter, PerspectiveCamera, RawShaderMaterial, RGBAFormat, RingGeometry, Scene, Vector3, WebGLRenderer } from 'three'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { DEFAULT_TRANSFORM_TILT_DEG, transformTAt, transformTiltDeg, type Vec3 } from '../holo/constants'
+import { DEFAULT_TRANSFORM_TILT_DEG, transformTiltDeg, type Vec3 } from '../holo/constants'
 import type { HoloPositionMode } from '../holo/scene'
 import { t } from '../i18n'
-import UiButton from './UiButton.vue'
-import UiSlider from './UiSlider.vue'
 
 const props = withDefaults(defineProps<{
   active: boolean
@@ -59,12 +37,9 @@ const previewT = defineModel<number>('previewT', { default: 0.5 })
 const MAX_TILT = 5
 /** Share of what is left to go, per second: how quickly the disc follows. */
 const FOLLOW = 14
-/** Half-cycle duration for sweeping t 0→1→0 back and forth (~2 s full cycle). */
-const PLAY_HALF_SEC = 1.0
 const host = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const dragging = ref(false)
-const playing = ref(false)
 const error = ref('')
 
 let renderer: WebGLRenderer | null = null
@@ -77,26 +52,9 @@ let raf = 0
 let last = 0
 let tilt = 0
 let wantTilt = 0
-let playDir = 1
 let shownTurn = turn.value
 let dirty = true
 
-const formatDeg = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}°`
-
-function togglePlay() {
-  playing.value = !playing.value
-  if (playing.value) {
-    if (previewT.value >= 1) playDir = -1
-    else if (previewT.value <= 0) playDir = 1
-    dirty = true
-  }
-}
-
-function scrubDeg(v: number) {
-  playing.value = false
-  previewT.value = transformTAt(props.tiltDeg, v)
-  dirty = true
-}
 
 const VERTEX = `
 precision highp float;
@@ -211,33 +169,10 @@ function tick(now: number) {
   last = now
   const isTransform = props.mode === 'transform'
   if (isTransform) {
-    if (playing.value && !dragging.value) {
-      let next = previewT.value + playDir * (dt / PLAY_HALF_SEC)
-      if (next >= 1) {
-        next = 2 - next
-        playDir = -1
-      } else if (next <= 0) {
-        next = -next
-        playDir = 1
-      }
-      previewT.value = Math.max(0, Math.min(1, next))
+    const tiltLeft = transformTiltDeg(props.tiltDeg, previewT.value) - tilt
+    if (Math.abs(tiltLeft) > 0.004) {
+      tilt += tiltLeft * k
       dirty = true
-    }
-    const targetTilt = transformTiltDeg(props.tiltDeg, previewT.value)
-    if (playing.value) {
-      if (tilt !== targetTilt) {
-        tilt = targetTilt
-        dirty = true
-      }
-    } else {
-      const tiltLeft = targetTilt - tilt
-      if (Math.abs(tiltLeft) > 0.004) {
-        tilt += tiltLeft * k
-        dirty = true
-      } else if (tilt !== targetTilt) {
-        tilt = targetTilt
-        dirty = true
-      }
     }
   } else {
     // Turning happens flat, so that the axis stays put; the tilt comes back afterwards.
@@ -295,7 +230,6 @@ function down(e: PointerEvent) {
 function sway(x: number) {
   const at = Math.max(-1, Math.min(1, x))
   if (props.mode === 'transform') {
-    playing.value = false
     previewT.value = Math.round(((at + 1) / 2) * 1000) / 1000
     dirty = true
   } else {
@@ -364,12 +298,8 @@ function start() {
     raf = requestAnimationFrame(tick)
   }
 }
-watch(() => props.active, (on) => {
-  if (!on) playing.value = false
-  start()
-})
+watch(() => props.active, start)
 watch(() => props.mode, (m) => {
-  playing.value = false
   if (m === 'transform') tilt = transformTiltDeg(props.tiltDeg, previewT.value)
   else wantTilt = 0
   dirty = true
@@ -395,22 +325,5 @@ onBeforeUnmount(() => {
 .preview { position: absolute; inset: 0; cursor: grab; touch-action: none; }
 .preview.dragging { cursor: grabbing; }
 canvas { display: block; width: 100%; height: 100%; }
-.play-bar {
-  position: absolute;
-  left: 50%;
-  bottom: calc(var(--oc-space-lg) + 18px);
-  transform: translateX(-50%);
-  width: min(320px, calc(100% - 2 * var(--oc-space-lg)));
-  display: flex;
-  align-items: center;
-  gap: var(--oc-space-sm);
-  padding: var(--oc-space-xs) var(--oc-space-sm);
-  border-radius: var(--oc-radius-control);
-  border: 1px solid var(--oc-border-muted);
-  background: var(--oc-bg-glass);
-  backdrop-filter: blur(18px);
-  cursor: default;
-}
-.play-slider { flex: 1; min-width: 0; }
 .fallback { position: absolute; inset: auto var(--oc-space-md) var(--oc-space-md); }
 </style>

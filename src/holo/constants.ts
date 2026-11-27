@@ -23,11 +23,6 @@ export function transformTiltDeg(tiltDeg: number, t: number): number {
   return tiltDeg * (2 * t - 1)
 }
 
-/** Animation parameter for a tilt, degrees. */
-export function transformTAt(tiltDeg: number, deg: number): number {
-  return tiltDeg > 0 ? Math.max(0, Math.min(1, (deg / tiltDeg + 1) / 2)) : 0.5
-}
-
 export const DEFAULT_DISTANCE_MM = 350
 export const DEFAULT_TILT_DEG = 20
 /** The disc faces the eye when it is looked at; the editor's camera only starts tilted. */
