@@ -52,18 +52,29 @@
           </UiButton>
         </section>
 
-        <!-- Object list + selected object controls -->
-        <template v-else-if="scene.objects.length">
+        <UiAccordion v-model="openGroup">
+        <template v-if="scene.objects.length">
           <!-- Where on the disc this position is, and how it is solved. -->
-          <UiSection :icon="mdiCrosshairsGps" :title="t('holo.positions')">
-            <template #actions><a v-if="scene.positions.length > 1" class="action-link" role="button" tabindex="0" @click="removePosition" @keydown.enter="removePosition">{{ t('holo.removePosition') }}</a></template>
+          <UiSection name="positions" :icon="mdiCrosshairsGps" :title="t('holo.positions')">
+            <template #actions><a v-if="scene.positions.length > 1 && !manyPicked" class="action-link" role="button" tabindex="0" @click="removePosition" @keydown.enter="removePosition">{{ t('holo.removePosition') }}</a></template>
             <div class="positions" role="tablist" :aria-label="t('holo.positions')">
-              <UiButton v-for="(q, i) in scene.positions" :key="q.id" role="tab" :aria-selected="q.id === positionId" :variant="q.id === positionId ? 'soft' : 'ghost'" :class="{ clash: overlapping.includes(q.id) }" :data-tooltip="overlapping.includes(q.id) ? t('holo.overlap') : undefined" @click="goToPosition(q.id)">{{ i + 1 }}</UiButton>
+              <UiButton v-for="(q, i) in scene.positions" :key="q.id" role="tab" class="pos" :aria-selected="pickedIds.includes(q.id)" :variant="pickedIds.includes(q.id) ? 'soft' : 'ghost'" :class="{ clash: overlapping.includes(q.id), lead: manyPicked && q.id === positionId }" :data-tooltip="overlapping.includes(q.id) ? t('holo.overlap') : t('holo.pickMore')" @click="pickPosition($event, q.id)">{{ i + 1 }}</UiButton>
               <UiButton icon-only variant="ghost" :icon="mdiPlus" :disabled="scene.positions.length >= MAX_POSITIONS" :aria-label="t('holo.addPosition')" :data-tooltip="t('holo.addPosition')" @click="addPosition" />
             </div>
-            <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
+            <div v-if="manyPicked" class="small muted">{{ t('holo.pickedMany', { n: pickedIds.length }) }}</div>
+            <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" :disabled="manyPicked" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
             <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
-            <UiSegmented :model-value="position.mode" :options="calcModeOptions" @update:model-value="setMode($event as HoloPositionMode)" />
+            <UiSlider
+              :model-value="neutralNow"
+              :label="t('holo.chroma')"
+              :min="0"
+              :max="3"
+              :step="0.05"
+              :ends="[t('holo.chromaLow'), t('holo.chromaHigh')]"
+              @pointerdown="beginControlEdit"
+              @update:model-value="setNeutral"
+            />
+            <UiSegmented :model-value="position.mode" :options="calcModeOptions" :disabled="manyPicked" @update:model-value="setMode($event as HoloPositionMode)" />
             <UiSlider
               v-if="position.mode === 'real'"
               :model-value="position.parallax"
@@ -73,32 +84,21 @@
               :step="0.1"
               :format="(x) => t('holo.times', { n: x.toFixed(1) })"
               :ends="[t('holo.parallaxLow'), t('holo.parallaxHigh')]"
+              :disabled="manyPicked"
               @pointerdown="beginControlEdit"
               @update:model-value="setParallax"
             />
             <template v-else>
-              <UiSlider :model-value="tiltNow.deg" :label="t('holo.tiltRange')" :min="1" :max="MAX_TRANSFORM_TILT_DEG" :step="0.5" :format="(x) => t('holo.tiltRangeWords', { n: x })" :ends="[t('holo.tiltLow'), t('holo.tiltHigh')]" @pointerdown="beginControlEdit" @update:model-value="setTilt" />
+              <UiSlider :model-value="tiltNow.deg" :disabled="manyPicked" :label="t('holo.tiltRange')" :min="1" :max="MAX_TRANSFORM_TILT_DEG" :step="0.5" :format="(x) => t('holo.tiltRangeWords', { n: x })" :ends="[t('holo.tiltLow'), t('holo.tiltHigh')]" @pointerdown="beginControlEdit" @update:model-value="setTilt" />
               <a v-if="position.tiltDeg > 0" class="action-link end" role="button" tabindex="0" @click="setTilt(0)" @keydown.enter="setTilt(0)">{{ t('holo.tiltAuto', { n: tiltNow.autoDeg }) }}</a>
             </template>
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
             </div>
-            <UiAdvanced :label="t('holo.colour')">
-              <UiSlider
-                :model-value="neutralNow"
-                @pointerdown="beginControlEdit"
-                @update:model-value="setNeutral"
-                :label="t('holo.chroma')"
-                :min="0"
-                :max="3"
-                :step="0.05"
-                :ends="[t('holo.chromaLow'), t('holo.chromaHigh')]"
-              />
-            </UiAdvanced>
           </UiSection>
 
-          <UiSection :icon="mdiCubeOutline" :title="t('holo.models')">
+          <UiSection name="models" :icon="mdiCubeOutline" :title="t('holo.models')">
             <div class="obj-list" role="listbox" :aria-label="t('holo.models')">
               <div
                 v-for="obj in positionObjects"
@@ -314,7 +314,7 @@
           </UiSection>
 
           <!-- The lamp and where you look from, shared by every position. -->
-          <UiSection :icon="mdiLightbulbOutline" :title="t('holo.lighting')">
+          <UiSection name="lighting" :icon="mdiLightbulbOutline" :title="t('holo.lighting')">
             <template #actions><a class="action-link" role="button" tabindex="0" @click="setLampPreset('held')" @keydown.enter="setLampPreset('held')">{{ t('holo.reset') }}</a></template>
             <UiSelect :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset($event as LampPreset)" />
             <UiAdvanced :label="t('holo.exactPlacement')">
@@ -334,7 +334,7 @@
         </template>
 
         <!-- Experimental tools -->
-        <UiSection :icon="mdiFlaskOutline" :title="t('holo.expTools')" folded>
+        <UiSection name="experimental" :icon="mdiFlaskOutline" :title="t('holo.expTools')">
           <div class="exp-actions">
             <UiButton :icon="mdiFire" :disabled="!ready" @click="burnSwatch">{{ t('holo.swatchBurn') }}</UiButton>
             <UiButton :icon="mdiCubeOutline" :disabled="loadingTest3d || !!s.job" @click="loadTest3d">{{ t('holo.test3dLoad') }}</UiButton>
@@ -369,6 +369,7 @@
             <UiButton v-if="expViews.length" variant="ghost" @click="clearExpViews">{{ t('holo.clearExp') }}</UiButton>
           </section>
         </UiSection>
+        </UiAccordion>
       </div>
 
       <div v-if="!isDvd" class="notice warn">
@@ -399,7 +400,8 @@
           <UiButton icon-only variant="ghost" :icon="mdiContentSaveOutline" :disabled="!scene.objects.length" :aria-label="t('holo.saveScene')" :data-tooltip="`${t('holo.saveScene')} (${modKey}S)`" @click="saveSceneFile" />
         </div>
 
-        <div v-if="tab === 'edit'" class="toolbar" role="toolbar" :aria-label="t('holo.modeEdit')">
+        <Transition name="bar" mode="out-in">
+        <div v-if="shownTab === 'edit'" class="toolbar" role="toolbar" :aria-label="t('holo.modeEdit')">
           <UiButton
             icon-only
             :variant="gizmoMode === 'translate' ? 'soft' : 'ghost'"
@@ -497,19 +499,13 @@
 
         <div v-else class="toolbar">
           <span class="mono muted small">{{ previewReadout }}</span>
-          <UiButton
-            icon-only
-            variant="ghost"
-            :icon="mdiRestore"
-            :aria-label="t('holo.resetCamera')"
-            :data-tooltip="t('holo.resetCamera')"
-            @click="resetPreviewLook"
-          />
         </div>
+        </Transition>
       </header>
 
       <!-- Edit viewport -->
-      <div v-show="tab === 'edit'" class="stage-body">
+      <Transition name="stage">
+      <div v-show="shownTab === 'edit'" class="stage-body">
         <HoloViewport3D
           ref="viewportRef"
           :objects="scene.objects"
@@ -548,17 +544,22 @@
           </span>
         </div>
       </div>
+      </Transition>
 
       <!-- Preview: drag round the disc to turn it, move across it to tilt it -->
-      <div v-show="tab === 'preview'" class="stage-body">
+      <Transition name="stage">
+      <div v-show="shownTab === 'preview'" class="stage-body">
         <HoloPreview v-if="previewVisited" v-show="!expViews.length" v-model:turn="lookTurn" v-model:preview-t="previewT" :mode="position.mode" :active="tab === 'preview' && !expViews.length && hasPreviewSource" :weights="weights" :tables="tables" :inner-radius-mm="radii.inner" :outer-radius-mm="radii.outer" :lamp-mm="opts.lampMm" :distance-mm="opts.distanceMm" :tilt-deg="tiltNow.deg" />
         <div v-if="expViews.length" class="preview-stage" :class="{ dragging: previewDragging }" @pointerdown="onPreviewPointerDown" @pointermove="onPreviewPointerMove" @pointerup="onPreviewPointerUp" @pointercancel="onPreviewPointerUp">
           <canvas ref="previewCanvas" class="preview-disc" />
         </div>
         <div v-if="!hasPreviewSource" class="hint">{{ t('holo.previewEmpty') }}</div>
         <div v-if="previewBusy" class="float small muted">{{ t('holo.previewSolve') }}</div>
-        <div v-if="hasPreviewSource" class="float left small muted">{{ expViews.length ? t('holo.previewDrag') : t('holo.previewTurn') }}</div>
+        <div v-if="hasPreviewSource" class="float left small muted gestures">
+          <span v-for="g in previewGestures" :key="g.text" class="gesture"><UiIcon :path="g.icon" :size="16" />{{ g.text }}</span>
+        </div>
       </div>
+      </Transition>
     </div>
   </div>
 </template>
@@ -572,6 +573,7 @@ import {
   mdiContentSaveOutline,
   mdiCrosshairsGps,
   mdiCubeOutline,
+  mdiCursorDefaultOutline,
   mdiCursorMove,
   mdiEyeOffOutline,
   mdiEyeOutline,
@@ -580,6 +582,8 @@ import {
   mdiFolderOpenOutline,
   mdiGrid,
   mdiLightbulbOutline,
+  mdiMouseLeftClickOutline,
+  mdiMouseScrollWheel,
   mdiPlus,
   mdiRedo,
   mdiResize,
@@ -596,6 +600,7 @@ import HoloViewport3D, { type GizmoMode } from '../components/HoloViewport3D.vue
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiButton from '../components/UiButton.vue'
 import UiIcon from '../components/UiIcon.vue'
+import UiAccordion from '../components/UiAccordion.vue'
 import UiSection from '../components/UiSection.vue'
 import UiSegmented from '../components/UiSegmented.vue'
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue'
@@ -712,11 +717,23 @@ const p = useProcess()
 
 // ---- Scene & editor state ----
 const tab = ref<'edit' | 'preview'>('edit')
+/**
+ * The view on screen, a step behind `tab`: on the way to the preview the edit view first swings
+ * straight down onto the disc, turned as the preview shows it, and only then hands over; on the
+ * way back it takes over face-on and swings back to where it was.
+ */
+const shownTab = ref<'edit' | 'preview'>('edit')
+/** How long the edit view takes to swing face-on and back, ms. */
+const SWING_MS = 420
 const gizmoMode = ref<GizmoMode>('translate')
 const snap = ref(false)
 const scene = ref<HoloScene>(emptyScene())
 const selectedId = ref<string | null>(null)
-const MAX_POSITIONS = 8
+/** The settings group open in the side panel. */
+const openGroup = ref('positions')
+// Picking a model in the view opens its settings.
+watch(selectedId, (id) => { if (id) openGroup.value = 'models' })
+const MAX_POSITIONS = 24
 const positionId = ref(scene.value.positions[0].id)
 const position = computed(() => scene.value.positions.find((q) => q.id === positionId.value) ?? scene.value.positions[0])
 const positionObjects = computed(() => scene.value.objects.filter((o) => o.positionId === position.value.id))
@@ -795,6 +812,16 @@ const lookTilt = ref(DEFAULT_TILT_DEG)
 const lookDir = ref(DEFAULT_DIR_DEG)
 const previewBusy = ref(false)
 const previewDragging = ref(false)
+/** What the pointer does in the preview, as an icon and a few words each. */
+const previewGestures = computed(() =>
+  expViews.value.length
+    ? [{ icon: mdiMouseLeftClickOutline, text: t('holo.gestureView') }]
+    : [
+        { icon: mdiMouseLeftClickOutline, text: t('holo.gestureDrag') },
+        { icon: mdiMouseScrollWheel, text: t('holo.gestureWheel') },
+        { icon: mdiCursorDefaultOutline, text: t('holo.gestureTilt') },
+      ],
+)
 let previewDragStartX = 0
 let previewDragStartVal = 0
 let previewTimer = 0
@@ -952,8 +979,46 @@ function selectObject(id: string | null) {
   if (obj && obj.positionId !== positionId.value) goToPosition(obj.positionId)
 }
 
-/** Turn to a position. A model selected elsewhere is let go; nothing is picked for you. */
+/**
+ * Positions picked together with Shift or Ctrl/Cmd: their kept range and neutral colour change as
+ * one. The shown position (`positionId`) is always among them.
+ */
+const pickedRaw = ref<string[]>([])
+const pickedIds = computed(() => {
+  const ids = pickedRaw.value.filter((id) => id !== positionId.value && scene.value.positions.some((q) => q.id === id))
+  return [positionId.value, ...ids]
+})
+const manyPicked = computed(() => pickedIds.value.length > 1)
+const pickedPositions = computed(() => scene.value.positions.filter((q) => pickedIds.value.includes(q.id)))
+
+/** A click on a position's tab: alone, with Shift a run from the shown one, with Ctrl/Cmd one more or less. */
+function pickPosition(e: MouseEvent, id: string) {
+  if (e.shiftKey) {
+    const ids = scene.value.positions.map((q) => q.id)
+    const [a, b] = [ids.indexOf(positionId.value), ids.indexOf(id)].sort((x, y) => x - y)
+    pickedRaw.value = ids.slice(a, b + 1)
+  } else if (e.metaKey || e.ctrlKey) {
+    if (!pickedIds.value.includes(id)) {
+      pickedRaw.value = [...pickedIds.value, id]
+      showPosition(id)
+    } else if (manyPicked.value) {
+      const rest = pickedIds.value.filter((x) => x !== id)
+      pickedRaw.value = rest
+      if (id === positionId.value) showPosition(rest[rest.length - 1])
+    }
+  } else {
+    goToPosition(id)
+  }
+}
+
+/** Turn to a position, on its own. A model selected elsewhere is let go; nothing is picked for you. */
 function goToPosition(id: string) {
+  pickedRaw.value = []
+  showPosition(id)
+}
+
+/** Turn to a position, keeping any picked with it. */
+function showPosition(id: string) {
   positionId.value = id
   const selected = scene.value.objects.find((o) => o.id === selectedId.value)
   if (selected && selected.positionId !== id) selectedId.value = null
@@ -971,9 +1036,11 @@ function removePosition() {
   if (scene.value.positions.length < 2) return
   pushHistory()
   const id = position.value.id
+  const at = scene.value.positions.findIndex((q) => q.id === id)
   scene.value.objects = scene.value.objects.filter((o) => o.positionId !== id)
   scene.value.positions = scene.value.positions.filter((q) => q.id !== id)
-  goToPosition(scene.value.positions[0].id)
+  // The one before it, or the one that was after the first.
+  goToPosition(scene.value.positions[Math.max(0, at - 1)].id)
 }
 
 function setPhi(deg: number) {
@@ -982,7 +1049,7 @@ function setPhi(deg: number) {
 }
 
 function setCrop(deg: number) {
-  position.value.cropDeg = Math.min(90, Math.max(5, Math.round(deg)))
+  for (const q of pickedPositions.value) q.cropDeg = Math.min(90, Math.max(5, Math.round(deg)))
 }
 
 function setMode(mode: HoloPositionMode) {
@@ -995,7 +1062,7 @@ function setMode(mode: HoloPositionMode) {
 const neutralNow = computed(() => position.value.neutral ?? (position.value.mode === 'real' ? opts.chromaWeight : 0))
 
 function setNeutral(v: number) {
-  position.value.neutral = Math.round(v * 100) / 100
+  for (const q of pickedPositions.value) q.neutral = Math.round(v * 100) / 100
 }
 
 function setTilt(deg: number) {
@@ -1533,13 +1600,6 @@ function sceneChanged() {
   previewTimer = window.setTimeout(() => void solveScene(), tab.value === 'preview' ? 120 : 500)
 }
 
-function resetPreviewLook() {
-  lookHeadX.value = 0
-  lookTurn.value = position.value.phiDeg
-  lookTilt.value = DEFAULT_TILT_DEG
-  lookDir.value = DEFAULT_DIR_DEG
-}
-
 function onPreviewPointerDown(e: PointerEvent) {
   if (e.button !== 0) return
   previewDragging.value = true
@@ -1657,6 +1717,20 @@ watch([expViews, expOpts], () => {
   if (tab.value === 'preview') requestFrame()
 }, { deep: true })
 
+watch(tab, async (to) => {
+  const turn = lookTurn.value - position.value.phiDeg
+  const view = viewportRef.value
+  if (to === 'preview') {
+    await view?.faceOn(turn, SWING_MS)
+    if (tab.value === 'preview') shownTab.value = 'preview'
+  } else {
+    await view?.faceOn(turn, 0)
+    shownTab.value = 'edit'
+    // Once the preview has faded out.
+    window.setTimeout(() => { if (tab.value === 'edit') void viewportRef.value?.faceOff(SWING_MS) }, 200)
+  }
+})
+
 watch(tab, () => {
   if (tab.value !== 'preview') return
   previewVisited.value = true
@@ -1687,7 +1761,8 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.side { width: calc(var(--oc-page-gutter) + 348px); flex: none; min-height: 0; display: flex; flex-direction: column; gap: var(--oc-space-md); padding: 64px 0 var(--oc-space-lg) var(--oc-page-gutter); }
+/* The stage runs to the panel's edge, so the panel keeps its own gap from it. */
+.side { width: calc(var(--oc-page-gutter) + 348px + var(--oc-space-lg)); flex: none; min-height: 0; display: flex; flex-direction: column; gap: var(--oc-space-md); padding: 64px var(--oc-space-lg) var(--oc-space-lg) var(--oc-page-gutter); }
 .fields { width: auto; max-width: none; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 .fields .section + .section { margin-top: var(--oc-space-sm); }
 .actions { flex: none; display: flex; gap: var(--oc-space-sm); }
@@ -1706,6 +1781,10 @@ onBeforeUnmount(() => {
 .action-link { font-size: var(--oc-text-xs); color: var(--oc-fg-muted); text-decoration: none; cursor: pointer; user-select: none; }
 .action-link:hover { color: var(--oc-fg-default); }
 .positions { display: flex; flex-wrap: wrap; gap: 2px; }
+/* Square, like the add button beside them. */
+.positions .pos { width: var(--oc-size-md); padding: 0; }
+/* With several picked, the one shown is ringed. */
+.positions .pos.lead { box-shadow: inset 0 0 0 1px var(--oc-accent); }
 .positions .clash { color: var(--oc-fg-warning); }
 .field { display: flex; flex-direction: column; gap: var(--oc-space-2xs); }
 .num-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--oc-space-xs); }
@@ -1727,10 +1806,19 @@ onBeforeUnmount(() => {
 .toolbar { display: flex; align-items: center; gap: 2px; padding: 2px; border-radius: var(--oc-radius-control); background: var(--oc-bg-glass); backdrop-filter: blur(18px); }
 .sep { width: 1px; height: 16px; margin: 0 var(--oc-space-2xs); background: var(--oc-border-muted); }
 .stage-body { position: absolute; inset: 0; display: grid; place-items: center; }
+/* Edit and preview cross-fade, the one arriving settling in from a touch larger. */
+.stage-enter-active, .stage-leave-active { transition: opacity 280ms var(--oc-ease), transform 280ms var(--oc-ease); }
+.stage-enter-from { opacity: 0; transform: scale(1.02); }
+.stage-leave-to { opacity: 0; transform: scale(0.98); }
+.bar-enter-active, .bar-leave-active { transition: opacity 120ms var(--oc-ease), transform 120ms var(--oc-ease); }
+.bar-enter-from, .bar-leave-to { opacity: 0; transform: translateY(-2px); }
+@media (prefers-reduced-motion: reduce) { .stage-enter-active, .stage-leave-active, .bar-enter-active, .bar-leave-active { transition: none; } }
 .drop-scrim { position: absolute; inset: 0; display: grid; place-items: center; background: var(--oc-bg-glass); pointer-events: none; }
 .hint { position: absolute; padding: var(--oc-space-2xs) var(--oc-space-md); border-radius: var(--oc-radius-pill); background: var(--oc-bg-glass); backdrop-filter: blur(18px); pointer-events: none; }
 .float { position: absolute; right: var(--oc-space-md); bottom: var(--oc-space-sm); pointer-events: none; }
 .float.left { right: auto; left: var(--oc-space-lg); }
+.gestures { display: flex; gap: var(--oc-space-md); }
+.gesture { display: inline-flex; align-items: center; gap: var(--oc-space-2xs); }
 .legend { display: flex; align-items: flex-start; gap: var(--oc-space-sm); }
 .legend-name { line-height: 8px; }
 .scale { display: grid; grid-template-columns: repeat(3, 44px) 52px; row-gap: var(--oc-space-2xs); text-align: center; }

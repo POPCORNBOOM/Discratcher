@@ -599,6 +599,87 @@ function resetCamera() {
   orbit.update()
 }
 
+/** A camera pose: where it looks and where it stands. */
+interface Pose { target: Vector3; position: Vector3 }
+/** A pose in flight, eased from `from` to `to` about the target, z up. */
+let flight: { from: Pose; to: Pose; start: number; ms: number; done: () => void } | null = null
+/** Where the camera was before it went face-on, to go back to. */
+let beforeFaceOn: Pose | null = null
+
+const pose = (): Pose => ({ target: orbit!.target.clone(), position: camera!.position.clone() })
+
+/**
+ * Straight down on the disc, framed as the preview frames it, turned by `turnDeg` as the preview
+ * turns it relative to this view: what stands at the top here stands at `turnDeg` round from it.
+ */
+function faceOnPose(turnDeg: number): Pose {
+  const w = Math.max(1, host.value?.clientWidth ?? 1)
+  const h = Math.max(1, host.value?.clientHeight ?? 1)
+  // As HoloPreview frames it: the whole disc and a little room, across the narrower side.
+  const need = (props.outerRadiusMm * 1.24) / Math.min(1, w / h)
+  const dist = need / Math.tan(MathUtils.degToRad(CAMERA_FOV_DEG / 2))
+  const d = MathUtils.degToRad(turnDeg)
+  // Screen-up on the disc, and the camera leaning a hair the other way so that is what OrbitControls keeps up.
+  const up = new Vector3(Math.sin(d), Math.cos(d), 0)
+  const lean = 0.002
+  return { target: new Vector3(), position: up.multiplyScalar(-dist * Math.sin(lean)).setZ(dist * Math.cos(lean)) }
+}
+
+/** Ease the camera to `to` over `ms`; a flight already going is dropped where it is. */
+function flyTo(to: Pose, ms: number): Promise<void> {
+  if (!camera || !orbit) return Promise.resolve()
+  flight?.done()
+  if (ms <= 0 || reducedMotion) {
+    flight = null
+    orbit.target.copy(to.target)
+    camera.position.copy(to.position)
+    orbit.update()
+    return Promise.resolve()
+  }
+  return new Promise((done) => {
+    flight = { from: pose(), to, start: performance.now(), ms, done }
+  })
+}
+
+/** One step of the flight: the target slides, the camera swings round it on a sphere. */
+function stepFlight(now: number) {
+  if (!flight || !camera || !orbit) return
+  const k = Math.min(1, (now - flight.start) / flight.ms)
+  const e = k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2
+  const sph = (p: Pose) => {
+    const o = p.position.clone().sub(p.target)
+    const r = o.length()
+    return { r, polar: Math.acos(MathUtils.clamp(o.z / r, -1, 1)), azimuth: Math.atan2(o.y, o.x) }
+  }
+  const a = sph(flight.from)
+  const b = sph(flight.to)
+  const turn = ((b.azimuth - a.azimuth + 3 * Math.PI) % (2 * Math.PI)) - Math.PI
+  const r = a.r * (b.r / a.r) ** e
+  const polar = a.polar + (b.polar - a.polar) * e
+  const azimuth = a.azimuth + turn * e
+  orbit.target.lerpVectors(flight.from.target, flight.to.target, e)
+  camera.position.set(Math.sin(polar) * Math.cos(azimuth), Math.sin(polar) * Math.sin(azimuth), Math.cos(polar)).multiplyScalar(r).add(orbit.target)
+  if (k >= 1) {
+    const done = flight.done
+    flight = null
+    done()
+  }
+}
+
+/** Go straight down on the disc as the preview shows it, turned by `turnDeg`; remembers where it was. */
+function faceOn(turnDeg: number, ms: number): Promise<void> {
+  if (!camera || !orbit) return Promise.resolve()
+  beforeFaceOn ??= pose()
+  return flyTo(faceOnPose(turnDeg), ms)
+}
+
+/** Back to where the camera was before `faceOn`. */
+function faceOff(ms: number): Promise<void> {
+  const back = beforeFaceOn
+  beforeFaceOn = null
+  return back ? flyTo(back, ms) : Promise.resolve()
+}
+
 function focusSelected() {
   if (!camera || !orbit || !props.selectedId) return
   if (props.selectedId === LAMP_ID) {
@@ -762,6 +843,7 @@ function animate() {
     shownPhi = jump ? currentPhi() : shownPhi + left * 0.16
     turnGroups()
   }
+  stepFlight(performance.now())
   orbit?.update()
   if (renderer && scene && camera) {
     renderer.render(scene, camera)
@@ -968,7 +1050,7 @@ onBeforeUnmount(() => {
   gizmo = null
 })
 
-defineExpose({ resetCamera, focusSelected })
+defineExpose({ resetCamera, focusSelected, faceOn, faceOff })
 </script>
 
 <style scoped>
