@@ -56,7 +56,8 @@
         <template v-else-if="scene.objects.length">
           <!-- Where on the disc this position is, and how it is solved. -->
           <section class="section">
-            <div class="title row">
+            <div class="group-title row">
+              <UiIcon :path="mdiCrosshairsGps" :size="16" />
               <span class="grow">{{ t('holo.positions') }}</span>
               <a v-if="scene.positions.length > 1" class="action-link" role="button" tabindex="0" @click="removePosition" @keydown.enter="removePosition">{{ t('holo.removePosition') }}</a>
             </div>
@@ -98,30 +99,11 @@
             </UiAdvanced>
           </section>
 
-          <!-- The lamp and where you look from, shared by every position. -->
           <section class="section">
-            <div class="title row">
-              <span class="grow">{{ t('holo.lighting') }}</span>
-              <a class="action-link" role="button" tabindex="0" @click="setLampPreset('held')" @keydown.enter="setLampPreset('held')">{{ t('holo.reset') }}</a>
+            <div class="group-title row">
+              <UiIcon :path="mdiCubeOutline" :size="16" />
+              <span class="grow">{{ t('holo.models') }}</span>
             </div>
-            <UiSelect :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset($event as LampPreset)" />
-            <UiAdvanced :label="t('holo.exactPlacement')">
-              <UiSlider :model-value="opts.lampMm[0]" :label="t('holo.lampSide')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampSideWords" @update:model-value="(v) => setLampAxis(0, v)" />
-              <UiSlider :model-value="opts.lampMm[1]" :label="t('holo.lampAway')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampAwayWords" @update:model-value="(v) => setLampAxis(1, v)" />
-              <UiSlider v-if="opts.lampPreset !== 'ceiling'" :model-value="opts.lampMm[2]" :label="t('holo.lampUp')" :min="LAMP_MIN_UP_MM" :max="LAMP_MAX_UP_MM" :step="5" :format="cm" @update:model-value="(v) => setLampAxis(2, v)" />
-              <UiSlider
-                v-model="opts.distanceMm"
-                :label="t('holo.distance')"
-                :min="150"
-                :max="600"
-                :step="10"
-                :format="mm"
-              />
-            </UiAdvanced>
-          </section>
-
-          <section class="section">
-            <div class="title">{{ t('holo.models') }}</div>
             <div class="obj-list" role="listbox" :aria-label="t('holo.models')">
               <div
                 v-for="obj in positionObjects"
@@ -332,6 +314,29 @@
                 :format="percent"
                 @pointerdown="beginControlEdit"
                 @update:model-value="(v) => setSelectedStyle('texture', v)"
+              />
+            </UiAdvanced>
+          </section>
+
+          <!-- The lamp and where you look from, shared by every position. -->
+          <section class="section">
+            <div class="group-title row">
+              <UiIcon :path="mdiLightbulbOutline" :size="16" />
+              <span class="grow">{{ t('holo.lighting') }}</span>
+              <a class="action-link" role="button" tabindex="0" @click="setLampPreset('held')" @keydown.enter="setLampPreset('held')">{{ t('holo.reset') }}</a>
+            </div>
+            <UiSelect :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset($event as LampPreset)" />
+            <UiAdvanced :label="t('holo.exactPlacement')">
+              <UiSlider :model-value="opts.lampMm[0]" :label="t('holo.lampSide')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampSideWords" @update:model-value="(v) => setLampAxis(0, v)" />
+              <UiSlider :model-value="opts.lampMm[1]" :label="t('holo.lampAway')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampAwayWords" @update:model-value="(v) => setLampAxis(1, v)" />
+              <UiSlider v-if="opts.lampPreset !== 'ceiling'" :model-value="opts.lampMm[2]" :label="t('holo.lampUp')" :min="LAMP_MIN_UP_MM" :max="LAMP_MAX_UP_MM" :step="5" :format="cm" @update:model-value="(v) => setLampAxis(2, v)" />
+              <UiSlider
+                v-model="opts.distanceMm"
+                :label="t('holo.distance')"
+                :min="150"
+                :max="600"
+                :step="10"
+                :format="mm"
               />
             </UiAdvanced>
           </section>
@@ -1709,6 +1714,8 @@ onBeforeUnmount(() => {
 .num-field { display: flex; align-items: center; gap: var(--oc-space-2xs); min-width: 0; }
 .num-input { width: 100%; min-width: 0; height: var(--oc-size-md); padding: 0 var(--oc-space-xs); border: 0; border-radius: var(--oc-radius-control); background: var(--oc-bg-input); appearance: textfield; -moz-appearance: textfield; }
 .num-input::-webkit-inner-spin-button, .num-input::-webkit-outer-spin-button { appearance: none; -webkit-appearance: none; margin: 0; }
+.group-title { gap: var(--oc-space-xs); font-size: var(--oc-text-lg); font-weight: 600; color: var(--oc-fg-default); }
+.group-title svg { color: var(--oc-fg-accent); }
 .var-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; gap: var(--oc-space-2xs); }
 .var-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--oc-fg-muted); }
 .action-link.end { align-self: flex-end; }
