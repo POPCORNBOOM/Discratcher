@@ -154,7 +154,7 @@
         </template>
 
         <section v-if="scene.objects.length" class="section">
-          <UiSlider v-model="opts.parallax" :label="t('holo.parallax')" :min="1" :max="3" :step="0.1" :format="(x) => t('holo.times', { n: x.toFixed(1) })" />
+          <UiSlider v-model="opts.parallax" :label="t('holo.parallax')" :min="1" :max="6" :step="0.1" :format="(x) => t('holo.times', { n: x.toFixed(1) })" />
         </section>
 
         <!-- Hardcore / advanced settings -->

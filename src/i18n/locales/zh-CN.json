@@ -217,7 +217,7 @@
   "holo.positions": "观察位置",
   "holo.addPosition": "添加观察位置",
   "holo.removePosition": "删除这个位置",
-  "holo.parallax": "立体感",
+  "holo.parallax": "视差放大",
   "holo.times": "{n} 倍",
   "holo.crop": "保留范围",
   "holo.cropRange": "上下各 ±{n}°",

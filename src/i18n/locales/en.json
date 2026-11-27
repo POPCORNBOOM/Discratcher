@@ -217,7 +217,7 @@
   "holo.positions": "Viewing positions",
   "holo.addPosition": "Add a viewing position",
   "holo.removePosition": "Delete this position",
-  "holo.parallax": "Depth effect",
+  "holo.parallax": "Parallax boost",
   "holo.times": "{n}×",
   "holo.crop": "Kept area",
   "holo.cropRange": "±{n}° top and bottom",
