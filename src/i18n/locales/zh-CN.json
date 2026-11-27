@@ -401,7 +401,5 @@
   "holo.guideOneEye": "单眼 / 手机镜头",
   "holo.tiltRange": "倾斜范围",
   "holo.tiltRangeWords": "左右各 ±{n}°",
-  "holo.tiltAuto": "自动（±{n}°）",
-  "holo.tiltTooWide": "超出这盏灯能用的范围（±{n}°），两头的画面会变暗或前后重叠。",
-  "holo.tiltBadLamp": "灯离眼睛太近，倾斜时画面会前后重叠。把灯挪到侧面。"
+  "holo.tiltAuto": "自动（±{n}°）"
 }

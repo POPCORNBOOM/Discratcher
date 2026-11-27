@@ -108,17 +108,22 @@ fn transform_poses(opts: &Options, lamp_mm: V3, tilt_deg: f64, angle: f64) -> Ve
     (0..TRANSFORM_VIEWS).map(|i| transform_pose(opts, lamp_mm, tilt_deg, i as f64 / denom, angle)).collect()
 }
 
-/// Where a position's objects lie on the disc once it is turned to the top: each centre and the
-/// middles of its sides.
-fn object_points(objects: &[&SceneObject], angle: f64) -> Vec<V3> {
+/// Where a position's objects lie on the disc once it is turned to the top: a 5 by 5 grid over
+/// each, keeping only what is burned, inside the data ring and the position's kept sectors.
+fn object_points(pos: &Position, objects: &[&SceneObject], preset: &DiscGeometryPreset) -> Vec<V3> {
+    let crop = pos.crop_deg.to_radians();
     objects
         .iter()
         .flat_map(|o| {
             let [x, y, _] = o.position_mm;
             let h = o.scale_mm * 0.5;
-            [[x, y], [x - h, y], [x + h, y], [x, y - h], [x, y + h]]
+            (0..25).map(move |i| [x + h * ((i % 5) as f64 / 2.0 - 1.0), y + h * ((i / 5) as f64 / 2.0 - 1.0)])
         })
-        .map(|[x, y]| turn(model3d::scene_to_disc([x, y, 0.0]), angle))
+        .filter(|&[x, y]| {
+            let r = x.hypot(y);
+            (preset.inner_radius_mm..=preset.outer_radius_mm).contains(&r) && (pos.crop_deg >= 90.0 || x.abs().atan2(y.abs()) <= crop)
+        })
+        .map(|[x, y]| turn(model3d::scene_to_disc([x, y, 0.0]), pos.phi_deg.to_radians()))
         .collect()
 }
 
@@ -148,15 +153,17 @@ pub struct Tilt {
     pub deg: f64,
     /// The widest that fits the lamp, degrees, or the fallback when none does.
     pub auto_deg: f64,
+    /// Whether any tilt fits the lamp at all.
+    pub auto_ok: bool,
     /// Whether `deg` fits the lamp.
     pub ok: bool,
 }
 
 /// The widest tilt either way, in half degrees, at which the position's objects stay inside the
 /// codebook's window under `lamp_mm`; the position's own choice when it has one.
-pub fn tilt_for(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options) -> Tilt {
+pub fn tilt_for(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, preset: &DiscGeometryPreset) -> Tilt {
     let angle = pos.phi_deg.to_radians();
-    let points = object_points(objects, angle);
+    let points = object_points(pos, objects, preset);
     let mut auto = None;
     let mut x = 0.5;
     while x <= MAX_TILT_DEG + 1e-9 && sweep_fits(opts, lamp_mm, x, angle, &points) {
@@ -165,7 +172,7 @@ pub fn tilt_for(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Op
     }
     let auto_deg = auto.unwrap_or(FALLBACK_TILT_DEG);
     let deg = if pos.tilt_deg > 0.0 { pos.tilt_deg.min(MAX_TILT_DEG) } else { auto_deg };
-    Tilt { id: pos.id.clone(), deg, auto_deg, ok: sweep_fits(opts, lamp_mm, deg, angle, &points) }
+    Tilt { id: pos.id.clone(), deg, auto_deg, auto_ok: auto.is_some(), ok: sweep_fits(opts, lamp_mm, deg, angle, &points) }
 }
 
 fn transform_options(opts: &Options) -> Options {
@@ -507,7 +514,7 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
     let (n, k) = (opts.grid, resp.options);
     let bg = cb.entries.iter().position(|e| e.bytes.iter().all(|&b| b == design::BACKGROUND_BYTE)).ok_or("码本里没有背景序列")?;
     let mut patches = Vec::with_capacity(groups.len());
-    let tilts: Vec<Tilt> = groups.iter().map(|(pos, objects)| tilt_for(pos, objects, lamp, &opts)).collect();
+    let tilts: Vec<Tilt> = groups.iter().map(|(pos, objects)| tilt_for(pos, objects, lamp, &opts, preset)).collect();
     for ((pos, objects), tilt) in groups.iter().zip(&tilts) {
         // Names and ids change nothing that is burned.
         let same: Vec<_> = objects
@@ -892,18 +899,18 @@ mod tests {
         let star = SceneObject { position_mm: [0.0, 41.0, 0.0], scale_mm: 30.0, ..star("0", 0.0, 41.0) };
         let p = Position { mode: model3d::Mode::Transform, ..pos("0", 0.0, 30.0) };
         let opts = Options::default();
-        let side = tilt_for(&p, &[&star], [225.0, 0.0, 400.0], &opts);
+        let side = tilt_for(&p, &[&star], [225.0, 0.0, 400.0], &opts, &reference_preset());
         println!("side lamp: {side:?}");
         assert!(side.ok && (5.0..=12.0).contains(&side.deg), "{side:?}");
-        let beside = tilt_for(&p, &[&star], [0.0, 0.0, 400.0], &opts);
+        let beside = tilt_for(&p, &[&star], [0.0, 0.0, 400.0], &opts, &reference_preset());
         println!("lamp beside the eye: {beside:?}");
-        assert!(!beside.ok, "{beside:?}");
-        let chosen = tilt_for(&Position { tilt_deg: 25.0, ..p.clone() }, &[&star], [225.0, 0.0, 400.0], &opts);
+        assert!(!beside.ok && !beside.auto_ok, "{beside:?}");
+        let chosen = tilt_for(&Position { tilt_deg: 25.0, ..p.clone() }, &[&star], [225.0, 0.0, 400.0], &opts, &reference_preset());
         assert_eq!(chosen.deg, 25.0);
         assert_eq!(chosen.auto_deg, side.deg);
         assert!(!chosen.ok, "{chosen:?}");
         for lamp in [LAMP_MM, [250.0, 0.0, 400.0]] {
-            println!("{lamp:?}: {:?}", tilt_for(&p, &[&star], lamp, &opts));
+            println!("{lamp:?}: {:?}", tilt_for(&p, &[&star], lamp, &opts, &reference_preset()));
         }
     }
 

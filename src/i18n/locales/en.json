@@ -401,7 +401,5 @@
   "holo.guideOneEye": "One eye / phone camera",
   "holo.tiltRange": "Tilt range",
   "holo.tiltRangeWords": "±{n}° either way",
-  "holo.tiltAuto": "Auto (±{n}°)",
-  "holo.tiltTooWide": "Wider than this lamp allows (±{n}°): the ends will go dark or mirror each other.",
-  "holo.tiltBadLamp": "The lamp is too close to your eye; frames would mirror as you tilt. Move the lamp to the side."
+  "holo.tiltAuto": "Auto (±{n}°)"
 }

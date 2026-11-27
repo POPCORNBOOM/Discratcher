@@ -91,10 +91,6 @@
                 <a v-if="position.tiltDeg > 0" class="action-link" role="button" tabindex="0" @click="setTilt(0)" @keydown.enter="setTilt(0)">{{ t('holo.tiltAuto', { n: tiltNow.autoDeg }) }}</a>
               </div>
               <UiSlider :model-value="tiltNow.deg" :label="t('holo.tiltRange')" :min="1" :max="MAX_TRANSFORM_TILT_DEG" :step="0.5" :format="(x) => t('holo.tiltRangeWords', { n: x })" @pointerdown="beginControlEdit" @update:model-value="setTilt" />
-              <div v-if="!tiltNow.ok" class="notice warn">
-                <UiIcon :path="mdiAlertOutline" />
-                <div class="grow">{{ position.tiltDeg > 0 ? t('holo.tiltTooWide', { n: tiltNow.autoDeg }) : t('holo.tiltBadLamp') }}</div>
-              </div>
             </template>
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
