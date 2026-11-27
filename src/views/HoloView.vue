@@ -2325,7 +2325,7 @@ let solving = false
 
 /** Solves the scene as it is now, coarse first; a change on the way starts over. */
 async function solveScene() {
-  if (solving || expViews.value.length || !visibleObjects.value.length) return
+  if (solving || expViews.value.length || (!visibleObjects.value.length && !scene.value.images.length)) return
   solving = true
   try {
     while (solvedVersion !== sceneVersion) {
