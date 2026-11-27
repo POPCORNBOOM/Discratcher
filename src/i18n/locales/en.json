@@ -327,7 +327,7 @@
   "template.empty": "Empty",
   "template.emptyHelp": "One viewing position, to start from nothing.",
   "template.twelve": "12 pictures",
-  "template.twelveHelp": "Twelve viewing positions, one every 15°, a picture each. Flat pictures show from any angle; whichever position is turned to the top shows its picture upright.",
+  "template.twelveHelp": "Twelve viewing positions, one every 30°, each cropped to ±15° at the top, a picture each. Flat pictures show from any angle; whichever position is turned to the top shows its picture upright.",
   "holo.title": "Designer",
   "holo.trySample": "Try a sample",
   "holo.undo": "Undo",

@@ -327,7 +327,7 @@
   "template.empty": "空模板",
   "template.emptyHelp": "一个观察位置，从零开始。",
   "template.twelve": "12 分图片",
-  "template.twelveHelp": "12 个观察位置，每 15° 一个，各放一张图片。平面图片从哪个角度都看得见，转到哪个位置，那张就正着朝上。",
+  "template.twelveHelp": "12 个观察位置，每 30° 一个，各裁上方 ±15°，放一张图片。平面图片从哪个角度都看得见，转到哪个位置，那张就正着朝上。",
   "holo.title": "设计器",
   "holo.trySample": "试试示例",
   "holo.undo": "撤销",

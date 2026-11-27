@@ -11,10 +11,10 @@ export interface DesignTemplate {
   make: () => HoloScene
 }
 
-/** Twelve positions, one every 15° so the twelve kept pairs tile the disc without overlap. */
+/** Twelve positions, one every 30°, each cropped to ±15° at its top: the twelve tile the disc. */
 function twelvePictures(): HoloScene {
   const scene = emptyScene()
-  scene.positions = Array.from({ length: 12 }, (_, i) => makePosition(i * 15, 7.5))
+  scene.positions = Array.from({ length: 12 }, (_, i) => ({ ...makePosition(i * 30, 15), cropSide: 'up' as const }))
   return scene
 }
 
