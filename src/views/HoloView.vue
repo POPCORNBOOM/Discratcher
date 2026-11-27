@@ -331,7 +331,7 @@
         </template>
 
         <!-- Experimental tools -->
-        <UiAdvanced :label="t('holo.expTools')">
+        <UiSection :icon="mdiFlaskOutline" :title="t('holo.expTools')" folded>
           <div class="exp-actions">
             <UiButton :icon="mdiFire" :disabled="!ready" @click="burnSwatch">{{ t('holo.swatchBurn') }}</UiButton>
             <UiButton :icon="mdiCubeOutline" :disabled="loadingTest3d || !!s.job" @click="loadTest3d">{{ t('holo.test3dLoad') }}</UiButton>
@@ -365,7 +365,7 @@
             </div>
             <UiButton v-if="expViews.length" variant="ghost" @click="clearExpViews">{{ t('holo.clearExp') }}</UiButton>
           </section>
-        </UiAdvanced>
+        </UiSection>
       </div>
 
       <div v-if="!isDvd" class="notice warn">

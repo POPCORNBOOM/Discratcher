@@ -15,10 +15,11 @@
 <script setup lang="ts">
 // A group of settings under a heading that folds away.
 import { mdiChevronRight } from '@mdi/js'
+import { ref } from 'vue'
 import UiIcon from './UiIcon.vue'
 
-defineProps<{ title: string; icon?: string }>()
-const open = defineModel<boolean>('open', { default: true })
+const props = defineProps<{ title: string; icon?: string; folded?: boolean }>()
+const open = ref(!props.folded)
 </script>
 
 <style scoped>
