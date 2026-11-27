@@ -62,7 +62,7 @@
               <UiButton icon-only variant="ghost" :icon="mdiPlus" :disabled="scene.positions.length >= MAX_POSITIONS" :aria-label="t('holo.addPosition')" :data-tooltip="t('holo.addPosition')" @click="addPosition" />
             </div>
             <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
-            <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" :ends="[t('holo.cropLow'), t('holo.cropHigh')]" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
+            <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
             <UiSegmented :model-value="position.mode" :options="calcModeOptions" @update:model-value="setMode($event as HoloPositionMode)" />
             <UiSlider
               v-if="position.mode === 'real'"
