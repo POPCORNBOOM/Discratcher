@@ -34,3 +34,16 @@ export function cropUniforms(pos: HoloPosition | undefined): { crop: number; sid
   if (!pos) return { crop: Math.PI / 2, side: 0, axis: 0 }
   return { crop: (pos.cropDeg * Math.PI) / 180, side: SIDE_INDEX[pos.cropSide], axis: (pos.cropOffsetDeg * Math.PI) / 180 }
 }
+
+/** Whether disc point `(x, y)` (position frame, +y up) lies inside `pos`'s kept sector (`inCrop`). */
+export function inPositionCrop(x: number, y: number, pos: HoloPosition | undefined): boolean {
+  if (!pos || (pos.cropSide === 'both' && pos.cropDeg >= 90)) return true
+  const axis = (pos.cropOffsetDeg * Math.PI) / 180
+  const ux = Math.sin(axis)
+  const uy = Math.cos(axis)
+  const a = Math.atan2(Math.abs(x * uy - y * ux), x * ux + y * uy)
+  const c = Math.min((pos.cropDeg * Math.PI) / 180, Math.PI / 2)
+  const top = a <= c
+  const bottom = a >= Math.PI - c
+  return pos.cropSide === 'both' ? top || bottom : pos.cropSide === 'up' ? top : bottom
+}

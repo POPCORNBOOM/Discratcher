@@ -84,8 +84,8 @@ import {
 } from '../holo/pictureFrame'
 import type { DisplayMeshData } from '../holo/sampleMesh'
 import { round1, type HoloImage, type HoloPosition, type HoloSceneObject } from '../holo/scene'
-import { cropUniforms } from '../holo/cropGlsl'
-import { zonesMaterial, type ZoneKind } from '../holo/usability'
+import { cropUniforms, inPositionCrop } from '../holo/cropGlsl'
+import { ZONE_KIND_VALUE, zonesMaterial, type ZoneKind } from '../holo/usability'
 import { layerExtent } from '../layers'
 
 export type GizmoMode = 'all' | 'translate' | 'rotate' | 'scale'
@@ -142,8 +142,8 @@ const props = defineProps<{
   selectedImageId: string | null
   /** Show only what is selected, when anything is. */
   isolate: boolean
-  /** What the zones on the disc show; none hides them. */
-  zones: ZoneKind | null
+  /** What the zones on the disc show. */
+  zones: ZoneKind
 }>()
 
 const emit = defineEmits<{
@@ -225,6 +225,7 @@ const dragPlane = new Plane(new Vector3(0, 0, 1), 0)
 const dragHit = new Vector3()
 const dragLocal = new Vector3()
 const dragOffset = new Vector3()
+const pickLocal = new Vector3()
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
 let gizmoDragging = false
@@ -414,10 +415,10 @@ function updateZones() {
   if (!u) return
   ;(u.lamp.value as Vector3).set(...props.lampMm)
   u.distance.value = props.distanceMm
-  u.kind.value = props.zones === 'colour' ? 1 : 0
+  u.kind.value = ZONE_KIND_VALUE[props.zones]
   u.inner.value = props.innerRadiusMm
   u.outer.value = props.outerRadiusMm
-  if (usabilityMesh) usabilityMesh.visible = props.zones !== null
+  if (usabilityMesh) usabilityMesh.visible = true
   const left = turnLeft()
   u.phi.value = Math.abs(left) < 0.05 ? 0 : MathUtils.degToRad(left)
   const c = cropUniforms(currentPosition())
@@ -1076,7 +1077,20 @@ function pickImageId(e: PointerEvent): string | null {
   updatePointerNdc(e)
   raycaster.setFromCamera(pointerNdc, camera)
   const hits = raycaster.intersectObjects(pictures.pickable(props.positionId, props.images), false)
-  return (hits[0]?.object.userData.imageId as string | undefined) ?? null
+  const group = groupFor(props.positionId)
+  group.updateMatrixWorld(true)
+  const pos = currentPosition()
+  for (const hit of hits) {
+    const id = hit.object.userData.imageId as string | undefined
+    if (!id) continue
+    if (id === props.selectedImageId) return id
+    group.worldToLocal(pickLocal.copy(hit.point))
+    const r = Math.hypot(pickLocal.x, pickLocal.y)
+    if (r >= props.innerRadiusMm && r <= props.outerRadiusMm && inPositionCrop(pickLocal.x, pickLocal.y, pos)) {
+      return id
+    }
+  }
+  return null
 }
 
 function wrapRotationDeg(deg: number): number {
@@ -1590,7 +1604,7 @@ function syncPictures() {
   pictures?.sync({
     images: props.images, positions: props.positions, positionId: props.positionId, thumbnails: props.thumbnails,
     // The 2D manipulation frame renders the selection outline and handles.
-    selectedId: null, only: isolated(), innerRadiusMm: props.innerRadiusMm, outerRadiusMm: props.outerRadiusMm,
+    selectedId: null, pickedId: props.selectedImageId, only: isolated(), innerRadiusMm: props.innerRadiusMm, outerRadiusMm: props.outerRadiusMm,
   })
   // The rim's position arrows go with everything else that is not the selection.
   if (markers) markers.visible = !isolated()

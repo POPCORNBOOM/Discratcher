@@ -421,27 +421,7 @@
 
           <!-- The lamp and where you look from, shared by every position. -->
           <UiSection name="lighting" :icon="mdiLightbulbOutline" :title="t('holo.lighting')">
-            <div class="lamp-row">
-              <UiSelect class="grow" :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset" />
-              <UiButton
-                v-if="opts.lampPreset === 'custom'"
-                icon-only
-                variant="ghost"
-                :icon="mdiContentSavePlusOutline"
-                :aria-label="t('holo.lampSave')"
-                :data-tooltip="t('holo.lampSave')"
-                @click="openSaveLampPreset"
-              />
-              <UiButton
-                v-else-if="isUserLampPreset"
-                icon-only
-                variant="ghost"
-                :icon="mdiTrashCanOutline"
-                :aria-label="t('holo.lampRemove')"
-                :data-tooltip="t('holo.lampRemove')"
-                @click="removeLampPreset(opts.lampPreset)"
-              />
-            </div>
+            <UiSelect :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset" />
             <UiSlider :model-value="opts.lampMm[0]" :label="t('holo.lampSide')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampSideWords" @update:model-value="(v) => setLampAxis(0, v)" />
             <UiSlider :model-value="opts.lampMm[1]" :label="t('holo.lampAway')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampAwayWords" @update:model-value="(v) => setLampAxis(1, v)" />
             <UiSlider :model-value="opts.lampMm[2]" :label="t('holo.lampUp')" :min="LAMP_MIN_UP_MM" :max="LAMP_MAX_UP_MM" :step="5" :format="cm" @update:model-value="(v) => setLampAxis(2, v)" />
@@ -686,17 +666,29 @@
         <div class="float left small muted gestures edit-gestures">
           <span v-for="g in editGestures" :key="g.text" class="gesture"><UiIcon :path="g.icon" :size="16" />{{ g.text }}</span>
         </div>
-        <div v-if="zones" class="float legend small muted" aria-hidden="true">
-          <span class="legend-name">{{ t(zones === 'colour' ? 'holo.legendColour' : 'holo.legendDepth') }}</span>
-          <span class="scale">
-            <i class="ramp" />
-            <i class="unusable" />
-            <i class="cropped" />
-            <span>{{ t('holo.legendGood') }}</span>
-            <span>{{ t('holo.legendFair') }}</span>
-            <span>{{ t('holo.legendPoor') }}</span>
-            <span>{{ t('holo.legendNone') }}</span>
-            <span>{{ t('holo.crop') }}</span>
+        <div v-if="zones !== 'crop' || isCropped" class="float legend small muted" aria-hidden="true">
+          <span v-if="zones === 'depth' || zones === 'colour'" class="legend-name">{{ t(zones === 'colour' ? 'holo.legendColour' : 'holo.legendDepth') }}</span>
+          <span class="scale" :class="{ 'two-cols': zones === 'none' && isCropped, 'one-col': zones === 'crop' || (zones === 'none' && !isCropped) }">
+            <template v-if="zones === 'depth' || zones === 'colour'">
+              <i class="ramp" />
+              <i class="unusable" />
+              <i class="cropped" />
+              <span>{{ t('holo.legendGood') }}</span>
+              <span>{{ t('holo.legendFair') }}</span>
+              <span>{{ t('holo.legendPoor') }}</span>
+              <span>{{ t('holo.legendNone') }}</span>
+              <span>{{ t('holo.crop') }}</span>
+            </template>
+            <template v-else-if="zones === 'none'">
+              <i class="unusable solo" />
+              <i v-if="isCropped" class="cropped" />
+              <span>{{ t('holo.legendNone') }}</span>
+              <span v-if="isCropped">{{ t('holo.crop') }}</span>
+            </template>
+            <template v-else>
+              <i class="cropped" />
+              <span>{{ t('holo.crop') }}</span>
+            </template>
           </span>
         </div>
       </div>
@@ -723,23 +715,6 @@
         <UiButton variant="ghost" @click="pendingDiscard = null">{{ t('common.cancel') }}</UiButton>
         <UiButton variant="danger" @click="discardAndGo">{{ t('holo.discard') }}</UiButton>
         <UiButton variant="solid" @click="saveAndGo">{{ t('holo.saveDesign') }}</UiButton>
-      </template>
-    </UiDialog>
-    <UiDialog v-if="saveLampDialog" :title="t('holo.lampSave')" @close="saveLampDialog = false">
-      <label class="field">
-        <span class="small muted">{{ t('holo.lampName') }}</span>
-        <input
-          ref="lampNameInput"
-          v-model="lampPresetName"
-          class="text-input"
-          autocomplete="off"
-          @keydown.enter="confirmSaveLampPreset"
-          @keydown.escape="saveLampDialog = false"
-        />
-      </label>
-      <template #actions>
-        <UiButton variant="ghost" @click="saveLampDialog = false">{{ t('common.cancel') }}</UiButton>
-        <UiButton variant="solid" :disabled="!lampPresetName.trim()" @click="confirmSaveLampPreset">{{ t('holo.save') }}</UiButton>
       </template>
     </UiDialog>
     <UiDialog v-if="saveDesignDialog && !pendingOverwrite" :title="saveDesignAsNew ? t('holo.saveDesignAs') : t('holo.saveDesign')" @close="closeSaveDesignDialog">
@@ -795,7 +770,6 @@ import {
   mdiCloseBoxOutline,
   mdiContentCopy,
   mdiContentSaveOutline,
-  mdiContentSavePlusOutline,
   mdiCrosshairsGps,
   mdiCubeOutline,
   mdiCursorDefaultOutline,
@@ -916,7 +890,6 @@ import { MAX_LAYERS } from '../discRenderer'
 import UiDialog from '../components/UiDialog.vue'
 
 type LightMode = 'flash' | 'lamp' | 'far'
-interface UserLampPreset { id: string; name: string; lampMm: Vec3; distanceMm: number }
 interface ExpView { id: number; imagePath: string; angleDeg: number; dirDeg: number; headXMm: number }
 interface ViewSpecDto {
   imagePath: string
@@ -1102,15 +1075,14 @@ const tabOptions = computed(() => [
   { value: 'preview', label: t('holo.modePreview') },
 ])
 const lampPresetOptions = computed<UiSelectOption[]>(() => [
-  { value: 'held', label: t('holo.lampHeld') },
   { value: 'far', label: t('holo.lampFar') },
+  { value: 'held', label: t('holo.lampHeld') },
   { value: 'farRight', label: t('holo.lampFarRight') },
-  ...userLampPresets.value.map((p) => ({ value: p.id, label: p.name })),
   ...(opts.lampPreset === 'custom' ? [{ value: 'custom', label: t('holo.lampCustom') }] : []),
 ])
 const pictureColourOptions = computed(() => [
-  { value: 'mono', label: t('holo.pictureMono') },
   { value: 'colour', label: t('holo.pictureColour') },
+  { value: 'mono', label: t('holo.pictureMono') },
 ])
 const lightModeOptions = computed<UiSelectOption[]>(() => [
   { value: 'lamp', label: t('holo.lightModeLamp') },
@@ -1325,6 +1297,8 @@ function showPosition(id: string) {
   positionId.value = id
   const selected = scene.value.objects.find((o) => o.id === selectedId.value)
   if (selected && selected.positionId !== id) selectedId.value = null
+  const selectedImg = scene.value.images.find((i) => i.id === selectedImageId.value)
+  if (selectedImg && selectedImg.positionId !== id) selectedImageId.value = null
   lookTurn.value = position.value.phiDeg
 }
 
@@ -1373,9 +1347,14 @@ const positionImages = computed(() => scene.value.images.filter((i) => i.positio
 const imagesFull = computed(() => positionImages.value.length >= MAX_LAYERS)
 const selectedImageId = ref<string | null>(null)
 const selectedImage = computed(() => positionImages.value.find((i) => i.id === selectedImageId.value) ?? null)
-/** The disc's zones follow what is selected: colour for a colour picture, none for a grey one,
- * which is carved and shows from anywhere, and depth otherwise. */
-const zones = computed<ZoneKind | null>(() => (selectedImage.value ? (selectedImage.value.colour ? 'colour' : null) : 'depth'))
+/** The disc's zones follow the selection: colour or crop-only for a picture, depth for a model,
+ * and only the unusable areas when nothing (or only the lamp) is selected. */
+const zones = computed<ZoneKind>(() => {
+  if (selectedImage.value) return selectedImage.value.colour ? 'colour' : 'crop'
+  if (selectedObj.value) return 'depth'
+  return 'none'
+})
+const isCropped = computed(() => !(position.value.cropSide === 'both' && position.value.cropDeg >= 90))
 /** Thumbnails and tone hints, by path. */
 const pictures = ref<Record<string, ArtworkAnalysis>>({})
 const thumbnails = computed(() => Object.fromEntries(Object.entries(pictures.value).map(([p, a]) => [p, a.thumbnail])))
@@ -1399,7 +1378,7 @@ async function addImage() {
     pictures.value[file] = a
     pushHistory()
     const l = makeLayer(file, a, positionImages.value.length === 0)
-    scene.value.images.push({ ...l, positionId: position.value.id, colour: false })
+    scene.value.images.push({ ...l, invert: false, positionId: position.value.id, colour: true })
     putOnTop(l.id)
     choosePicture(l.id)
     openGroup.value = 'models'
@@ -1710,59 +1689,6 @@ function onImageTransform(p: { id: string; x: number; y: number; size: number; s
 
 
 // ---- Lamp & optical controls ----
-const LAMP_PRESETS_KEY = 'discratcher.holo.lampPresets'
-
-function isFiniteNum(x: unknown): x is number {
-  return typeof x === 'number' && Number.isFinite(x)
-}
-
-function loadUserLampPresets(): UserLampPreset[] {
-  try {
-    const raw = localStorage.getItem(LAMP_PRESETS_KEY)
-    if (!raw) return []
-    const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    const seen = new Set<string>(['held', 'far', 'farRight', 'custom'])
-    const out: UserLampPreset[] = []
-    for (const item of parsed) {
-      if (!item || typeof item !== 'object') return []
-      const r = item as Record<string, unknown>
-      if (
-        typeof r.id !== 'string' ||
-        !r.id ||
-        seen.has(r.id) ||
-        typeof r.name !== 'string' ||
-        !r.name.trim() ||
-        !Array.isArray(r.lampMm) ||
-        r.lampMm.length !== 3 ||
-        !r.lampMm.every(isFiniteNum) ||
-        !isFiniteNum(r.distanceMm)
-      ) {
-        return []
-      }
-      seen.add(r.id)
-      out.push({ id: r.id, name: r.name.trim(), lampMm: [r.lampMm[0], r.lampMm[1], r.lampMm[2]], distanceMm: r.distanceMm })
-    }
-    return out
-  } catch {
-    return []
-  }
-}
-
-function saveUserLampPresets(presets: UserLampPreset[]) {
-  try {
-    localStorage.setItem(LAMP_PRESETS_KEY, JSON.stringify(presets))
-  } catch {
-    // Storage unavailable; presets stay in memory for this session.
-  }
-}
-
-const userLampPresets = ref<UserLampPreset[]>(loadUserLampPresets())
-const isUserLampPreset = computed(() => userLampPresets.value.some((p) => p.id === opts.lampPreset))
-const saveLampDialog = ref(false)
-const lampPresetName = ref('')
-const lampNameInput = ref<HTMLInputElement | null>(null)
-
 const sameVec3 = (a: Vec3, b: Vec3) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
 
 function matchLampPreset(lampMm: Vec3, distanceMm: number): string {
@@ -1771,8 +1697,7 @@ function matchLampPreset(lampMm: Vec3, distanceMm: number): string {
     if (sameVec3(lampMm, LAMP_FAR_MM)) return 'far'
     if (sameVec3(lampMm, LAMP_FAR_RIGHT_MM)) return 'farRight'
   }
-  const hit = userLampPresets.value.find((p) => sameVec3(p.lampMm, lampMm) && p.distanceMm === distanceMm)
-  return hit ? hit.id : 'custom'
+  return 'custom'
 }
 
 function setLampPreset(preset: string) {
@@ -1788,12 +1713,6 @@ function setLampPreset(preset: string) {
     opts.lampPreset = 'farRight'
     opts.lampMm = [...LAMP_FAR_RIGHT_MM]
     opts.distanceMm = DEFAULT_DISTANCE_MM
-  } else {
-    const found = userLampPresets.value.find((p) => p.id === preset)
-    if (!found) return
-    opts.lampPreset = found.id
-    opts.lampMm = [...found.lampMm]
-    opts.distanceMm = found.distanceMm
   }
 }
 
@@ -1804,38 +1723,6 @@ function setLampAxis(idx: number, v: number) {
 
 function setDistance(v: number) {
   opts.distanceMm = Math.round(v)
-  opts.lampPreset = matchLampPreset(opts.lampMm, opts.distanceMm)
-}
-
-function openSaveLampPreset() {
-  let n = userLampPresets.value.length + 1
-  while (userLampPresets.value.some((p) => p.name === t('holo.lampDefaultName', { n }))) n++
-  lampPresetName.value = t('holo.lampDefaultName', { n })
-  saveLampDialog.value = true
-  void nextTick(() => {
-    lampNameInput.value?.focus()
-    lampNameInput.value?.select()
-  })
-}
-
-function confirmSaveLampPreset() {
-  const name = lampPresetName.value.trim()
-  if (!name) return
-  const preset: UserLampPreset = {
-    id: `lamp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-    name,
-    lampMm: [...opts.lampMm] as Vec3,
-    distanceMm: opts.distanceMm,
-  }
-  userLampPresets.value = [...userLampPresets.value, preset]
-  saveUserLampPresets(userLampPresets.value)
-  opts.lampPreset = preset.id
-  saveLampDialog.value = false
-}
-
-function removeLampPreset(id: string) {
-  userLampPresets.value = userLampPresets.value.filter((p) => p.id !== id)
-  saveUserLampPresets(userLampPresets.value)
   opts.lampPreset = matchLampPreset(opts.lampMm, opts.distanceMm)
 }
 
@@ -2193,6 +2080,7 @@ async function applyLoadedScene(loaded: HoloScene, dir: string | null) {
   positionId.value = loaded.positions[0].id
   lookTurn.value = loaded.positions[0].phiDeg
   selectedId.value = kept.find((o) => o.positionId === positionId.value)?.id ?? null
+  selectedImageId.value = null
   designDir.value = dir
   expViews.value = []
   undoStack.value = []
@@ -2653,8 +2541,6 @@ img.thumb { object-fit: cover; }
 .positions .pos.lead { box-shadow: inset 0 0 0 1px var(--oc-accent); }
 .positions .clash { color: var(--oc-fg-warning); }
 .field { display: flex; flex-direction: column; gap: var(--oc-space-2xs); }
-.lamp-row { display: flex; align-items: center; gap: var(--oc-space-2xs); }
-.lamp-row > :not(.grow) { flex: none; }
 .location-row { display: flex; align-items: center; gap: var(--oc-space-sm); min-width: 0; }
 .location-row > :not(.grow) { flex: none; }
 .field-error { color: var(--oc-fg-danger); }
@@ -2696,9 +2582,12 @@ img.thumb { object-fit: cover; }
 .legend { display: flex; align-items: flex-start; gap: var(--oc-space-sm); }
 .legend-name { line-height: 8px; }
 .scale { display: grid; grid-template-columns: repeat(3, 44px) 52px 64px; row-gap: var(--oc-space-2xs); text-align: center; }
+.scale.two-cols { grid-template-columns: 52px 64px; }
+.scale.one-col { grid-template-columns: 64px; }
 .ramp, .unusable, .cropped { height: 8px; }
 .ramp { grid-column: span 3; border-radius: var(--oc-radius-pill) 0 0 var(--oc-radius-pill); background: linear-gradient(90deg, rgba(144, 69, 249, 0.85), rgba(144, 69, 249, 0.08)), #2a2a31; }
 .unusable { border-radius: 0 var(--oc-radius-pill) var(--oc-radius-pill) 0; background: repeating-linear-gradient(45deg, #8a8a92 0 1px, #1c1c22 1px 4px); }
+.unusable.solo { border-radius: var(--oc-radius-pill); }
 /* The crop's outline on the disc. */
 .cropped { box-sizing: border-box; margin: 0 var(--oc-space-sm); border: 1.5px solid rgba(144, 69, 249, 0.9); border-radius: 2px; }
 .preview-stage { position: absolute; inset: 0; display: grid; place-items: center; cursor: grab; touch-action: none; }

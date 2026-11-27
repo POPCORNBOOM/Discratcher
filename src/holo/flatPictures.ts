@@ -1,5 +1,5 @@
 // The flat positions' pictures in the 3D editor: each lies on the disc in its position's frame,
-// greyed as `artwork::Composition::sample` greys it, full where it is burned and faint outside.
+// greyed as `artwork::Composition::sample` greys it, clipped to the kept region unless selected.
 import {
   BufferGeometry,
   Float32BufferAttribute,
@@ -31,17 +31,18 @@ void main() {
 `
 const FRAGMENT = `
 uniform sampler2D map;
-uniform float gain, shift, invert, colour, crop, side, axis, inner, outer, opacity;
+uniform float gain, shift, invert, colour, crop, side, axis, inner, outer, opacity, picked;
 varying vec2 vUv;
 varying vec2 vAt;
 ${CROP_GLSL}
 void main() {
+  float r = length(vAt);
+  bool kept = r >= inner && r <= outer && inCrop(vAt, crop, side, axis);
+  if (!kept && picked < 0.5) discard;
   vec4 t = texture2D(map, vUv);
   vec3 base = colour > 0.5 ? t.rgb * 255.0 : vec3(dot(t.rgb, vec3(0.299, 0.587, 0.114)) * 255.0);
   vec3 v = clamp((base - 128.0) * gain + 128.0 + shift, 0.0, 255.0);
   if (invert > 0.5) v = 255.0 - v;
-  float r = length(vAt);
-  bool kept = r >= inner && r <= outer && inCrop(vAt, crop, side, axis);
   gl_FragColor = vec4(v / 255.0, t.a * opacity * (kept ? 0.95 : 0.2));
 }
 `
@@ -66,6 +67,8 @@ export interface FlatPictureState {
   /** Each picture's thumbnail, a data URL, by path. */
   thumbnails: Readonly<Record<string, string>>
   selectedId: string | null
+  /** Picture shown unclipped at full bounds when picked. */
+  pickedId: string | null
   /** When set, the only picture drawn. */
   only: string | null
   innerRadiusMm: number
@@ -110,7 +113,7 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
           uniforms: {
             map: { value: null }, toGroup: { value: new Matrix4() },
             gain: { value: 1 }, shift: { value: 0 }, invert: { value: 0 }, colour: { value: 0 },
-            crop: { value: Math.PI / 2 }, side: { value: 0 }, axis: { value: 0 }, inner: { value: 0 }, outer: { value: 0 }, opacity: { value: 1 },
+            crop: { value: Math.PI / 2 }, side: { value: 0 }, axis: { value: 0 }, inner: { value: 0 }, outer: { value: 0 }, opacity: { value: 1 }, picked: { value: 0 },
           },
         })
         const mesh = new Mesh(plane, material)
@@ -158,6 +161,7 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
       u.inner.value = st.innerRadiusMm
       u.outer.value = st.outerRadiusMm
       u.opacity.value = img.positionId === st.positionId ? 1 : 0.4
+      u.picked.value = img.id === st.pickedId ? 1 : 0
     })
   }
 

@@ -33,8 +33,10 @@ pub const TRANSFORM_EXPOSURE: f64 = 0.6;
 pub const HEAD_HALF_SPAN_MM: f64 = 40.0;
 /// Half the distance between the two eyes, mm.
 pub const EYE_HALF_MM: f64 = 32.0;
-/// Colour weight for colour pictures, matching the study default.
-const PICTURE_CHROMA: f64 = 1.0;
+/// Viewing poses solved across `[-EYE_HALF_MM, +EYE_HALF_MM]` for colour pictures, including `0`.
+const COLOUR_VIEWS: usize = 5;
+/// Colour weight for colour pictures, holding greys neutral even past local white headroom.
+const PICTURE_CHROMA: f64 = 9.0;
 /// The lamp, in the viewer's frame: right, up, towards the viewer.
 pub const LAMP_MM: [f64; 3] = [150.0, 0.0, 400.0];
 /// Heads outside the window that are asked for evenness only, mm.
@@ -546,7 +548,7 @@ fn solve_colour_cell(x: f64, y: f64, rgb: [f32; 3], poses: &[(V3, V3)], opts: &O
     let target_lin = [srgb_to_linear(rgb[0]), srgb_to_linear(rgb[1]), srgb_to_linear(rgb[2])];
     let target_luma = 0.2126 * target_lin[0] + 0.7152 * target_lin[1] + 0.0722 * target_lin[2];
     let t = target_luma * opts.exposure;
-    let colour = PICTURE_CHROMA.max(0.0).sqrt();
+    let colour = PICTURE_CHROMA.sqrt();
 
     let (mut g, mut h) = (vec![0.0f64; k * k], vec![0.0f64; k]);
     let mut row = vec![0.0f64; k];
@@ -698,10 +700,9 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
                         }
                     }
                     let angle = positions[pic.at].phi_deg.to_radians();
-                    let poses = [
-                        eye_and_lamp(&opts, lamp, -EYE_HALF_MM, angle),
-                        eye_and_lamp(&opts, lamp, EYE_HALF_MM, angle),
-                    ];
+                    let poses: Vec<_> = (0..COLOUR_VIEWS)
+                        .map(|i| eye_and_lamp(&opts, lamp, EYE_HALF_MM * (2.0 * i as f64 / (COLOUR_VIEWS - 1) as f64 - 1.0), angle))
+                        .collect();
                     let solved_cells: Vec<(usize, Vec<f32>)> = cells
                         .par_iter()
                         .map(|&(c, x, y, rgb)| (c, solve_colour_cell(x, y, rgb, &poses, &opts, resp)))
@@ -894,28 +895,23 @@ mod tests {
             colour,
             layer: crate::artwork::Layer {
                 path: path.to_string_lossy().into(),
-                y: -41.0 / across,
-                size: 30.0 / across,
+                x: 41.0 / across,
+                y: 0.0,
+                size: 28.0 / across,
                 ..crate::artwork::Layer::plain()
             },
         };
         let shared = design::shared_codebook(0.1333);
         let (cb, resp) = (&shared.0, &shared.1);
         let opts = Options { grid: 128, ..Default::default() };
-
-        // (a) Colour picture: no flat owner cells; left-eye render is red-dominant on the red
-        // half and blue-dominant on the blue half.
-        let mut sc_colour = scene(&[0.0], vec![]);
-        sc_colour.images = vec![make_pic(true)];
-        let sol_colour = solve(&sc_colour, &opts, cb, resp, &preset).unwrap();
-        assert!(sol_colour.flat.owner.iter().all(|&o| o == 0), "colour picture must not claim flat_owner");
-
-        let (eye, lamp) = eye_and_lamp(&opts, LAMP_MM, -EYE_HALF_MM, 0.0);
-        let view = scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() };
-        let k = sol_colour.solved.options;
-        let render_at = |x: f64, y: f64| -> [f64; 3] {
-            let w = sol_colour.solved.cell(x / across + 0.5, y / across + 0.5).unwrap();
-            let (gt, gr) = scene::g_at(&view, x, y);
+        let k = resp.options;
+        let plain = k - 1;
+        let eval_pt = |sol: &Solution, lamp_mm: [f64; 3], hx: f64, x: f64, y: f64| -> [f64; 3] {
+            let (eye, lamp) = eye_and_lamp(&opts, lamp_mm, hx, 0.0);
+            let sc_view = scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() };
+            let w = sol.solved.cell(x / across + 0.5, y / across + 0.5).unwrap();
+            let (gt, gr) = scene::g_at(&sc_view, x, y);
+            let pl = resp.at(plain, gt, gr);
             let mut rgb = [0.0f64; 3];
             for j in 0..k {
                 let c = resp.at(j, gt, gr);
@@ -923,19 +919,88 @@ mod tests {
                     rgb[ch] += w[j] as f64 * c[ch] as f64;
                 }
             }
+            for ch in 0..3 {
+                rgb[ch] = (1.0 - PLAIN_LEAK) * rgb[ch] + PLAIN_LEAK * pl[ch] as f64;
+            }
             rgb
         };
-        let red = render_at(-8.0, -41.0);
-        let blue = render_at(8.0, -41.0);
-        assert!(red[0] > red[1] && red[0] > red[2], "red half should be red-dominant: {red:?}");
-        assert!(blue[2] > blue[0] && blue[2] > blue[1], "blue half should be blue-dominant: {blue:?}");
 
-        // (b) Mono picture: flat owner set, weights untouched (background everywhere).
-        let mut sc_mono = scene(&[0.0], vec![]);
-        sc_mono.images = vec![make_pic(false)];
+        // (a) Colour picture at 3 o'clock under Top light: no flat owner cells; left, centre, and
+        // right poses all render red-dominant on the red half and blue-dominant on the blue half.
+        let top_lamp = [0.0, 150.0, 400.0];
+        let sc_colour = Scene {
+            version: model3d::SCENE_VERSION,
+            objects: vec![],
+            lamp_mm: Some(top_lamp),
+            positions: vec![pos("0", 0.0, 90.0)],
+            images: vec![make_pic(true)],
+        };
+        let sol_colour = solve(&sc_colour, &opts, cb, resp, &preset).unwrap();
+        assert!(sol_colour.flat.owner.iter().all(|&o| o == 0), "colour picture must not claim flat_owner");
+        for &hx in &[-EYE_HALF_MM, 0.0, EYE_HALF_MM] {
+            let red = eval_pt(&sol_colour, top_lamp, hx, 34.0, 0.0);
+            let blue = eval_pt(&sol_colour, top_lamp, hx, 48.0, 0.0);
+            assert!(red[0] > red[1] && red[0] > red[2], "hx={hx}: red half should be red-dominant: {red:?}");
+            assert!(blue[2] > blue[0] && blue[2] > blue[1], "hx={hx}: blue half should be blue-dominant: {blue:?}");
+        }
+
+        // (b) 4-quadrant RGBW picture at 3 o'clock under Top-right light: primaries stay dominant
+        // and white stays neutral across left (-32 mm), centre (0 mm), and right (+32 mm) poses.
+        let rgbw_path = dir.join("rgbw.png");
+        let rgbw = image::RgbImage::from_fn(16, 16, |x, y| match (x < 8, y < 8) {
+            (true, true) => image::Rgb([255, 0, 0]),
+            (false, true) => image::Rgb([0, 220, 0]),
+            (true, false) => image::Rgb([0, 0, 255]),
+            (false, false) => image::Rgb([240, 240, 240]),
+        });
+        rgbw.save(&rgbw_path).unwrap();
+        let top_right = [150.0, 150.0, 400.0];
+        let sc_rgbw = Scene {
+            version: model3d::SCENE_VERSION,
+            objects: vec![],
+            lamp_mm: Some(top_right),
+            positions: vec![pos("0", 0.0, 90.0)],
+            images: vec![SceneImage {
+                id: "rgbw".into(),
+                name: "rgbw".into(),
+                width: 16,
+                height: 16,
+                position_id: "0".into(),
+                colour: true,
+                layer: crate::artwork::Layer {
+                    path: rgbw_path.to_string_lossy().into(),
+                    x: 41.0 / across,
+                    y: 0.0,
+                    size: 28.0 / across,
+                    ..crate::artwork::Layer::plain()
+                },
+            }],
+        };
+        let sol_rgbw = solve(&sc_rgbw, &opts, cb, resp, &preset).unwrap();
+        for &hx in &[-EYE_HALF_MM, 0.0, EYE_HALF_MM] {
+            let r = eval_pt(&sol_rgbw, top_right, hx, 34.0, -7.0);
+            let g = eval_pt(&sol_rgbw, top_right, hx, 48.0, -7.0);
+            let b = eval_pt(&sol_rgbw, top_right, hx, 34.0, 7.0);
+            let w = eval_pt(&sol_rgbw, top_right, hx, 48.0, 7.0);
+            assert!(r[0] > r[1] && r[0] > r[2], "hx={hx}: red quadrant not red-dominant: {r:?}");
+            assert!(g[1] > g[0] && g[1] > g[2], "hx={hx}: green quadrant not green-dominant: {g:?}");
+            assert!(b[2] > b[0] && b[2] > b[1], "hx={hx}: blue quadrant not blue-dominant: {b:?}");
+            let mean = (w[0] + w[1] + w[2]) / 3.0;
+            let spread = (w[0].max(w[1]).max(w[2]) - w[0].min(w[1]).min(w[2])) / mean.max(1e-9);
+            assert!(spread < 0.25, "hx={hx}: white quadrant not neutral (spread={spread:.3}): {w:?}");
+        }
+
+        // (c) Mono picture: flat owner set, weights untouched (background everywhere).
+        let sc_mono = Scene {
+            version: model3d::SCENE_VERSION,
+            objects: vec![],
+            lamp_mm: None,
+            positions: vec![pos("0", 0.0, 90.0)],
+            images: vec![make_pic(false)],
+        };
         let sol_mono = solve(&sc_mono, &opts, cb, resp, &preset).unwrap();
-        assert_eq!(sol_mono.flat.at(-8.0 / across, -41.0 / across), Some(0));
-        assert_eq!(sol_mono.flat.at(8.0 / across, -41.0 / across), Some(0));
+        assert_eq!(sol_mono.flat.at(34.0 / across, 0.0), Some(0));
+        assert_eq!(sol_mono.flat.at(48.0 / across, 0.0), Some(0));
         let bg = cb.entries.iter().position(|e| e.bytes.iter().all(|&b| b == design::BACKGROUND_BYTE)).unwrap();
         for cell in sol_mono.solved.weights.chunks_exact(k) {
             for (j, &w) in cell.iter().enumerate() {
