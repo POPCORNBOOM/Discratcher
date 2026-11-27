@@ -16,8 +16,8 @@
         <UiButton variant="ghost" @click="simulate">{{ t('cal.devRun') }}</UiButton>
       </div>
       <UiAdvanced>
-        <UiSlider v-model="rungs" :label="t('cal.rungs')" :min="16" :max="72" :step="4" />
-        <UiSlider v-model="reads" :label="t('cal.reads')" :min="16" :max="60" :step="4" />
+        <UiSlider v-model="rungs" :label="t('cal.rungs')" :min="16" :max="72" :step="4" :ends="[t('cal.faster'), t('cal.finer')]" />
+        <UiSlider v-model="reads" :label="t('cal.reads')" :min="16" :max="60" :step="4" :ends="[t('cal.faster'), t('cal.finer')]" />
         <UiSlider v-model="lo" :label="t('cal.lo')" :min="1" :max="10" :step="1" :format="(v) => `${v}%`" />
         <UiSlider v-model="hi" :label="t('cal.hi')" :min="80" :max="98" :step="1" :format="(v) => `${v}%`" />
       </UiAdvanced>

@@ -62,7 +62,7 @@
               <UiButton icon-only variant="ghost" :icon="mdiPlus" :disabled="scene.positions.length >= MAX_POSITIONS" :aria-label="t('holo.addPosition')" :data-tooltip="t('holo.addPosition')" @click="addPosition" />
             </div>
             <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
-            <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
+            <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" :ends="[t('holo.cropLow'), t('holo.cropHigh')]" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
             <UiSegmented :model-value="position.mode" :options="calcModeOptions" @update:model-value="setMode($event as HoloPositionMode)" />
             <UiSlider
               v-if="position.mode === 'real'"
@@ -72,11 +72,12 @@
               :max="6"
               :step="0.1"
               :format="(x) => t('holo.times', { n: x.toFixed(1) })"
+              :ends="[t('holo.parallaxLow'), t('holo.parallaxHigh')]"
               @pointerdown="beginControlEdit"
               @update:model-value="setParallax"
             />
             <template v-else>
-              <UiSlider :model-value="tiltNow.deg" :label="t('holo.tiltRange')" :min="1" :max="MAX_TRANSFORM_TILT_DEG" :step="0.5" :format="(x) => t('holo.tiltRangeWords', { n: x })" @pointerdown="beginControlEdit" @update:model-value="setTilt" />
+              <UiSlider :model-value="tiltNow.deg" :label="t('holo.tiltRange')" :min="1" :max="MAX_TRANSFORM_TILT_DEG" :step="0.5" :format="(x) => t('holo.tiltRangeWords', { n: x })" :ends="[t('holo.tiltLow'), t('holo.tiltHigh')]" @pointerdown="beginControlEdit" @update:model-value="setTilt" />
               <a v-if="position.tiltDeg > 0" class="action-link end" role="button" tabindex="0" @click="setTilt(0)" @keydown.enter="setTilt(0)">{{ t('holo.tiltAuto', { n: tiltNow.autoDeg }) }}</a>
             </template>
             <div v-if="overlapping.length" class="notice warn">
@@ -90,7 +91,7 @@
                 :min="0"
                 :max="3"
                 :step="0.05"
-                :format="(x) => `${Math.round(x * 100)}%`"
+                :ends="[t('holo.chromaLow'), t('holo.chromaHigh')]"
               />
             </UiAdvanced>
           </UiSection>
@@ -282,7 +283,7 @@
                 :min="0"
                 :max="1"
                 :step="0.05"
-                :format="percent"
+                :ends="[t('holo.linesLow'), t('holo.linesHigh')]"
                 @pointerdown="beginControlEdit"
                 @update:model-value="(v) => setSelectedStyle('lines', v)"
               />
@@ -292,7 +293,7 @@
                 :min="0"
                 :max="1"
                 :step="0.05"
-                :format="percent"
+                :ends="[t('holo.shadingLow'), t('holo.shadingHigh')]"
                 @pointerdown="beginControlEdit"
                 @update:model-value="(v) => setSelectedStyle('shading', v)"
               />
@@ -302,7 +303,7 @@
                 :min="0"
                 :max="1"
                 :step="0.05"
-                :format="percent"
+                :ends="[t('holo.textureLow'), t('holo.textureHigh')]"
                 @pointerdown="beginControlEdit"
                 @update:model-value="(v) => setSelectedStyle('texture', v)"
               />
@@ -1225,7 +1226,6 @@ function setLampAxis(idx: number, v: number) {
   opts.lampMm[idx] = Math.round(v)
   opts.lampPreset = 'custom'
 }
-const percent = (x: number) => `${Math.round(x * 100)}%`
 const cm = (x: number) => t('holo.cm', { n: Math.round(Math.abs(x) / 5) / 2 })
 const lampSideWords = (x: number) => (x === 0 ? t('holo.centred') : t(x > 0 ? 'holo.toRight' : 'holo.toLeft', { d: cm(x) }))
 const lampAwayWords = (y: number) => (y === 0 ? t('holo.centred') : t(y > 0 ? 'holo.awayFromYou' : 'holo.towardsYou', { d: cm(y) }))
