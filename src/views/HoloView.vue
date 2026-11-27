@@ -952,14 +952,14 @@ async function addSample() {
 function selectObject(id: string | null) {
   selectedId.value = id
   const obj = scene.value.objects.find((o) => o.id === id)
-  if (obj && obj.positionId !== positionId.value) goToPosition(obj.positionId, true)
+  if (obj && obj.positionId !== positionId.value) goToPosition(obj.positionId)
 }
 
-function goToPosition(id: string, keepSelection = false) {
+/** Turn to a position. A model selected elsewhere is let go; nothing is picked for you. */
+function goToPosition(id: string) {
   positionId.value = id
-  if (!keepSelection && selectedId.value !== LAMP_ID) {
-    selectedId.value = positionObjects.value[0]?.id ?? null
-  }
+  const selected = scene.value.objects.find((o) => o.id === selectedId.value)
+  if (selected && selected.positionId !== id) selectedId.value = null
   lookTurn.value = position.value.phiDeg
 }
 
