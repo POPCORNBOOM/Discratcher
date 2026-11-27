@@ -316,7 +316,7 @@ pub struct Solution {
     pub solved: Arc<Solved>,
     /// Positions that cover some of the same disc as another.
     pub overlapping: Vec<String>,
-    /// How each transform position is tilted.
+    /// How each position is, or would be, tilted in transform mode: known before switching to it.
     pub tilts: Vec<Tilt>,
 }
 
@@ -616,7 +616,6 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
         }
     }
     let overlapping = groups.iter().zip(&clash).filter(|(_, &c)| c).map(|(g, _)| g.0.id.clone()).collect();
-    let tilts = groups.iter().zip(tilts).filter(|((p, _), _)| p.mode == model3d::Mode::Transform).map(|(_, t)| t).collect();
     Ok(Solution { solved: Arc::new(Solved { grid: n, options: k, weights, error: 0.0 }), overlapping, tilts })
 }
 
