@@ -25,7 +25,7 @@ const open = defineModel<boolean>('open', { default: true })
 .ui-section { display: flex; flex-direction: column; gap: var(--oc-space-sm); }
 .head { display: flex; align-items: center; gap: var(--oc-space-sm); }
 .toggle { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: var(--oc-space-xs); height: var(--oc-size-md); padding: 0; border: 0; background: transparent; color: var(--oc-fg-default); font-size: var(--oc-text-lg); font-weight: 600; text-align: left; }
-.toggle:hover .name { color: var(--oc-fg-accent); }
+.toggle:hover .chevron { color: var(--oc-fg-default); }
 .toggle:focus-visible { outline: none; box-shadow: var(--oc-focus-ring); border-radius: var(--oc-radius-control); }
 .chevron { color: var(--oc-fg-muted); transition: transform var(--oc-duration-quick) var(--oc-ease); }
 .chevron.on { transform: rotate(90deg); }
