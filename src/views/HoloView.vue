@@ -624,6 +624,9 @@
         </div>
         <div v-if="!scene.objects.length && !scene.images.length && !loadingMesh" class="hint">{{ t('holo.dropHint') }}</div>
         <div v-if="loadingMesh" class="hint">{{ t('holo.loadingModel') }}</div>
+        <div class="float left small muted gestures edit-gestures">
+          <span v-for="g in editGestures" :key="g.text" class="gesture"><UiIcon :path="g.icon" :size="16" />{{ g.text }}</span>
+        </div>
         <div class="float legend small muted" aria-hidden="true">
           <span class="legend-name">{{ t('holo.legendDepth') }}</span>
           <span class="scale">
@@ -693,6 +696,7 @@
 import {
   mdiAlertOctagonOutline,
   mdiAlertOutline,
+  mdiAppleKeyboardOption,
   mdiArrowDown,
   mdiArrowUp,
   mdiAxisArrow,
@@ -716,7 +720,9 @@ import {
   mdiImagePlusOutline,
   mdiLayersOutline,
   mdiLightbulbOutline,
+  mdiMouse,
   mdiMouseLeftClickOutline,
+  mdiMouseRightClickOutline,
   mdiMouseScrollWheel,
   mdiPlus,
   mdiShieldCheckOutline,
@@ -964,6 +970,14 @@ const lookDir = ref(DEFAULT_DIR_DEG)
 const previewBusy = ref(false)
 const previewDragging = ref(false)
 /** What the pointer does in the preview, as an icon and a few words each. */
+/** What the mouse does in the edit view, as the preview lists its own. */
+const editGestures = computed(() => [
+  { icon: mdiMouseLeftClickOutline, text: t('holo.gesturePick') },
+  { icon: mdiMouse, text: t('holo.gestureOrbit') },
+  { icon: mdiMouseRightClickOutline, text: t('holo.gesturePan') },
+  { icon: mdiMouseScrollWheel, text: t('holo.gestureZoom') },
+  { icon: mdiAppleKeyboardOption, text: t('holo.gestureOption') },
+])
 const previewGestures = computed(() =>
   expViews.value.length
     ? [{ icon: mdiMouseLeftClickOutline, text: t('holo.gestureView') }]
@@ -2305,6 +2319,8 @@ img.thumb { object-fit: cover; }
 .float { position: absolute; right: var(--oc-space-md); bottom: var(--oc-space-sm); pointer-events: none; }
 .float.left { right: auto; left: var(--oc-space-lg); }
 .gestures { display: flex; gap: var(--oc-space-md); }
+/* Beside the axes in the corner. */
+.float.left.edit-gestures { left: 96px; flex-wrap: wrap; max-width: calc(100% - 96px - 260px); }
 .gesture { display: inline-flex; align-items: center; gap: var(--oc-space-2xs); }
 .legend { display: flex; align-items: flex-start; gap: var(--oc-space-sm); }
 .legend-name { line-height: 8px; }
