@@ -367,6 +367,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_crop_deg() -> f64 {
+    30.0
+}
+
 /// One placed 3D object in the hologram scene editor (scene space: +x right, +y up, +z toward viewer, mm).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -382,6 +386,9 @@ pub struct SceneObject {
     /// The viewing position it belongs to; the first when empty or unknown.
     #[serde(default)]
     pub position_id: String,
+    /// Per-object ink style (lines, shading, texture).
+    #[serde(default)]
+    pub style: super::ink::Style,
 }
 
 /// One way the disc is turned to be looked at, with its own objects.
@@ -393,6 +400,9 @@ pub struct Position {
     pub name: String,
     /// Which angle of the disc is at the top, clockwise in degrees.
     pub phi_deg: f64,
+    /// Half-angle kept around 12 and 6 o'clock of this position, degrees; 90 or more means no crop.
+    #[serde(default = "default_crop_deg")]
+    pub crop_deg: f64,
 }
 
 /// Versioned 3D hologram scene contract shared between the editor UI, project files, and renderer.
@@ -2014,7 +2024,7 @@ mod tests {
             visible: true,
             position_mm: [0.0, 41.0, 0.0],
             rotation_deg: [0.0, 0.0, 0.0],
-            scale_mm: 20.0, position_id: String::new(),
+            scale_mm: 20.0, position_id: String::new(), style: Default::default(),
         };
         let placed = place_scene_object(&letter_f, &obj).unwrap();
         let views = scene_head_motion_views(&SceneViewOptions { views: 3, ..Default::default() });
@@ -2076,7 +2086,7 @@ mod tests {
         let star = load_mesh_or_builtin(BUILTIN_SAMPLE_PATH).unwrap();
         let mk = |pos: [f64; 3], scale_mm: f64| SceneObject {
             id: "o".into(), path: "x".into(), name: "x".into(), visible: true,
-            position_mm: pos, rotation_deg: [0.0; 3], scale_mm, position_id: String::new(),
+            position_mm: pos, rotation_deg: [0.0; 3], scale_mm, position_id: String::new(), style: Default::default(),
         };
         let placed = [
             place_scene_object(&star, &mk([0.0, -41.0, 8.0], 24.0)).unwrap(),
@@ -2139,7 +2149,7 @@ mod tests {
         let preset = reference_preset();
         let dir = std::env::temp_dir().join("holo-editor-path");
         let obj = |path: &str, pos: [f64; 3], rot: [f64; 3], scale_mm: f64| SceneObject {
-            id: "o".into(), path: path.into(), name: "x".into(), visible: true, position_mm: pos, rotation_deg: rot, scale_mm, position_id: String::new(),
+            id: "o".into(), path: path.into(), name: "x".into(), visible: true, position_mm: pos, rotation_deg: rot, scale_mm, position_id: String::new(), style: Default::default(),
         };
         let scene = Scene { version: SCENE_VERSION, lamp_mm: None, positions: vec![], objects: vec![
             obj(&std::env::var("MODEL").unwrap(), [0.0, 40.0, 0.0], [0.0; 3], 34.0),
@@ -2184,7 +2194,7 @@ mod tests {
             println!("{} tris, {} bytes, {:?}", m.tris.len(), bytes, began.elapsed());
             let placed = place_scene_object(&m, &SceneObject {
                 id: "o".into(), path: "x".into(), name: "x".into(), visible: true,
-                position_mm: [0.0, -41.0, 0.0], rotation_deg: [0.0; 3], scale_mm: 30.0, position_id: String::new(),
+                position_mm: [0.0, -41.0, 0.0], rotation_deg: [0.0; 3], scale_mm: 30.0, position_id: String::new(), style: Default::default(),
             }).unwrap();
             let v = &scene_head_motion_views(&SceneViewOptions { views: 3, ..Default::default() })[1];
             let p = reference_preset();
@@ -2219,7 +2229,7 @@ mod tests {
                 visible: true,
                 position_mm: [0.0, -41.0, 10.0],
                 rotation_deg: [0.0, 0.0, 0.0],
-                scale_mm: 16.0, position_id: String::new(),
+                scale_mm: 16.0, position_id: String::new(), style: Default::default(),
             },
         )
         .unwrap();
@@ -2232,7 +2242,7 @@ mod tests {
                 visible: true,
                 position_mm: [0.0, -41.0, -10.0],
                 rotation_deg: [0.0, 0.0, 0.0],
-                scale_mm: 24.0, position_id: String::new(),
+                scale_mm: 24.0, position_id: String::new(), style: Default::default(),
             },
         )
         .unwrap();
@@ -2254,7 +2264,7 @@ mod tests {
                     visible: true,
                     position_mm: [0.0, -41.0, 8.0],
                     rotation_deg: [0.0, 0.0, 0.0],
-                    scale_mm: 22.0, position_id: String::new(),
+                    scale_mm: 22.0, position_id: String::new(), style: Default::default(),
                 },
                 SceneObject {
                     id: "hidden".into(),
@@ -2263,7 +2273,7 @@ mod tests {
                     visible: false,
                     position_mm: [0.0, 41.0, 0.0],
                     rotation_deg: [0.0, 0.0, 0.0],
-                    scale_mm: 20.0, position_id: String::new(),
+                    scale_mm: 20.0, position_id: String::new(), style: Default::default(),
                 },
             ],
         };

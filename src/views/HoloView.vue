@@ -64,6 +64,7 @@
               <UiButton icon-only variant="ghost" :icon="mdiPlus" :disabled="scene.positions.length >= MAX_POSITIONS" :aria-label="t('holo.addPosition')" :data-tooltip="t('holo.addPosition')" @click="addPosition" />
             </div>
             <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
+            <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
@@ -158,10 +159,6 @@
 
         <!-- Hardcore / advanced settings -->
         <UiAdvanced>
-          <UiSlider v-model="opts.thicknessMm" :label="t('holo.thickness')" :min="1" :max="20" :step="0.5" :format="(x) => t('holo.eitherSide', { n: x })" />
-          <UiSlider v-model="opts.lines" :label="t('holo.lines')" :min="0" :max="1" :step="0.05" :format="percent" />
-          <UiSlider v-model="opts.shading" :label="t('holo.shading')" :min="0" :max="1" :step="0.05" :format="percent" />
-          <UiSlider v-model="opts.texture" :label="t('holo.texture')" :min="0" :max="1" :step="0.05" :format="percent" />
           <UiSlider
             v-model="opts.distanceMm"
             :label="t('holo.distance')"
@@ -179,8 +176,38 @@
             :format="(x) => `${Math.round(x * 100)}%`"
           />
           
-          <!-- Exact numeric position / rotation / scale -->
+          <!-- Per-object style & exact numeric position / rotation / scale -->
           <section v-if="selectedObj" class="section">
+            <UiSlider
+              :model-value="selectedObj.style.lines"
+              :label="t('holo.lines')"
+              :min="0"
+              :max="1"
+              :step="0.05"
+              :format="percent"
+              @pointerdown="beginControlEdit"
+              @update:model-value="(v) => setSelectedStyle('lines', v)"
+            />
+            <UiSlider
+              :model-value="selectedObj.style.shading"
+              :label="t('holo.shading')"
+              :min="0"
+              :max="1"
+              :step="0.05"
+              :format="percent"
+              @pointerdown="beginControlEdit"
+              @update:model-value="(v) => setSelectedStyle('shading', v)"
+            />
+            <UiSlider
+              :model-value="selectedObj.style.texture"
+              :label="t('holo.texture')"
+              :min="0"
+              :max="1"
+              :step="0.05"
+              :format="percent"
+              @pointerdown="beginControlEdit"
+              @update:model-value="(v) => setSelectedStyle('texture', v)"
+            />
             <div class="field">
               <span class="small muted">{{ t('holo.pos') }}</span>
               <div class="num-grid">
@@ -520,6 +547,7 @@ import {
 import { decodeDisplayMesh, type DisplayMeshData } from '../holo/sampleMesh'
 import {
   cloneScene,
+  defaultInkStyle,
   defaultObjectPlacement,
   discRadiiMm,
   emptyScene,
@@ -534,6 +562,7 @@ import {
   saveLastScene,
   SCENE_VERSION,
   validateScene,
+  type HoloInkStyle,
   type HoloScene,
   type HoloSceneObject,
 } from '../holo/scene'
@@ -637,10 +666,6 @@ const opts = reactive<{
   chromaWeight: number
   exposure: number
   parallax: number
-  thicknessMm: number
-  lines: number
-  shading: number
-  texture: number
   grid: number
 }>({
   lampPreset: 'held',
@@ -649,10 +674,6 @@ const opts = reactive<{
   chromaWeight: 1,
   exposure: 0.6,
   parallax: 2,
-  thicknessMm: 3,
-  lines: 0.85,
-  shading: 0.25,
-  texture: 0.8,
   grid: 256,
 })
 
@@ -781,6 +802,7 @@ async function addModelPath(path: string, displayName?: string) {
       name: displayName ?? fileBaseName(path),
       visible: true,
       positionId: position.value.id,
+      style: defaultInkStyle(),
       ...place,
     }
     scene.value.objects.push(obj)
@@ -836,6 +858,12 @@ function setPhi(deg: number) {
   lookTurn.value = position.value.phiDeg
 }
 
+function setCrop(deg: number) {
+  position.value.cropDeg = Math.min(90, Math.max(5, Math.round(deg)))
+}
+
+const cropWords = (deg: number) => (deg >= 90 ? t('holo.cropNone') : t('holo.cropRange', { n: Math.round(deg) }))
+
 // Undo, open and removal can leave the current position behind.
 watch(() => scene.value.positions.map((q) => q.id).join(), () => {
   if (!scene.value.positions.some((q) => q.id === positionId.value)) goToPosition(scene.value.positions[0].id)
@@ -867,6 +895,7 @@ function duplicateSelected() {
     id: makeObjectId(),
     positionMm: [round1(src.positionMm[0] + 6), round1(src.positionMm[1]), round1(src.positionMm[2])],
     rotationDeg: [...src.rotationDeg] as Vec3,
+    style: { ...src.style },
   }
   scene.value.objects.push(copy)
   selectedId.value = copy.id
@@ -901,6 +930,12 @@ function setSelectedScale(scaleMm: number) {
   const obj = selectedObj.value
   if (!obj) return
   obj.scaleMm = round1(scaleMm)
+}
+
+function setSelectedStyle(key: keyof HoloInkStyle, v: number) {
+  const obj = selectedObj.value
+  if (!obj) return
+  obj.style[key] = Math.round(v * 100) / 100
 }
 
 function setSelectedPosAxis(idx: number, e: Event) {
@@ -1144,8 +1179,6 @@ const sceneOptions = () => ({
   exposure: opts.exposure,
   grid: GRID,
   parallax: opts.parallax,
-  thicknessMm: opts.thicknessMm,
-  style: { lines: opts.lines, shading: opts.shading, texture: opts.texture },
 })
 
 function expViewSpec(imagePath: string, angleDeg: number, dirDeg: number, headXMm: number): ViewSpecDto {

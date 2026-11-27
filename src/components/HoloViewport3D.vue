@@ -61,7 +61,7 @@ import {
   type Vec3,
 } from '../holo/constants'
 import type { DisplayMeshData } from '../holo/sampleMesh'
-import { round1, type HoloPosition, type HoloSceneObject } from '../holo/scene'
+import { DEFAULT_CROP_DEG, round1, type HoloPosition, type HoloSceneObject } from '../holo/scene'
 import { zonesMaterial } from '../holo/usability'
 
 export type GizmoMode = 'translate' | 'rotate' | 'scale'
@@ -231,14 +231,20 @@ function groupFor(id: string): Group {
   return g
 }
 
-const currentPhi = () => props.positions.find((p) => p.id === props.positionId)?.phiDeg ?? 0
+const currentPosition = () => props.positions.find((p) => p.id === props.positionId)
+const currentPhi = () => currentPosition()?.phiDeg ?? 0
+const currentCrop = () => currentPosition()?.cropDeg ?? DEFAULT_CROP_DEG
 
 /** Turn every position's objects to where they stand with `shownPhi` at the top. */
 function turnGroups() {
+  const left = turnLeft()
+  const settled = Math.abs(left) < 0.05
   for (const p of props.positions) {
-    groupFor(p.id).rotation.z = p.id === props.positionId && Math.abs(turnLeft()) < 0.05 ? 0 : -MathUtils.degToRad(p.phiDeg - shownPhi)
+    groupFor(p.id).rotation.z = p.id === props.positionId && settled ? 0 : -MathUtils.degToRad(p.phiDeg - shownPhi)
   }
   if (markers) markers.rotation.z = MathUtils.degToRad(shownPhi)
+  const u = (usabilityMesh?.material as ShaderMaterial | undefined)?.uniforms
+  if (u) u.phi.value = settled ? 0 : MathUtils.degToRad(left)
 }
 
 /** Degrees still to turn, the short way round. */
@@ -273,6 +279,9 @@ function updateZones() {
   if (!u) return
   ;(u.lamp.value as Vector3).set(...props.lampMm)
   u.distance.value = props.distanceMm
+  const left = turnLeft()
+  u.phi.value = Math.abs(left) < 0.05 ? 0 : MathUtils.degToRad(left)
+  u.crop.value = MathUtils.degToRad(currentCrop())
 }
 
 function ensureDropIndicator() {
@@ -785,7 +794,10 @@ watch(() => [props.innerRadiusMm, props.outerRadiusMm], () => {
   buildDisc()
   buildMarkers()
 })
-watch(() => [props.positions, props.positionId], () => buildMarkers(), { deep: true })
+watch(() => [props.positions, props.positionId], () => {
+  buildMarkers()
+  updateZones()
+}, { deep: true })
 watch(() => [props.lampMm, props.distanceMm], () => {
   updateZones()
   syncLamp()

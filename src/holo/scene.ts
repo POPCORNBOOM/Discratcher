@@ -11,6 +11,19 @@ import {
 export const SCENE_VERSION = 1 as const
 const LAST_SCENE_STORAGE_KEY = 'discratcher.holo.lastScene.v1'
 
+export interface HoloInkStyle {
+  lines: number
+  shading: number
+  texture: number
+}
+
+export const DEFAULT_INK_STYLE: HoloInkStyle = { lines: 0.85, shading: 0.25, texture: 0.8 }
+export const DEFAULT_CROP_DEG = 30
+
+export function defaultInkStyle(): HoloInkStyle {
+  return { ...DEFAULT_INK_STYLE }
+}
+
 export interface HoloSceneObject {
   id: string
   path: string
@@ -20,6 +33,7 @@ export interface HoloSceneObject {
   rotationDeg: Vec3
   scaleMm: number
   positionId: string
+  style: HoloInkStyle
 }
 
 /** One way the disc is turned to be looked at, with its own objects. */
@@ -28,6 +42,8 @@ export interface HoloPosition {
   name: string
   /** Which angle of the disc is at the top, clockwise in degrees. */
   phiDeg: number
+  /** Half-angle kept around 12 and 6 o'clock of this position, degrees; 90 means no crop. */
+  cropDeg: number
 }
 
 export interface HoloScene {
@@ -99,6 +115,7 @@ export function cloneScene(scene: HoloScene): HoloScene {
       ...o,
       positionMm: [...o.positionMm] as Vec3,
       rotationDeg: [...o.rotationDeg] as Vec3,
+      style: { ...o.style },
     })),
   }
 }
@@ -107,8 +124,8 @@ export function emptyScene(): HoloScene {
   return { version: SCENE_VERSION, positions: [makePosition(0)], objects: [] }
 }
 
-export function makePosition(phiDeg: number): HoloPosition {
-  return { id: makeObjectId(), name: '', phiDeg }
+export function makePosition(phiDeg: number, cropDeg = DEFAULT_CROP_DEG): HoloPosition {
+  return { id: makeObjectId(), name: '', phiDeg, cropDeg }
 }
 
 export const wrapDeg = (d: number) => ((Math.round(d * 10) / 10) % 360 + 360) % 360
@@ -159,6 +176,15 @@ function asVec3(raw: unknown, fallback: Vec3): Vec3 {
   return [out[0], out[1], out[2]]
 }
 
+function asStyle(raw: unknown): HoloInkStyle {
+  const s = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
+  const pick = (k: keyof HoloInkStyle) => {
+    const v = s?.[k]
+    return typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : DEFAULT_INK_STYLE[k]
+  }
+  return { lines: pick('lines'), shading: pick('shading'), texture: pick('texture') }
+}
+
 /** Parse and validate a versioned scene JSON payload. Throws a concise error on invalid data. */
 export function validateScene(raw: unknown): HoloScene {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid scene payload')
@@ -171,7 +197,11 @@ export function validateScene(raw: unknown): HoloScene {
   for (const item of Array.isArray(rec.positions) ? rec.positions : []) {
     const q = item as Record<string, unknown> | null
     if (q && typeof q.id === 'string' && q.id && typeof q.phiDeg === 'number' && Number.isFinite(q.phiDeg)) {
-      positions.push({ id: q.id, name: typeof q.name === 'string' ? q.name : '', phiDeg: wrapDeg(q.phiDeg) })
+      const cropDeg =
+        typeof q.cropDeg === 'number' && Number.isFinite(q.cropDeg)
+          ? Math.min(90, Math.max(5, q.cropDeg))
+          : DEFAULT_CROP_DEG
+      positions.push({ id: q.id, name: typeof q.name === 'string' ? q.name : '', phiDeg: wrapDeg(q.phiDeg), cropDeg })
     }
   }
   // A scene from before there were positions is one, not turned.
@@ -193,6 +223,7 @@ export function validateScene(raw: unknown): HoloScene {
           ? Math.min(200, Math.max(1, o.scaleMm))
           : DEFAULT_OBJECT_SCALE_MM,
       positionId: positions.some((q) => q.id === o.positionId) ? (o.positionId as string) : positions[0].id,
+      style: asStyle(o.style),
     })
   }
   return Array.isArray(rec.lampMm) ? { version: SCENE_VERSION, positions, objects, lampMm: asVec3(rec.lampMm, LAMP_HELD_MM) } : { version: SCENE_VERSION, positions, objects }

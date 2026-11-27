@@ -42,60 +42,64 @@ fn dot(a: V3, b: V3) -> f64 {
 }
 
 /// Brightness 0..1 of placed meshes seen from `eye`, `n` square over the disc, disc frame. The
-/// light stays with the viewer: it is turned by `angle` with them.
-pub fn draw(meshes: &[Mesh], eye: V3, angle: f64, n: usize, style: &Style, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
+/// light stays with the viewer: it is turned by `angle` with them. Each mesh carries its own style.
+pub fn draw(meshes: &[(Mesh, Style)], eye: V3, angle: f64, n: usize, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
     const SS: usize = 2;
     let w = n * SS;
     let px_mm = 2.0 * outer_mm / w as f64;
     let mut depth = vec![0.0f32; w * w]; // 1 / distance; 0 where empty
     let mut normal = vec![[0.0f32; 3]; w * w];
     let mut albedo = vec![0.0f32; w * w];
+    let mut owner = vec![0u32; w * w];
     let (mut x0, mut x1, mut y0, mut y1) = (w, 0usize, w, 0usize);
-    for tri in meshes.iter().flat_map(|m| &m.tris) {
-        let mut p = [(0.0, 0.0, 0.0); 3];
-        let mut ok = true;
-        for (q, v) in p.iter_mut().zip(tri) {
-            match model3d::project_point(v.pos, eye) {
-                Some((x, y, d)) => *q = ((x / (2.0 * outer_mm) + 0.5) * w as f64, (y / (2.0 * outer_mm) + 0.5) * w as f64, 1.0 / d),
-                None => ok = false,
-            }
-        }
-        let area = (p[1].0 - p[0].0) * (p[2].1 - p[0].1) - (p[1].1 - p[0].1) * (p[2].0 - p[0].0);
-        if !ok || area.abs() < 1e-9 {
-            continue;
-        }
-        let lim = |v: f64| v.clamp(0.0, w as f64 - 1.0) as usize;
-        let (ax, bx) = (lim(p[0].0.min(p[1].0).min(p[2].0).floor()), lim(p[0].0.max(p[1].0).max(p[2].0).ceil()));
-        let (ay, by) = (lim(p[0].1.min(p[1].1).min(p[2].1).floor()), lim(p[0].1.max(p[1].1).max(p[2].1).ceil()));
-        let mut hit = false;
-        for y in ay..=by {
-            for x in ax..=bx {
-                let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
-                let a = ((p[1].0 - px) * (p[2].1 - py) - (p[1].1 - py) * (p[2].0 - px)) / area;
-                let b = ((p[2].0 - px) * (p[0].1 - py) - (p[2].1 - py) * (p[0].0 - px)) / area;
-                let c = 1.0 - a - b;
-                if a < -1e-9 || b < -1e-9 || c < -1e-9 {
-                    continue;
+    for (mi, (m, _)) in meshes.iter().enumerate() {
+        for tri in &m.tris {
+            let mut p = [(0.0, 0.0, 0.0); 3];
+            let mut ok = true;
+            for (q, v) in p.iter_mut().zip(tri) {
+                match model3d::project_point(v.pos, eye) {
+                    Some((x, y, d)) => *q = ((x / (2.0 * outer_mm) + 0.5) * w as f64, (y / (2.0 * outer_mm) + 0.5) * w as f64, 1.0 / d),
+                    None => ok = false,
                 }
-                let d = a * p[0].2 + b * p[1].2 + c * p[2].2;
-                let i = y * w + x;
-                if d as f32 <= depth[i] {
-                    continue;
-                }
-                hit = true;
-                depth[i] = d as f32;
-                let k = [a * p[0].2 / d, b * p[1].2 / d, c * p[2].2 / d];
-                let mix = |f: &dyn Fn(usize) -> f64| k[0] * f(0) + k[1] * f(1) + k[2] * f(2);
-                let mut nn = [0, 1, 2].map(|c| mix(&|v| tri[v].normal[c]));
-                let at = [0, 1, 2].map(|c| mix(&|v| tri[v].pos[c]));
-                let l = dot(nn, nn).sqrt().max(1e-9) * if dot(nn, [eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]]) < 0.0 { -1.0 } else { 1.0 };
-                nn = nn.map(|v| v / l);
-                normal[i] = nn.map(|v| v as f32);
-                albedo[i] = mix(&|v| tri[v].albedo as f64) as f32;
             }
-        }
-        if hit {
-            (x0, x1, y0, y1) = (x0.min(ax), x1.max(bx), y0.min(ay), y1.max(by));
+            let area = (p[1].0 - p[0].0) * (p[2].1 - p[0].1) - (p[1].1 - p[0].1) * (p[2].0 - p[0].0);
+            if !ok || area.abs() < 1e-9 {
+                continue;
+            }
+            let lim = |v: f64| v.clamp(0.0, w as f64 - 1.0) as usize;
+            let (ax, bx) = (lim(p[0].0.min(p[1].0).min(p[2].0).floor()), lim(p[0].0.max(p[1].0).max(p[2].0).ceil()));
+            let (ay, by) = (lim(p[0].1.min(p[1].1).min(p[2].1).floor()), lim(p[0].1.max(p[1].1).max(p[2].1).ceil()));
+            let mut hit = false;
+            for y in ay..=by {
+                for x in ax..=bx {
+                    let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
+                    let a = ((p[1].0 - px) * (p[2].1 - py) - (p[1].1 - py) * (p[2].0 - px)) / area;
+                    let b = ((p[2].0 - px) * (p[0].1 - py) - (p[2].1 - py) * (p[0].0 - px)) / area;
+                    let c = 1.0 - a - b;
+                    if a < -1e-9 || b < -1e-9 || c < -1e-9 {
+                        continue;
+                    }
+                    let d = a * p[0].2 + b * p[1].2 + c * p[2].2;
+                    let i = y * w + x;
+                    if d as f32 <= depth[i] {
+                        continue;
+                    }
+                    hit = true;
+                    depth[i] = d as f32;
+                    owner[i] = mi as u32;
+                    let k = [a * p[0].2 / d, b * p[1].2 / d, c * p[2].2 / d];
+                    let mix = |f: &dyn Fn(usize) -> f64| k[0] * f(0) + k[1] * f(1) + k[2] * f(2);
+                    let mut nn = [0, 1, 2].map(|c| mix(&|v| tri[v].normal[c]));
+                    let at = [0, 1, 2].map(|c| mix(&|v| tri[v].pos[c]));
+                    let l = dot(nn, nn).sqrt().max(1e-9) * if dot(nn, [eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]]) < 0.0 { -1.0 } else { 1.0 };
+                    nn = nn.map(|v| v / l);
+                    normal[i] = nn.map(|v| v as f32);
+                    albedo[i] = mix(&|v| tri[v].albedo as f64) as f32;
+                }
+            }
+            if hit {
+                (x0, x1, y0, y1) = (x0.min(ax), x1.max(bx), y0.min(ay), y1.max(by));
+            }
         }
     }
     let mut out = vec![0.0f32; n * n];
@@ -110,6 +114,7 @@ pub fn draw(meshes: &[Mesh], eye: V3, angle: f64, n: usize, style: &Style, inner
         if depth[i] <= 0.0 {
             return 0.0;
         }
+        let style = &meshes[owner[i] as usize].1;
         let z = |x: usize, y: usize| { let d = depth[y * w + x]; if d > 0.0 { Some(1.0 / d as f64) } else { None } };
         let mut ink = 0.0f64;
         if style.lines > 0.0 {
@@ -216,7 +221,8 @@ mod tests {
     #[test]
     fn faces_are_even_and_overlaps_are_inked() {
         let n = 512;
-        let p = draw(&[quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0)], [0.0, 0.0, 350.0], 0.0, n, &Style::default(), 24.0, 58.0);
+        let s = Style::default();
+        let p = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), s), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), s)], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
         assert!(at(&p, n, 0.0, -41.0) > 0.85 && at(&p, n, 9.0, -41.0) > 0.85);
         let darkest = (0..40).map(|i| at(&p, n, 3.0 + i as f64 * 0.06, -41.0)).fold(1.0f32, f32::min);
         assert!(darkest < 0.5, "a line where one stands before the other: {darkest}");
@@ -228,9 +234,20 @@ mod tests {
         let n = 512;
         let style = Style { lines: 0.0, ..Style::default() };
         // A dark spot on a bright face shows; a face dark all over is still bright.
-        let spot = draw(&[quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 0.8), quad([-0.6, 0.6], [-41.6, -40.4], 0.01, 0.1)], [0.0, 0.0, 350.0], 0.0, n, &style, 24.0, 58.0);
-        let dark = draw(&[quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 0.1)], [0.0, 0.0, 350.0], 0.0, n, &style, 24.0, 58.0);
+        let spot = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 0.8), style), (quad([-0.6, 0.6], [-41.6, -40.4], 0.01, 0.1), style)], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
+        let dark = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 0.1), style)], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
         assert!(at(&spot, n, 0.0, -41.0) < 0.6 * at(&spot, n, 6.0, -41.0));
         assert!(at(&dark, n, 0.0, -41.0) > 0.5);
+    }
+
+    #[test]
+    fn each_mesh_uses_its_own_style() {
+        let n = 512;
+        let inked = Style { lines: 1.0, shading: 0.0, texture: 0.0 };
+        let plain = Style { lines: 0.0, shading: 0.0, texture: 0.0 };
+        // Far quad with lines=0 should not receive an overlap ink line from the nearer quad.
+        let p = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), plain), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), inked)], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
+        let darkest = (0..40).map(|i| at(&p, n, 3.0 + i as f64 * 0.06, -41.0)).fold(1.0f32, f32::min);
+        assert!(darkest > 0.9, "lines=0 mesh should stay un-inked: {darkest}");
     }
 }

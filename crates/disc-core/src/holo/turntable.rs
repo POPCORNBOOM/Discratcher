@@ -30,6 +30,8 @@ const WIDE_MM: [f64; 4] = [60.0, 85.0, 120.0, 170.0];
 const PLAIN_LEAK: f64 = 0.153;
 /// A cell is an object's when some view asks for this much light of it.
 const LIT: f32 = 0.004;
+/// Depth kept either side of an object's own, mm.
+const THICKNESS_MM: f64 = 3.0;
 
 type V3 = [f64; 3];
 
@@ -45,16 +47,13 @@ pub struct Options {
     /// How much further objects move with the eye than their depth asks for. At 1 the disc is a
     /// plain window, and a few millimetres of depth move too little to notice.
     pub parallax: f64,
-    /// Depth kept either side of the object's own, mm; 0 keeps it all.
-    pub thickness_mm: f64,
-    pub style: ink::Style,
     /// Weight of keeping a subject even from outside the window, against the window itself.
     pub wide: f64,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { distance_mm: design::DEFAULT_DISTANCE_MM, chroma_weight: 1.0, exposure: 0.6, grid: 512, parallax: 2.0, thickness_mm: 3.0, style: ink::Style::default(), wide: 0.3 }
+        Options { distance_mm: design::DEFAULT_DISTANCE_MM, chroma_weight: 1.0, exposure: 0.6, grid: 512, parallax: 2.0, wide: 0.3 }
     }
 }
 
@@ -121,7 +120,7 @@ fn settle(m: &mut Mesh, at_mm: f64, thickness_mm: f64) {
 fn grouped(scene: &Scene) -> Vec<(Position, Vec<&SceneObject>)> {
     let mut out: Vec<(Position, Vec<&SceneObject>)> = scene.positions.iter().map(|p| (p.clone(), vec![])).collect();
     if out.is_empty() {
-        out.push((Position { id: String::new(), name: String::new(), phi_deg: 0.0 }, vec![]));
+        out.push((Position { id: String::new(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0 }, vec![]));
     }
     for o in scene.objects.iter().filter(|o| o.visible) {
         let i = out.iter().position(|(p, _)| p.id == o.position_id).unwrap_or(0);
@@ -147,7 +146,10 @@ pub struct Solution {
 }
 
 fn solve_position(angle: f64, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, resp: &Responses, preset: &DiscGeometryPreset) -> Result<Patch, String> {
-    let mesh = objects.iter().map(|o| place(&*model3d::load_mesh_or_builtin(&o.path)?, o, angle, opts.thickness_mm)).collect::<Result<Vec<_>, _>>()?;
+    let mesh = objects
+        .iter()
+        .map(|o| Ok((place(&*model3d::load_mesh_or_builtin(&o.path)?, o, angle, THICKNESS_MM)?, o.style)))
+        .collect::<Result<Vec<_>, String>>()?;
     let n = opts.grid;
     let k = resp.options;
     let plain = k - 1;
@@ -159,7 +161,7 @@ fn solve_position(angle: f64, objects: &[&SceneObject], lamp_mm: V3, opts: &Opti
         .collect();
     let sharp: Vec<Vec<f32>> = drawn
         .par_iter()
-        .map(|e| ink::draw(&mesh, *e, angle, n, &opts.style, preset.inner_radius_mm, preset.outer_radius_mm))
+        .map(|e| ink::draw(&mesh, *e, angle, n, preset.inner_radius_mm, preset.outer_radius_mm))
         .collect();
     // The disc cannot tell neighbouring views apart: blended, a point far from its surface is
     // one soft image rather than a row of copies.
@@ -302,8 +304,19 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
     let mut owner = vec![usize::MAX; n * n];
     let mut clash = vec![false; groups.len()];
     for (i, p) in patches.iter().enumerate() {
+        let crop_deg = groups[i].0.crop_deg;
+        let crop_rad = crop_deg.to_radians();
+        let phi_rad = groups[i].0.phi_deg.to_radians();
         for (j, &c) in p.cells.iter().enumerate() {
             let c = c as usize;
+            if crop_deg < 90.0 {
+                let x = (((c % n) as f64 + 0.5) / n as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
+                let y = (((c / n) as f64 + 0.5) / n as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
+                let at = model3d::scene_to_disc(turn([x, y, 0.0], -phi_rad));
+                if at[0].abs().atan2(at[1].abs()) > crop_rad {
+                    continue;
+                }
+            }
             if owner[c] != usize::MAX {
                 clash[i] = true;
                 clash[owner[c]] = true;
@@ -363,12 +376,12 @@ mod tests {
     fn star(position: &str, x: f64, y: f64) -> SceneObject {
         SceneObject {
             id: format!("{position}{x},{y}"), path: model3d::BUILTIN_SAMPLE_PATH.into(), name: "s".into(), visible: true,
-            position_mm: [x, y, 6.0], rotation_deg: [0.0; 3], scale_mm: 22.0, position_id: position.into(),
+            position_mm: [x, y, 6.0], rotation_deg: [0.0; 3], scale_mm: 22.0, position_id: position.into(), style: ink::Style::default(),
         }
     }
 
     fn scene(phis: &[f64], objects: Vec<SceneObject>) -> Scene {
-        let positions = phis.iter().enumerate().map(|(i, &phi_deg)| Position { id: i.to_string(), name: String::new(), phi_deg }).collect();
+        let positions = phis.iter().enumerate().map(|(i, &phi_deg)| Position { id: i.to_string(), name: String::new(), phi_deg, crop_deg: 30.0 }).collect();
         Scene { version: model3d::SCENE_VERSION, objects, lamp_mm: None, positions }
     }
 
@@ -472,7 +485,82 @@ mod tests {
     #[test]
     fn a_scene_without_positions_is_one_that_is_not_turned() {
         let old: Scene = serde_json::from_str(r#"{"version":1,"objects":[{"id":"a","path":"builtin:star","name":"s","positionMm":[0,41,6],"rotationDeg":[0,0,0],"scaleMm":22}]}"#).unwrap();
+        assert_eq!(old.objects[0].style, ink::Style::default());
         assert_eq!(run(&old, 96).solved.weights, run(&scene(&[0.0], vec![star("0", 0.0, 41.0)]), 96).solved.weights);
+    }
+
+    #[test]
+    fn position_crop_keeps_only_sectors_and_90_is_uncropped() {
+        let shared = design::shared_codebook(0.1333);
+        let preset = reference_preset();
+        let bg = shared.0.entries.iter().position(|e| e.bytes.iter().all(|&b| b == design::BACKGROUND_BYTE)).unwrap();
+        let grid = 96usize;
+        let opts = Options { grid, ..Default::default() };
+        let k = shared.1.options;
+        let is_bg = |cell: &[f32]| cell.iter().enumerate().all(|(i, &w)| if i == bg { w == 1.0 } else { w == 0.0 });
+
+        for phi_deg in [0.0f64, 55.0] {
+            // Centred near 33 deg off 12 o'clock so part lies inside ±30° and part outside.
+            let obj = SceneObject { scale_mm: 28.0, ..star("0", 22.0, 34.0) };
+            let make = |crop_deg: f64| Scene {
+                version: model3d::SCENE_VERSION,
+                objects: vec![obj.clone()],
+                lamp_mm: None,
+                positions: vec![Position { id: "0".into(), name: String::new(), phi_deg, crop_deg }],
+            };
+            let sol30 = solve(&make(30.0), &opts, &shared.0, &shared.1, &preset).unwrap();
+            let sol90 = solve(&make(90.0), &opts, &shared.0, &shared.1, &preset).unwrap();
+
+            // 90° equals the raw uncropped patch written over background.
+            let raw = solve_position(phi_deg.to_radians(), &[&obj], LAMP_MM, &opts, &shared.1, &preset).unwrap();
+            let mut uncropped = vec![0.0f32; grid * grid * k];
+            for cell in uncropped.chunks_exact_mut(k) {
+                cell[bg] = 1.0;
+            }
+            for (j, &c) in raw.cells.iter().enumerate() {
+                let c = c as usize;
+                uncropped[c * k..(c + 1) * k].copy_from_slice(&raw.weights[j * k..(j + 1) * k]);
+            }
+            assert_eq!(sol90.solved.weights, uncropped, "phi={phi_deg}: crop 90 must equal uncropped");
+
+            let phi_rad = phi_deg.to_radians();
+            let crop_rad = 30.0f64.to_radians();
+            let (mut inside_lit, mut outside_lit_in_90) = (0usize, 0usize);
+            for c in 0..grid * grid {
+                let x = (((c % grid) as f64 + 0.5) / grid as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
+                let y = (((c / grid) as f64 + 0.5) / grid as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
+                let at = model3d::scene_to_disc(turn([x, y, 0.0], -phi_rad));
+                let outside = at[0].abs().atan2(at[1].abs()) > crop_rad;
+                let cell30 = &sol30.solved.weights[c * k..(c + 1) * k];
+                let cell90 = &sol90.solved.weights[c * k..(c + 1) * k];
+                if outside {
+                    assert!(is_bg(cell30), "phi={phi_deg}: outside cell {c} must stay background");
+                    if !is_bg(cell90) {
+                        outside_lit_in_90 += 1;
+                    }
+                } else if !is_bg(cell30) {
+                    inside_lit += 1;
+                }
+            }
+            assert!(inside_lit > 0, "phi={phi_deg}: crop 30 should keep cells inside ±30°");
+            assert!(outside_lit_in_90 > 0, "phi={phi_deg}: object should extend past ±30° when uncropped");
+        }
+
+        // Overlap detection only sees cropped cells.
+        let both = |crop_deg: f64| Scene {
+            version: model3d::SCENE_VERSION,
+            objects: vec![
+                SceneObject { scale_mm: 24.0, ..star("0", 29.0, 29.0) },
+                SceneObject { scale_mm: 24.0, ..star("1", -29.0, 29.0) },
+            ],
+            lamp_mm: None,
+            positions: vec![
+                Position { id: "0".into(), name: String::new(), phi_deg: 0.0, crop_deg },
+                Position { id: "1".into(), name: String::new(), phi_deg: 90.0, crop_deg },
+            ],
+        };
+        assert_eq!(solve(&both(90.0), &opts, &shared.0, &shared.1, &preset).unwrap().overlapping, ["0", "1"]);
+        assert!(solve(&both(30.0), &opts, &shared.0, &shared.1, &preset).unwrap().overlapping.is_empty());
     }
 
     /// Three positions, the last of two models, as seen turning the disc.
@@ -642,9 +730,9 @@ mod tests {
             let _ = flat;
             for (row, (thickness_mm, parallax)) in [(0.0, 2.0), (6.0, 2.0), (3.0, 2.0), (3.0, 3.0), (1.5, 3.0)].into_iter().enumerate() {
                 let style = ink::Style::default();
-                let mesh = [place(&model3d::load_mesh_or_builtin(path).unwrap(), &o, 0.0, thickness_mm).unwrap()];
-                let opts = Options { thickness_mm, parallax, ..Default::default() };
-                let drawn = ink::draw(&mesh, [0.0, 0.0, 350.0], 0.0, n, &style, preset.inner_radius_mm, preset.outer_radius_mm);
+                let mesh = [(place(&model3d::load_mesh_or_builtin(path).unwrap(), &o, 0.0, thickness_mm).unwrap(), style)];
+                let opts = Options { parallax, ..Default::default() };
+                let drawn = ink::draw(&mesh, [0.0, 0.0, 350.0], 0.0, n, preset.inner_radius_mm, preset.outer_radius_mm);
                 put(&|i| [enc(drawn[i] as f64); 3], 0, row as u32);
                 let t = std::time::Instant::now();
                 let sol = solve(&scene(&[0.0], vec![o.clone()]), &opts, &shared.0, &shared.1, &preset).unwrap();
@@ -677,7 +765,7 @@ mod tests {
         let phis: Vec<f64> = (0..n_pos).map(|k| k as f64 * 360.0 / n_pos as f64).collect();
         let objects = phis.iter().enumerate().map(|(k, &phi)| SceneObject {
             id: format!("m{k}"), path: path.clone(), name: "m".into(), visible: true,
-            position_mm: [0.0, 41.0, 0.0], rotation_deg: [0.0, phi, 0.0], scale_mm: scale, position_id: k.to_string(),
+            position_mm: [0.0, 41.0, 0.0], rotation_deg: [0.0, phi, 0.0], scale_mm: scale, position_id: k.to_string(), style: ink::Style::default(),
         }).collect();
         let opts = Options { grid: 384, parallax, ..Default::default() };
         let t = std::time::Instant::now();
@@ -745,9 +833,9 @@ mod tests {
         for k in 0..frames {
             let psi = k as f64 * 360.0 / frames as f64;
             let o = SceneObject { path: path.clone(), scale_mm: scale, position_mm: [0.0, 36.0, 0.0], rotation_deg: [0.0, k as f64 * span / frames as f64, 0.0], ..star("0", 0.0, 36.0) };
-            let m = [place(&mesh, &o, psi.to_radians(), 1.0).unwrap()];
+            let m = [(place(&mesh, &o, psi.to_radians(), 1.0).unwrap(), ink::Style::default())];
             let (e, l) = eye_and_lamp(&opts, lamp, 0.0, psi.to_radians());
-            let drawn = ink::draw(&m, e, psi.to_radians(), grid, &ink::Style::default(), preset.inner_radius_mm, preset.outer_radius_mm);
+            let drawn = ink::draw(&m, e, psi.to_radians(), grid, preset.inner_radius_mm, preset.outer_radius_mm);
             let img = image::GrayImage::from_fn(grid as u32, grid as u32, |x, y| image::Luma([(drawn[y as usize * grid + x as usize].clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0) as u8]));
             let f = format!("{out}/frame{k}.png");
             img.save(&f).unwrap();
