@@ -17,3 +17,5 @@ pub mod ink;
 pub mod turntable;
 pub mod flat;
 pub mod project;
+#[cfg(test)]
+mod color_study;
