@@ -13,9 +13,9 @@ export const ZONE_KIND_VALUE: Record<ZoneKind, number> = { depth: 0, colour: 1, 
  * light cannot work it is hatched. When nothing is selected (`none`), only the optically unusable
  * area (where neither depth nor colour can work) is hatched and no violet overlay is drawn. When a
  * grey carved picture is selected (`crop`), only the crop border is shown. The current position's
- * crop (`cropGlsl`, in its frame turned by `phi`) is a violet outline, with nothing drawn outside
- * it. `g_t` and `g_r` are the parts of light and view direction along the track and radius, as in
- * `holo::scene::g_at`.
+ * crop (`cropGlsl`, in its frame turned by `phi`) is marked by a violet outline while the optical
+ * zones remain visible across the whole ring. `g_t` and `g_r` are the parts of light and view
+ * direction along the track and radius, as in `holo::scene::g_at`.
  */
 export function zonesMaterial(): ShaderMaterial {
   return new ShaderMaterial({
@@ -82,7 +82,7 @@ ${CROP_GLSL}
           gl_FragColor = vec4(violet.rgb, 0.9);
           return;
         }
-        if (!kept || kind > 2.5) discard;
+        if (kind > 2.5) discard;
         vec3 p = vec3(at, 0.0);
         vec2 r = normalize(at);
         bool dead;
