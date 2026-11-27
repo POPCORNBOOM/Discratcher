@@ -112,15 +112,15 @@ export function defaultObjectPlacement(
   const { inner, outer } = discRadiiMm(preset)
   const rMid = 0.5 * (inner + outer)
   // The first stands at the top, the next at the bottom, then beside them.
-  const presets: Vec3[] = [
-    [0, rMid, DEFAULT_OBJECT_DEPTH_MM],
-    [0, -rMid, DEFAULT_OBJECT_DEPTH_MM],
-    [-16, rMid - 4, 4],
-    [16, rMid - 4, 4],
+  const spots: [number, number][] = [
+    [0, rMid],
+    [0, -rMid],
+    [-16, rMid - 4],
+    [16, rMid - 4],
   ]
-  const p = presets[existingCount % presets.length]
+  const [x, y] = spots[existingCount % spots.length]
   return {
-    positionMm: [round1(p[0]), round1(p[1]), round1(p[2])],
+    positionMm: [round1(x), round1(y), DEFAULT_OBJECT_DEPTH_MM],
     rotationDeg: [0, 0, 0],
     scaleMm: DEFAULT_OBJECT_SCALE_MM,
   }

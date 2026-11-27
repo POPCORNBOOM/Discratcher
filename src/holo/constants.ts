@@ -38,7 +38,7 @@ export const DEFAULT_DATA_OUTER_MM = 57.879
 
 /** Default placement for newly added 3D models (mm). */
 export const DEFAULT_OBJECT_SCALE_MM = 24
-export const DEFAULT_OBJECT_DEPTH_MM = 8
+export const DEFAULT_OBJECT_DEPTH_MM = 0
 
 /** Sentinel path resolved by both Rust `model3d` and the browser mock to the bundled star sample. */
 export const BUILTIN_SAMPLE_PATH = 'builtin:star'
