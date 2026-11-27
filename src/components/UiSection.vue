@@ -31,5 +31,6 @@ const open = ref(!props.folded)
 .chevron { color: var(--oc-fg-muted); transition: transform var(--oc-duration-quick) var(--oc-ease); }
 .chevron.on { transform: rotate(90deg); }
 .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.body { display: flex; flex-direction: column; gap: var(--oc-space-sm); }
+/* Under the heading, in from the chevron. */
+.body { display: flex; flex-direction: column; gap: var(--oc-space-sm); padding-left: calc(14px + var(--oc-space-xs)); }
 </style>
