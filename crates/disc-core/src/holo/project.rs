@@ -389,7 +389,7 @@ mod tests {
     }
 
     fn scene(model: &str, picture: &str) -> Scene {
-        let pos = |id: &str| Position { id: id.into(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, neutral: None, order: vec![] };
+        let pos = |id: &str| Position { id: id.into(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, crop_side: Default::default(), crop_offset_deg: 0.0, neutral: None, order: vec![] };
         Scene {
             version: SCENE_VERSION,
             positions: vec![pos("a"), pos("b")],

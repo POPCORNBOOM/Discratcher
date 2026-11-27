@@ -471,6 +471,16 @@ pub struct SceneObject {
     pub tilt_deg: f64,
 }
 
+/// Which ends of a position's crop axis keep their sector: the top, the bottom, or both.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CropSide {
+    #[default]
+    Both,
+    Up,
+    Down,
+}
+
 /// One way the disc is turned to be looked at, with its own objects.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -480,9 +490,16 @@ pub struct Position {
     pub name: String,
     /// Which angle of the disc is at the top, clockwise in degrees.
     pub phi_deg: f64,
-    /// Half-angle kept around 12 and 6 o'clock of this position, degrees; 90 or more means no crop.
+    /// Half-angle kept either side of the crop's axis, degrees; 90 or more with both sides kept
+    /// means no crop.
     #[serde(default = "default_crop_deg")]
     pub crop_deg: f64,
+    /// Which ends of the axis keep their sector.
+    #[serde(default)]
+    pub crop_side: CropSide,
+    /// The axis turned from 12 o'clock, clockwise as seen, degrees.
+    #[serde(default)]
+    pub crop_offset_deg: f64,
     /// How hard the solve holds every view white rather than letting it take the colour that is
     /// sharper; none takes each model's mode's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]

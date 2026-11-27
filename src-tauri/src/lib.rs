@@ -166,6 +166,31 @@ const RELEASE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Quitting while a job holds the drive would leave the drive held and the disc unmounted:
 /// the tray then will not open until the drive is replugged. So the job is cancelled, the
 /// window goes away at once, and the app exits once the drive is let go.
+/// The designer holds changes not yet saved: closing the window or quitting asks the page first.
+static UNSAVED: AtomicBool = AtomicBool::new(false);
+
+/// Ask the page whether to let unsaved changes go; true when the close or quit was held for it.
+fn hold_for_unsaved(app: &AppHandle) -> bool {
+    if !UNSAVED.load(Ordering::SeqCst) {
+        return false;
+    }
+    let _ = app.emit("app://confirm-quit", ());
+    true
+}
+
+/// The page tells whether the designer has unsaved changes.
+#[tauri::command]
+fn set_unsaved(unsaved: bool) {
+    UNSAVED.store(unsaved, Ordering::SeqCst);
+}
+
+/// Quit after the page has dealt with unsaved changes.
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    UNSAVED.store(false, Ordering::SeqCst);
+    app.exit(0);
+}
+
 fn release_then_exit(app: &AppHandle) -> bool {
     let state = app.state::<Studio>();
     if state.holding.load(Ordering::SeqCst) == 0 {
@@ -782,12 +807,14 @@ pub fn run() {
             design_recents,
             design_forget_recent,
             design_relocate_recent,
+            set_unsaved,
+            quit_app,
             cache_iso_path,
             remove_cached_iso,
         ])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = e {
-                if release_then_exit(w.app_handle()) {
+                if hold_for_unsaved(w.app_handle()) || release_then_exit(w.app_handle()) {
                     api.prevent_close();
                 }
             }
@@ -796,7 +823,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, e| {
             if let tauri::RunEvent::ExitRequested { api, .. } = e {
-                if release_then_exit(app) {
+                if hold_for_unsaved(app) || release_then_exit(app) {
                     api.prevent_exit();
                 }
             }

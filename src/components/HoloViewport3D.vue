@@ -83,7 +83,8 @@ import {
   type PictureHandleKind,
 } from '../holo/pictureFrame'
 import type { DisplayMeshData } from '../holo/sampleMesh'
-import { DEFAULT_CROP_DEG, round1, type HoloImage, type HoloPosition, type HoloSceneObject } from '../holo/scene'
+import { round1, type HoloImage, type HoloPosition, type HoloSceneObject } from '../holo/scene'
+import { cropUniforms } from '../holo/cropGlsl'
 import { zonesMaterial } from '../holo/usability'
 import { layerExtent } from '../layers'
 
@@ -320,7 +321,6 @@ function groupFor(id: string): Group {
 
 const currentPosition = () => props.positions.find((p) => p.id === props.positionId)
 const currentPhi = () => currentPosition()?.phiDeg ?? 0
-const currentCrop = () => currentPosition()?.cropDeg ?? DEFAULT_CROP_DEG
 
 /** Turn every position's objects to where they stand with `shownPhi` at the top. */
 function turnGroups() {
@@ -414,7 +414,10 @@ function updateZones() {
   u.distance.value = props.distanceMm
   const left = turnLeft()
   u.phi.value = Math.abs(left) < 0.05 ? 0 : MathUtils.degToRad(left)
-  u.crop.value = MathUtils.degToRad(currentCrop())
+  const c = cropUniforms(currentPosition())
+  u.crop.value = c.crop
+  u.side.value = c.side
+  u.axis.value = c.axis
 }
 
 function ensureDropIndicator() {

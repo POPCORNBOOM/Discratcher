@@ -11,15 +11,14 @@
         <section class="group">
           <div class="small muted">{{ t('holo.newDesign') }}</div>
           <div class="templates">
-            <button v-for="tpl in DESIGN_TEMPLATES" :key="tpl.id" type="button" class="template" @click="guardUnsaved(() => newDesign(tpl))">
+            <button v-for="tpl in DESIGN_TEMPLATES" :key="tpl.id" type="button" class="template" @click="newDesign(tpl)">
               <UiIcon :path="tpl.icon" :size="24" />
               <span class="title">{{ t(tpl.name) }}</span>
               <span class="small muted">{{ t(tpl.description) }}</span>
             </button>
           </div>
           <div class="row">
-            <UiButton variant="soft" :icon="mdiFolderOpenOutline" @click="guardUnsaved(openDesign)">{{ t('holo.openFolder') }}</UiButton>
-            <UiButton v-if="designStarted" variant="ghost" :icon="mdiArrowLeft" @click="home = false">{{ t('holo.backToDesign', { name: designName }) }}</UiButton>
+            <UiButton variant="soft" :icon="mdiFolderOpenOutline" @click="openDesign">{{ t('holo.openFolder') }}</UiButton>
           </div>
         </section>
         <section class="group">
@@ -120,6 +119,8 @@
             <div v-if="manyPicked" class="small muted">{{ t('holo.pickedMany', { n: pickedIds.length }) }}</div>
             <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" :disabled="manyPicked" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
             <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
+            <UiSegmented :model-value="position.cropSide" :options="cropSideOptions" @update:model-value="setCropSide($event as CropSide)" />
+            <UiSlider :model-value="position.cropOffsetDeg" :label="t('holo.cropOffset')" :min="-MAX_CROP_OFFSET_DEG" :max="MAX_CROP_OFFSET_DEG" :step="1" :format="degInt" @pointerdown="beginControlEdit" @update:model-value="setCropOffset" />
             <UiSlider
               :model-value="neutralNow"
               :label="t('holo.chroma')"
@@ -515,7 +516,7 @@
         <UiSegmented v-model="tab" class="mode-seg" :options="tabOptions" :data-tooltip="t('holo.toggleViewKey')" />
         <span class="grow" />
         <div class="toolbar">
-          <UiButton icon-only variant="ghost" :icon="mdiViewListOutline" :aria-label="t('holo.designList')" :data-tooltip="t('holo.designList')" @click="showHome" />
+          <UiButton icon-only variant="ghost" :icon="mdiCloseBoxOutline" :aria-label="t('holo.closeDesign')" :data-tooltip="t('holo.closeDesign')" @click="guardUnsaved(closeDesign)" />
           <UiButton icon-only variant="ghost" :icon="mdiFolderOpenOutline" :aria-label="t('holo.openDesign')" :data-tooltip="`${t('holo.openDesign')} (${modKey}O)`" @click="guardUnsaved(openDesign)" />
           <UiButton icon-only variant="ghost" :icon="mdiContentSaveOutline" :aria-label="t('holo.saveDesign')" :data-tooltip="`${t('holo.saveDesign')} (${modKey}S)`" @click="saveDesign()" />
         </div>
@@ -713,6 +714,7 @@
       <template #actions>
         <UiButton variant="ghost" @click="pendingDiscard = null">{{ t('common.cancel') }}</UiButton>
         <UiButton variant="danger" @click="discardAndGo">{{ t('holo.discard') }}</UiButton>
+        <UiButton variant="solid" @click="saveAndGo">{{ t('holo.saveDesign') }}</UiButton>
       </template>
     </UiDialog>
     <UiDialog v-if="saveLampDialog" :title="t('holo.lampSave')" @close="saveLampDialog = false">
@@ -779,10 +781,10 @@ import {
   mdiAlertOctagonOutline,
   mdiAlertOutline,
   mdiArrowDown,
-  mdiArrowLeft,
   mdiArrowUp,
   mdiAxisArrow,
   mdiClose,
+  mdiCloseBoxOutline,
   mdiContentCopy,
   mdiContentSaveOutline,
   mdiContentSavePlusOutline,
@@ -818,10 +820,9 @@ import {
   mdiStarFourPointsOutline,
   mdiTrashCanOutline,
   mdiUndo,
-  mdiViewListOutline,
 } from '@mdi/js'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, shallowRef, watch } from 'vue'
-import { call, defaultDesignLocation, pickDesign, pickFolder, pickImage, pickLegacyScene, pickModel, revealPath, type RecentDesign } from '../api'
+import { call, on, defaultDesignLocation, pickDesign, pickFolder, pickImage, pickLegacyScene, pickModel, revealPath, type RecentDesign } from '../api'
 import { DESIGN_TEMPLATES, type DesignTemplate } from '../holo/templates'
 import HoloPreview from '../components/HoloPreview.vue'
 import HoloViewport3D, { type GizmoMode } from '../components/HoloViewport3D.vue'
@@ -891,6 +892,9 @@ import {
   positionItems,
   type HoloScene,
   type HoloSceneObject,
+  CROP_SIDES,
+  MAX_CROP_OFFSET_DEG,
+  type CropSide,
 } from '../holo/scene'
 import { t } from '../i18n'
 import { notifyError, notifySuccess } from '../notices'
@@ -1335,6 +1339,14 @@ function setPhi(deg: number) {
 function setCrop(deg: number) {
   for (const q of pickedPositions.value) q.cropDeg = Math.min(90, Math.max(5, Math.round(deg)))
 }
+function setCropSide(side: CropSide) {
+  pushHistory()
+  for (const q of pickedPositions.value) q.cropSide = side
+}
+function setCropOffset(deg: number) {
+  for (const q of pickedPositions.value) q.cropOffsetDeg = Math.min(MAX_CROP_OFFSET_DEG, Math.max(-MAX_CROP_OFFSET_DEG, Math.round(deg)))
+}
+const cropSideOptions = computed(() => CROP_SIDES.map((v) => ({ value: v, label: t(`holo.cropSide.${v}`) })))
 
 /** How flat pictures are dithered: the carve page's burn safety settings. */
 function carveTone() {
@@ -1534,7 +1546,7 @@ watch(
   { immediate: true },
 )
 
-const cropWords = (deg: number) => (deg >= 90 ? t('holo.cropNone') : t('holo.cropRange', { n: Math.round(deg) }))
+const cropWords = (deg: number) => (deg >= 90 && position.value.cropSide === 'both' ? t('holo.cropNone') : t('holo.cropRange', { n: Math.round(deg) }))
 
 // Undo, open and removal can leave the current position behind.
 watch(() => scene.value.positions.map((q) => q.id).join(), () => {
@@ -1818,17 +1830,13 @@ const designDir = ref<string | null>(null)
 /** The scene as last saved, opened or started, to tell unsaved changes. */
 const savedScene = ref('')
 const markSaved = () => (savedScene.value = JSON.stringify(scene.value))
-/** A design never saved counts as changed once it holds anything. */
-const dirty = computed(() =>
-  designDir.value ? JSON.stringify(scene.value) !== savedScene.value : scene.value.objects.length + scene.value.images.length > 0 && JSON.stringify(scene.value) !== savedScene.value,
-)
+/** Changed since last saved, opened or started from a template. */
+const dirty = computed(() => JSON.stringify(scene.value) !== savedScene.value)
 const designName = computed(() => (designDir.value ? fileName(designDir.value) : t('holo.untitled')))
 
 // ---- The start list: new from a template, open a folder, or one opened or saved before ----
-/** The list shows instead of the editor: on first coming to the designer, and from the toolbar. */
+/** The list shows instead of the editor: on first coming to the designer, and once a design is closed. */
 const home = ref(true)
-/** A design has been started, opened or saved this session, so the list can lead back to it. */
-const designStarted = ref(false)
 const recentDesigns = ref<RecentDesign[]>([])
 async function loadRecents() {
   try {
@@ -1837,17 +1845,30 @@ async function loadRecents() {
     recentDesigns.value = []
   }
 }
-function showHome() {
+/** Back to the list with nothing open; unsaved changes are asked about first (`guardUnsaved`). */
+function closeDesign() {
+  const empty = emptyScene()
+  scene.value = empty
+  positionId.value = empty.positions[0].id
+  pickedRaw.value = []
+  selectedId.value = null
+  selectedImageId.value = null
+  designDir.value = null
+  missingFiles.value = []
+  expViews.value = []
+  undoStack.value = []
+  redoStack.value = []
+  markSaved()
+  tab.value = 'edit'
   home.value = true
   void loadRecents()
 }
 /** The editor, once a design is in it. */
 function enterDesign() {
-  designStarted.value = true
   home.value = false
 }
 function openRecent(r: RecentDesign) {
-  guardUnsaved(() => void openDesignAt(r.dir))
+  void openDesignAt(r.dir)
 }
 async function revealRecent(r: RecentDesign) {
   try {
@@ -1873,7 +1894,7 @@ async function relocateRecent(r: RecentDesign) {
     notifyError(String(e))
     return
   }
-  guardUnsaved(() => void openDesignAt(dir))
+  await openDesignAt(dir)
 }
 
 /** Something that would replace the design, waiting for the user to let unsaved changes go. */
@@ -1887,6 +1908,30 @@ function discardAndGo() {
   pendingDiscard.value = null
   then?.()
 }
+/** What waits for the save dialog to finish saving; dropped if it is cancelled. */
+let afterSave: (() => void) | null = null
+/** Save first, then go on: straight into the design's folder, or through the save dialog. */
+async function saveAndGo() {
+  const then = pendingDiscard.value
+  pendingDiscard.value = null
+  if (!then) return
+  if (designDir.value) {
+    if (await commitSaveDesign(designDir.value)) then()
+    return
+  }
+  afterSave = then
+  await openSaveDesignDialog(false)
+}
+
+// Closing the window or quitting with unsaved changes asks here first.
+watch(dirty, (d) => void call('set_unsaved', { unsaved: d }).catch(() => {}), { immediate: true })
+const quitApp = () => void call('quit_app')
+let unlistenQuit: (() => void) | null = null
+void on('app://confirm-quit', () => {
+  if (!dirty.value) return quitApp()
+  s.view = 'holo'
+  pendingDiscard.value = quitApp
+}).then((u) => (unlistenQuit = u))
 
 const DESIGN_LOCATION_KEY = 'discratcher.holo.designLocation'
 const INVALID_DESIGN_NAME_RE = /[\/\\:*?"<>|]/
@@ -1954,6 +1999,7 @@ function closeSaveDesignDialog() {
   if (saveDesignBusy.value) return
   saveDesignDialog.value = false
   saveDesignError.value = ''
+  afterSave = null
 }
 
 async function openSaveDesignDialog(asNew: boolean) {
@@ -1987,10 +2033,12 @@ async function commitSaveDesign(dir: string, rememberLocation?: string): Promise
     for (const i of scene.value.images) i.path = saved.images.find((x) => x.id === i.id)?.path ?? i.path
     await ensureMeshesLoaded(scene.value.objects)
     designDir.value = dir
-    designStarted.value = true
     if (rememberLocation) rememberDesignLocation(rememberLocation)
     markSaved()
     notifySuccess(t('holo.saved', { name: fileName(dir) }))
+    const next = afterSave
+    afterSave = null
+    next?.()
     return true
   } catch (e) {
     notifyError(String(e))
@@ -2521,6 +2569,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
+  unlistenQuit?.()
   clearTimeout(previewTimer)
   unlistenTauriDrop?.()
 })

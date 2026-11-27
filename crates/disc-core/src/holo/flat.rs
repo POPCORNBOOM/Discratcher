@@ -5,7 +5,7 @@
 //! `artwork`). That is the solve grid's frame too, so a picture on a position at 0° burns
 //! exactly as the same layer does on the carve page.
 
-use super::model3d::{Position, Scene};
+use super::model3d::{CropSide, Position, Scene};
 use super::turntable::{items, turn, Item};
 use crate::artwork::{Composition, Layer};
 use crate::preset::DiscGeometryPreset;
@@ -72,15 +72,32 @@ pub fn pictures(scene: &Scene, positions: &[Position], max_edge: Option<u32>) ->
     Ok(out)
 }
 
-/// Whether the disc point (`x`, `y`), in mm on the solve grid, is in the kept area of a position
-/// turned by `phi_rad` that keeps `crop_deg` either side of its axis (`turntable::solve`'s test).
+/// The crop axis's top end as a unit vector on the solve grid, before the position's turn: 12
+/// o'clock is -y there (where a picture's top lies), turned clockwise as seen by the offset.
+pub fn crop_axis(pos: &Position) -> [f64; 2] {
+    let (s, c) = pos.crop_offset_deg.to_radians().sin_cos();
+    [s, -c]
+}
+
+/// Whether the disc point (`x`, `y`), in mm on the solve grid, is inside `pos`'s crop: within
+/// `crop_deg` of the axis at the kept ends (`turntable::solve`'s test).
 #[inline]
-pub fn kept(x: f64, y: f64, phi_rad: f64, crop_deg: f64) -> bool {
-    if crop_deg >= 90.0 {
+pub fn kept(x: f64, y: f64, pos: &Position) -> bool {
+    if pos.crop_deg >= 90.0 && pos.crop_side == CropSide::Both {
         return true;
     }
-    let at = super::model3d::scene_to_disc(turn([x, y, 0.0], -phi_rad));
-    at[0].abs().atan2(at[1].abs()) <= crop_deg.to_radians()
+    let at = turn([x, y, 0.0], -pos.phi_deg.to_radians());
+    let u = crop_axis(pos);
+    // Angle from the top end of the axis, 0 ..= π.
+    let from_top = (at[0] * u[1] - at[1] * u[0]).abs().atan2(at[0] * u[0] + at[1] * u[1]);
+    let crop = pos.crop_deg.min(90.0).to_radians();
+    let top = from_top <= crop;
+    let bottom = from_top >= std::f64::consts::PI - crop;
+    match pos.crop_side {
+        CropSide::Both => top || bottom,
+        CropSide::Up => top,
+        CropSide::Down => bottom,
+    }
 }
 
 /// Whether a grid point in mm lies on the written ring of the disc.
@@ -173,7 +190,7 @@ mod tests {
     }
 
     fn flat_pos(id: &str, phi_deg: f64, crop_deg: f64) -> Position {
-        Position { id: id.into(), name: String::new(), phi_deg, crop_deg, neutral: None, order: vec![] }
+        Position { id: id.into(), name: String::new(), phi_deg, crop_deg, crop_side: Default::default(), crop_offset_deg: 0.0, neutral: None, order: vec![] }
     }
 
     fn image(path: &str, position: &str) -> SceneImage {
@@ -294,5 +311,32 @@ mod tests {
         }
         assert!(carved > 1000, "carved {carved}, other {other}");
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn the_crop_keeps_the_ends_asked_for_around_a_turned_axis() {
+        let at = |side: CropSide, offset: f64| Position { crop_side: side, crop_offset_deg: offset, ..flat_pos("0", 0.0, 30.0) };
+        // 12 o'clock is -y on the solve grid, 3 o'clock +x.
+        let (top, bottom, right) = ((0.0, -40.0), (0.0, 40.0), (40.0, 0.0));
+        let k = |p: &Position, (x, y): (f64, f64)| kept(x, y, p);
+        let both = at(CropSide::Both, 0.0);
+        assert!(k(&both, top) && k(&both, bottom) && !k(&both, right));
+        let up = at(CropSide::Up, 0.0);
+        assert!(k(&up, top) && !k(&up, bottom));
+        let down = at(CropSide::Down, 0.0);
+        assert!(!k(&down, top) && k(&down, bottom));
+        // Turned a quarter clockwise, the top end points at 3 o'clock.
+        let up_right = at(CropSide::Up, 90.0);
+        assert!(k(&up_right, right) && !k(&up_right, top) && !k(&up_right, (-40.0, 0.0)));
+        // Both ends at 90° keep everything; one end at 90° keeps its half.
+        let all = Position { crop_deg: 90.0, ..both.clone() };
+        assert!(k(&all, right) && k(&all, bottom));
+        let half = Position { crop_deg: 90.0, ..up.clone() };
+        assert!(k(&half, (40.0, -1.0)) && !k(&half, (40.0, 1.0)));
+        // The same as before for both ends without an offset.
+        for &(x, y) in &[(10.0, -30.0), (25.0, 20.0), (-5.0, 50.0), (-40.0, -10.0)] {
+            let old = super::super::model3d::scene_to_disc([x, y, 0.0]);
+            assert_eq!(k(&both, (x, y)), old[0].abs().atan2(old[1].abs()) <= 30f64.to_radians());
+        }
     }
 }

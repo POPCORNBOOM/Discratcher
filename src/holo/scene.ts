@@ -57,14 +57,24 @@ export interface HoloSceneObject {
   tiltDeg: number
 }
 
+/** Which ends of a position's crop axis are kept: the top, the bottom, or both (`model3d::CropSide`). */
+export type CropSide = 'both' | 'up' | 'down'
+export const CROP_SIDES: readonly CropSide[] = ['up', 'down', 'both']
+/** The crop axis's offset turns at most this far either way, degrees. */
+export const MAX_CROP_OFFSET_DEG = 90
+
 /** One way the disc is turned to be looked at, with its own models and pictures. */
 export interface HoloPosition {
   id: string
   name: string
   /** Which angle of the disc is at the top, clockwise in degrees. */
   phiDeg: number
-  /** Half-angle kept around 12 and 6 o'clock of this position, degrees; 90 means no crop. */
+  /** Half-angle kept either side of the crop axis, degrees; 90 with both ends kept means no crop. */
   cropDeg: number
+  /** Which ends of the crop axis keep their sector. */
+  cropSide: CropSide
+  /** The crop axis turned from 12 o'clock, clockwise as seen, degrees. */
+  cropOffsetDeg: number
   /** How hard every view is held white rather than sharper and in colour; absent takes each model's mode's default. */
   neutral?: number
   /** Its models' and pictures' ids, top first: where two want the same disc, the higher wins. */
@@ -161,7 +171,7 @@ export function emptyScene(): HoloScene {
 }
 
 export function makePosition(phiDeg: number, cropDeg = DEFAULT_CROP_DEG): HoloPosition {
-  return { id: makeObjectId(), name: '', phiDeg, cropDeg, order: [] }
+  return { id: makeObjectId(), name: '', phiDeg, cropDeg, cropSide: 'both', cropOffsetDeg: 0, order: [] }
 }
 
 /** A model or a picture in a position's list. */
@@ -308,6 +318,11 @@ export function validateScene(raw: unknown): HoloScene {
         name: typeof q.name === 'string' ? q.name : '',
         phiDeg: wrapDeg(q.phiDeg),
         cropDeg,
+        cropSide: CROP_SIDES.includes(q.cropSide as CropSide) ? (q.cropSide as CropSide) : 'both',
+        cropOffsetDeg:
+          typeof q.cropOffsetDeg === 'number' && Number.isFinite(q.cropOffsetDeg)
+            ? Math.min(MAX_CROP_OFFSET_DEG, Math.max(-MAX_CROP_OFFSET_DEG, q.cropOffsetDeg))
+            : 0,
         ...(typeof q.neutral === 'number' && Number.isFinite(q.neutral) ? { neutral: Math.min(3, Math.max(0, q.neutral)) } : {}),
         order: Array.isArray(q.order) ? q.order.filter((x): x is string => typeof x === 'string') : [],
       })

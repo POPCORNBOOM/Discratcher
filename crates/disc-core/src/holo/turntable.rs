@@ -141,6 +141,13 @@ fn transform_background(pos: &Position, poses: &[(V3, V3)], resp: &Responses, pr
     let plain = k - 1;
     let phi_rad = pos.phi_deg.to_radians();
     let crop_rad = pos.crop_deg.min(90.0).to_radians();
+    let axis = pos.crop_offset_deg.to_radians();
+    // The kept ends of the axis, as angles clockwise from 12 o'clock.
+    let ends: &[f64] = match pos.crop_side {
+        model3d::CropSide::Both => &[0.0, std::f64::consts::PI],
+        model3d::CropSide::Up => &[0.0],
+        model3d::CropSide::Down => &[std::f64::consts::PI],
+    };
     let luma = |p: [f32; 3]| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
 
     const NR: usize = 5;
@@ -150,9 +157,11 @@ fn transform_background(pos: &Position, poses: &[(V3, V3)], resp: &Responses, pr
         let r = preset.inner_radius_mm + (preset.outer_radius_mm - preset.inner_radius_mm) * (ir as f64 + 0.5) / NR as f64;
         for ia in 0..NA {
             let off = -crop_rad + 2.0 * crop_rad * ia as f64 / (NA - 1) as f64;
-            let (so, co) = off.sin_cos();
-            pts.push(turn([r * so, -r * co, 0.0], phi_rad));
-            pts.push(turn([r * so, r * co, 0.0], phi_rad));
+            for end in ends {
+                // On the solve grid 12 o'clock is -y, as in `flat::crop_axis`.
+                let (so, co) = (axis + end + off).sin_cos();
+                pts.push(turn([r * so, -r * co, 0.0], phi_rad));
+            }
         }
     }
 
@@ -245,7 +254,7 @@ pub(crate) fn positions(scene: &Scene) -> Vec<Position> {
     if !scene.positions.is_empty() {
         return scene.positions.clone();
     }
-    vec![Position { id: String::new(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, neutral: None, order: vec![] }]
+    vec![Position { id: String::new(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, crop_side: Default::default(), crop_offset_deg: 0.0, neutral: None, order: vec![] }]
 }
 
 /// Position `at`'s models and pictures, top first: as its `order` lists them, then any it leaves
@@ -573,7 +582,7 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
         let y = (((c / n) as f64 + 0.5) / n as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
         (x, y)
     };
-    let kept = |at: usize, x: f64, y: f64| flat::kept(x, y, positions[at].phi_deg.to_radians(), positions[at].crop_deg);
+    let kept = |at: usize, x: f64, y: f64| flat::kept(x, y, &positions[at]);
     enum Claim {
         Group(usize),
         Picture(usize),
@@ -712,6 +721,8 @@ mod tests {
             name: String::new(),
             phi_deg,
             crop_deg,
+            crop_side: Default::default(),
+            crop_offset_deg: 0.0,
             neutral: None,
             order: vec![],
         }
@@ -1559,6 +1570,8 @@ mod frames_study {
             name: String::new(),
             phi_deg: 0.0,
             crop_deg: 90.0,
+            crop_side: Default::default(),
+            crop_offset_deg: 0.0,
             neutral: None,
             order: vec![],
         };
