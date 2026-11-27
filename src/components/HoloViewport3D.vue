@@ -2,7 +2,7 @@
   <div
     ref="host"
     class="vp3d"
-    :class="{ grabbing: planeDragging }"
+    :class="{ grabbing: planeDragging, pointing: !!hoveredMarker }"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
@@ -263,25 +263,46 @@ function turnLeft(): number {
 }
 
 /** A small arrow at the viewer's side of the rim for every position, the current one lit. */
+/** One arrow outside the rim per position, pointing at where it turns to; click one to go there. */
+const hoveredMarker = ref<string | null>(null)
+
 function buildMarkers() {
   if (!scene) return
   markers?.removeFromParent()
   for (const m of markers?.children ?? []) {
-    ;(m as Line).geometry.dispose()
-    ;((m as Line).material as LineBasicMaterial).dispose()
+    ;(m as Mesh).geometry.dispose()
+    ;((m as Mesh).material as MeshBasicMaterial).dispose()
   }
   markers = new Group()
   const r = DISC_PHYSICAL_OUTER_MM
   for (const p of props.positions) {
-    const here = p.id === props.positionId
-    const geo = new BufferGeometry().setFromPoints([new Vector3(-3.5, -r - 4.5, 0.08), new Vector3(0, -r - 1.5, 0.08), new Vector3(3.5, -r - 4.5, 0.08)])
-    const m = new Line(geo, new LineBasicMaterial({ color: here ? 0xae79fb : 0x77777f, transparent: true, opacity: here ? 1 : 0.75 }))
+    const geo = new BufferGeometry().setFromPoints([new Vector3(-4.5, -r - 6, 0.08), new Vector3(4.5, -r - 6, 0.08), new Vector3(0, -r - 1.5, 0.08)])
+    const m = new Mesh(geo, new MeshBasicMaterial({ transparent: true, side: DoubleSide, depthWrite: false }))
     m.rotation.z = -MathUtils.degToRad(p.phiDeg)
     m.userData.positionId = p.id
     markers.add(m)
   }
   scene.add(markers)
+  paintMarkers()
   turnGroups()
+}
+
+function paintMarkers() {
+  for (const m of markers?.children ?? []) {
+    const id = m.userData.positionId as string
+    const mat = (m as Mesh).material as MeshBasicMaterial
+    const here = id === props.positionId
+    const hot = id === hoveredMarker.value
+    mat.color.setHex(here ? 0xae79fb : hot ? 0xd0d2dc : 0x77777f)
+    mat.opacity = here || hot ? 1 : 0.7
+  }
+}
+
+function markerAt(e: PointerEvent): string | null {
+  if (!markers || !camera) return null
+  updatePointerNdc(e)
+  raycaster.setFromCamera(pointerNdc, camera)
+  return (raycaster.intersectObjects(markers.children, false)[0]?.object.userData.positionId as string | undefined) ?? null
 }
 
 function updateZones() {
@@ -602,12 +623,13 @@ function onPointerDown(e: PointerEvent) {
   if (gizmo?.axis) return
   pointerDownPos = { x: e.clientX, y: e.clientY }
 
-  const hitId = pickObjectId(e)
-  if (!hitId) {
-    const mark = markers && raycaster.intersectObjects(markers.children, false)[0]
-    if (mark) emit('position', mark.object.userData.positionId as string)
+  const mark = markerAt(e)
+  if (mark) {
+    emit('position', mark)
     return
   }
+  const hitId = pickObjectId(e)
+  if (!hitId) return
 
   if (hitId !== props.selectedId) {
     emit('select', hitId)
@@ -633,6 +655,13 @@ function onPointerDown(e: PointerEvent) {
 }
 
 function onPointerMove(e: PointerEvent) {
+  if (!planeDragging.value && !gizmoDragging) {
+    const mark = markerAt(e)
+    if (mark !== hoveredMarker.value) {
+      hoveredMarker.value = mark
+      paintMarkers()
+    }
+  }
   if (!planeDragging.value || !dragTargetId || !camera) return
   const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y)
   if (!dragStarted && dist < 3) return
@@ -683,7 +712,7 @@ function onPointerUp(e: PointerEvent) {
   }
   if (e.button !== 0 || gizmoDragging) return
   const moved = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y)
-  if (moved > 4) return
+  if (moved > 4 || markerAt(e)) return
   const hitId = pickObjectId(e)
   if (!hitId && !gizmo?.axis) {
     emit('select', null)
@@ -928,6 +957,9 @@ defineExpose({ resetCamera, focusSelected })
 }
 .vp3d.grabbing {
   cursor: grabbing;
+}
+.vp3d.pointing {
+  cursor: pointer;
 }
 .vp3d-canvas {
   display: block;
