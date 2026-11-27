@@ -434,7 +434,7 @@ mod tests {
         let iso_path = dir.join("test3d.iso");
         let cancel = AtomicBool::new(false);
         let t3 = Instant::now();
-        let summary = design::build_iso(&preset, cb, &solved, &iso_path.to_string_lossy(), &cancel, &|_| {});
+        let summary = design::build_iso(&preset, cb, &solved, None, &iso_path.to_string_lossy(), &cancel, &|_| {});
         let dt_iso = t3.elapsed();
 
         let _ = std::fs::remove_dir_all(&dir);

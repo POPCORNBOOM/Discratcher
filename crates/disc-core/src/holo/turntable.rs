@@ -8,6 +8,7 @@
 
 use super::codebook::Codebook;
 use super::design::{self, Responses, Solved};
+use super::flat;
 #[cfg(test)]
 use super::design::ViewSpec;
 use super::ink;
@@ -88,7 +89,7 @@ pub fn tilted_eye_and_lamp(opts: &Options, lamp_mm: V3, tilt: f64, angle: f64) -
 /// Number of solver views for a position's calculation mode.
 pub fn views_for_mode(mode: model3d::Mode) -> usize {
     match mode {
-        model3d::Mode::Real => VIEWS,
+        model3d::Mode::Real | model3d::Mode::Flat => VIEWS,
         model3d::Mode::Transform => TRANSFORM_VIEWS,
     }
 }
@@ -180,6 +181,7 @@ pub fn tilt_for(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Op
 pub fn default_neutral(mode: model3d::Mode, opts: &Options) -> f64 {
     match mode {
         model3d::Mode::Real => opts.chroma_weight,
+        model3d::Mode::Flat => 0.0,
         model3d::Mode::Transform => 0.0,
     }
 }
@@ -189,7 +191,7 @@ pub fn default_neutral(mode: model3d::Mode, opts: &Options) -> f64 {
 fn position_options(pos: &Position, opts: &Options) -> Options {
     let chroma_weight = pos.neutral.unwrap_or_else(|| default_neutral(pos.mode, opts)).max(0.0);
     match pos.mode {
-        model3d::Mode::Real => Options { chroma_weight, ..opts.clone() },
+        model3d::Mode::Real | model3d::Mode::Flat => Options { chroma_weight, ..opts.clone() },
         model3d::Mode::Transform => Options { chroma_weight, wide: 0.0, exposure: TRANSFORM_EXPOSURE, ..opts.clone() },
     }
 }
@@ -315,7 +317,8 @@ fn grouped(scene: &Scene) -> Vec<(Position, Vec<&SceneObject>)> {
         let i = out.iter().position(|(p, _)| p.id == o.position_id).unwrap_or(0);
         out[i].1.push(o);
     }
-    out.retain(|(_, o)| !o.is_empty());
+    // A flat position carves pictures, not models.
+    out.retain(|(p, o)| !o.is_empty() && p.mode != model3d::Mode::Flat);
     out
 }
 
@@ -334,6 +337,9 @@ pub struct Solution {
     pub overlapping: Vec<String>,
     /// How each position is, or would be, tilted in transform mode: known before switching to it.
     pub tilts: Vec<Tilt>,
+    /// The disc the flat positions' pictures take.
+    #[serde(skip)]
+    pub flat: Arc<flat::FlatOwners>,
 }
 
 fn position_targets(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, preset: &DiscGeometryPreset) -> Result<Vec<Vec<f32>>, String> {
@@ -350,7 +356,7 @@ fn position_targets_n(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opt
         .map(|o| model3d::normalize_mesh(&*model3d::load_mesh_or_builtin(&o.path)?))
         .collect::<Result<Vec<_>, String>>()?;
     match pos.mode {
-        model3d::Mode::Real => {
+        model3d::Mode::Real | model3d::Mode::Flat => {
             let mesh: Vec<(Mesh, ink::Style)> = objects
                 .iter()
                 .zip(&normalized)
@@ -488,7 +494,7 @@ fn solve_patch(
 fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, tilt_deg: f64, opts: &Options, resp: &Responses, preset: &DiscGeometryPreset) -> Result<Patch, String> {
     let angle = pos.phi_deg.to_radians();
     match pos.mode {
-        model3d::Mode::Real => {
+        model3d::Mode::Real | model3d::Mode::Flat => {
             let poses: Vec<(V3, V3)> = (0..VIEWS)
                 .map(|i| eye_and_lamp(opts, lamp_mm, HEAD_HALF_SPAN_MM * (2.0 * i as f64 / (VIEWS - 1) as f64 - 1.0), angle))
                 .collect();
@@ -523,7 +529,8 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
     let opts = Options { grid: opts.grid.clamp(64, 1024), ..opts.clone() };
     let lamp = scene.lamp_mm.unwrap_or(LAMP_MM);
     let groups = grouped(scene);
-    if groups.is_empty() {
+    let flats = flat::flat_positions(scene);
+    if groups.is_empty() && flats.is_empty() {
         return Err("场景中没有可见模型".into());
     }
     let (n, k) = (opts.grid, resp.options);
@@ -541,7 +548,7 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
             .collect();
         let p_opts = position_options(pos, &opts);
         let shape = match pos.mode {
-            model3d::Mode::Real => pos.parallax,
+            model3d::Mode::Real | model3d::Mode::Flat => pos.parallax,
             model3d::Mode::Transform => tilt.deg,
         };
         let key = serde_json::to_string(&(pos.phi_deg, pos.mode, shape, &same, lamp, &p_opts, preset)).map_err(|e| e.to_string())?;
@@ -630,13 +637,51 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
             cell[t_bg] = 1.0;
         }
     }
-    let overlapping = groups.iter().zip(&clash).filter(|(_, &c)| c).map(|(g, _)| g.0.id.clone()).collect();
-    Ok(Solution { solved: Arc::new(Solved { grid: n, options: k, weights, error: 0.0 }), overlapping, tilts })
+    // Flat positions take what their pictures cover of their kept areas and models left; models
+    // win where both want a cell. Pictures are looked at the solve grid's size.
+    let flat_parts = flat::parts(scene, Some(1024))?;
+    let mut flat_owner = vec![0u8; if flats.is_empty() { 0 } else { n * n }];
+    let mut flat_clash = vec![false; flats.len()];
+    for (fi, pos) in flats.iter().enumerate() {
+        let phi_rad = pos.phi_deg.to_radians();
+        for c in 0..n * n {
+            let x = (((c % n) as f64 + 0.5) / n as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
+            let y = (((c / n) as f64 + 0.5) / n as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
+            let across = 2.0 * preset.outer_radius_mm;
+            if !flat::on_ring(x, y, preset) || !flat::kept(x, y, phi_rad, pos.crop_deg) || flat_parts[fi].covered(x / across, y / across).is_none() {
+                continue;
+            }
+            if owner[c] != usize::MAX {
+                clash[owner[c]] = true;
+                flat_clash[fi] = true;
+            } else if flat_owner[c] != 0 {
+                flat_clash[flat_owner[c] as usize - 1] = true;
+                flat_clash[fi] = true;
+            } else {
+                flat_owner[c] = fi as u8 + 1;
+            }
+        }
+    }
+    let overlapping = groups
+        .iter()
+        .zip(&clash)
+        .filter(|(_, &c)| c)
+        .map(|(g, _)| g.0.id.clone())
+        .chain(flats.iter().zip(&flat_clash).filter(|(_, &c)| c).map(|(p, _)| p.id.clone()))
+        .collect();
+    let flat = Arc::new(flat::FlatOwners {
+        grid: n,
+        owner: flat_owner,
+        positions: flats.iter().map(|p| (p.id.clone(), p.phi_deg.to_radians())).collect(),
+    });
+    Ok(Solution { solved: Arc::new(Solved { grid: n, options: k, weights, error: 0.0 }), overlapping, tilts, flat })
 }
 
 /// The solved weights for drawing on the graphics card: `[grid u32][options u32]`, then
 /// `ceil(options / 4)` layers of `grid * grid` RGBA bytes, one byte per option.
-pub fn weight_layers(s: &Solved) -> Vec<u8> {
+/// After them one more layer: what `flat::Flat::preview_layer` gives, or nothing where it is
+/// empty (no flat positions).
+pub fn weight_layers(s: &Solved, flat: &[u8]) -> Vec<u8> {
     let (n, k) = (s.grid, s.options);
     let layers = k.div_ceil(4);
     let mut out = Vec::with_capacity(8 + layers * n * n * 4);
@@ -649,16 +694,22 @@ pub fn weight_layers(s: &Solved) -> Vec<u8> {
             }
         }
     }
+    if flat.len() == n * n * 4 {
+        out.extend_from_slice(flat);
+    } else {
+        out.resize(out.len() + n * n * 4, 0);
+    }
     out
 }
 
 /// What every option looks like, for drawing on the graphics card: `[options u32][gt u32][gr u32]
-/// [groove u32]` and `[g max f32][groove spread f32]`, the responses as RGB floats ordered
-/// option, gt, gr, then the groove's rainbow by `|g_r|` at `g_t = 0`.
-pub fn response_tables(resp: &Responses, pitch_um: f64) -> Vec<u8> {
+/// [groove u32][carve levels u32]` and `[g max f32][groove spread f32]`, the responses as RGB
+/// floats ordered option, gt, gr, then the carve page's bytes at each level
+/// (`design::carve_looks`) the same way, then the groove's rainbow by `|g_r|` at `g_t = 0`.
+pub fn response_tables(resp: &Responses, carve: &[Vec<[f32; 3]>], pitch_um: f64) -> Vec<u8> {
     const GROOVE: usize = 512;
     let mut out = Vec::new();
-    for v in [resp.options, resp.gt_bins, resp.gr_bins, GROOVE] {
+    for v in [resp.options, resp.gt_bins, resp.gr_bins, GROOVE, carve.len()] {
         out.extend_from_slice(&(v as u32).to_le_bytes());
     }
     for v in [design::G_MAX as f32, design::GROOVE_SOURCE as f32] {
@@ -666,6 +717,7 @@ pub fn response_tables(resp: &Responses, pitch_um: f64) -> Vec<u8> {
     }
     let mut put = |p: [f32; 3]| p.iter().for_each(|v| out.extend_from_slice(&v.to_le_bytes()));
     resp.rgb.iter().flatten().for_each(|p| put(*p));
+    carve.iter().flatten().for_each(|p| put(*p));
     (0..GROOVE).for_each(|i| put(design::groove_rainbow(i as f64 / (GROOVE - 1) as f64 * design::G_MAX, pitch_um)));
     out
 }
@@ -698,7 +750,7 @@ mod tests {
 
     fn scene(phis: &[f64], objects: Vec<SceneObject>) -> Scene {
         let positions = phis.iter().enumerate().map(|(i, &phi_deg)| pos(&i.to_string(), phi_deg, 30.0)).collect();
-        Scene { version: model3d::SCENE_VERSION, objects, lamp_mm: None, positions }
+        Scene { version: model3d::SCENE_VERSION, objects, lamp_mm: None, positions, images: vec![] }
     }
 
     fn run(scene: &Scene, grid: usize) -> Solution {
@@ -820,6 +872,7 @@ mod tests {
             let obj = SceneObject { scale_mm: 28.0, ..star("0", 22.0, 34.0) };
             let make = |crop_deg: f64| Scene {
                 version: model3d::SCENE_VERSION,
+                images: vec![],
                 objects: vec![obj.clone()],
                 lamp_mm: None,
                 positions: vec![pos("0", phi_deg, crop_deg)],
@@ -865,6 +918,7 @@ mod tests {
         // Overlap detection only sees cropped cells.
         let both = |crop_deg: f64| Scene {
             version: model3d::SCENE_VERSION,
+            images: vec![],
             objects: vec![
                 SceneObject { scale_mm: 24.0, ..star("0", 29.0, 29.0) },
                 SceneObject { scale_mm: 24.0, ..star("1", -29.0, 29.0) },
@@ -961,6 +1015,7 @@ mod tests {
         let lamp = [225.0, 0.0, 400.0];
         let sc = Scene {
             version: model3d::SCENE_VERSION,
+            images: vec![],
             objects: vec![obj.clone()],
             lamp_mm: Some(lamp),
             positions: vec![p0.clone()],
@@ -1161,8 +1216,8 @@ mod tests {
         let shared = design::shared_codebook(0.1333);
         let preset = reference_preset();
         let s = run(&scene(&[0.0, 120.0], vec![star("0", 0.0, 41.0), star("1", 0.0, 41.0)]), 256);
-        std::fs::write(format!("{out}/weights.bin"), weight_layers(&s.solved)).unwrap();
-        std::fs::write(format!("{out}/tables.bin"), response_tables(&shared.1, preset.base_pitch_um)).unwrap();
+        std::fs::write(format!("{out}/weights.bin"), weight_layers(&s.solved, &[])).unwrap();
+        std::fs::write(format!("{out}/tables.bin"), response_tables(&shared.1, &[], preset.base_pitch_um)).unwrap();
         for (i, (tilt, angle)) in [(0.0f64, 0.0f64), (3.0, 0.0), (-3.0, 120.0)].into_iter().enumerate() {
             let (e, l) = tilted_eye_and_lamp(&Options::default(), LAMP_MM, tilt.to_radians(), angle.to_radians());
             let px = design::render(&s.solved, &shared.1, &preset, &ViewSpec::lamp("", e, l), 512, 1.0);
@@ -1304,8 +1359,8 @@ mod tests {
         let o = SceneObject { path: std::env::var("MODEL").unwrap(), scale_mm: 45.0, position_mm: [0.0, 41.0, 0.0], ..star("0", 0.0, 41.0) };
         let opts = Options::default();
         let sol = solve(&scene(&[0.0], vec![o]), &opts, &shared.0, &shared.1, &preset).unwrap();
-        std::fs::write(format!("{out}/weights.bin"), weight_layers(&sol.solved)).unwrap();
-        std::fs::write(format!("{out}/tables.bin"), response_tables(&shared.1, preset.base_pitch_um)).unwrap();
+        std::fs::write(format!("{out}/weights.bin"), weight_layers(&sol.solved, &[])).unwrap();
+        std::fs::write(format!("{out}/tables.bin"), response_tables(&shared.1, &[], preset.base_pitch_um)).unwrap();
         let (e, l) = eye_and_lamp(&opts, LAMP_MM, 0.0, 0.0);
         let n = 512;
         let px = super::super::lightfield::render_float(&sol.solved, &shared.1, &preset, e, l, n, true);
@@ -1379,9 +1434,7 @@ mod frames_study {
     const OBJ_Y_DISC: f64 = -41.0;
 
     fn out_dir() -> String {
-        let dir = std::env::var("HOLO_OUT").unwrap_or_else(|_| {
-            "/private/tmp/claude-501/-Users-popcornboom-Github-discratcher/77e4f1be-29b4-409c-b70c-25d765514c8a/scratchpad/frames-study".into()
-        });
+        let dir = std::env::var("HOLO_OUT").unwrap_or_else(|_| std::env::temp_dir().join("frames-study").to_string_lossy().into());
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

@@ -5,14 +5,10 @@ import { MAX_LAYERS, type ArtField } from '../discRenderer'
 import { notifyError } from '../notices'
 import type { ArtworkAnalysis, Layer } from '../types'
 
-export const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p
+import { copyLayer, makeLayer, readLayer, restacked } from '../layers'
+
+export { coverSize, fileName } from '../layers'
 const snapshot = (layers: Layer[]) => JSON.stringify(layers)
-
-/** The size that lets a picture fill the disc, as one picture usually should. */
-export const coverSize = (l: Pick<Layer, 'width' | 'height'>) => Math.max(l.width, l.height) / Math.max(1, Math.min(l.width, l.height))
-
-/** What a layer from an older file lacks. */
-const NEW_EFFECTS = { pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0 }
 
 /** The pictures on the disc, their places, and the file they were saved to. */
 export const useComposition = defineStore('composition', () => {
@@ -57,14 +53,7 @@ export const useComposition = defineStore('composition', () => {
     try {
       const a = await call<ArtworkAnalysis>('analyze_artwork', { imagePath: file })
       pictures.value[file] = a
-      const first = layers.value.length === 0
-      const l: Layer = {
-        id: crypto.randomUUID(), path: file, name: fileName(file), width: a.width, height: a.height,
-        x: 0, y: 0, size: 0, rotationDeg: 0, invert: a.suggestInvert, contrast: 0, brightness: 0,
-        pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0,
-      }
-      // The first picture fills the disc; later ones arrive smaller, on top.
-      l.size = first ? coverSize(l) : 0.5
+      const l = makeLayer(file, a, layers.value.length === 0)
       layers.value.push(l)
       selectedId.value = l.id
     } catch (e) {
@@ -76,9 +65,7 @@ export const useComposition = defineStore('composition', () => {
   function duplicate(id: string) {
     const i = layers.value.findIndex((l) => l.id === id)
     if (i < 0 || full.value) return
-    const copy: Layer = { ...layers.value[i], id: crypto.randomUUID() }
-    copy.x += 0.03
-    copy.y += 0.03
+    const copy = copyLayer(layers.value[i])
     const next = [...layers.value]
     next.splice(i + 1, 0, copy)
     layers.value = next
@@ -92,12 +79,7 @@ export const useComposition = defineStore('composition', () => {
 
   /** `by` 1 brings the picture forward, -1 sends it back. */
   function restack(id: string, by: 1 | -1) {
-    const i = layers.value.findIndex((l) => l.id === id)
-    const j = i + by
-    if (i < 0 || j < 0 || j >= layers.value.length) return
-    const next = [...layers.value]
-    ;[next[i], next[j]] = [next[j], next[i]]
-    layers.value = next
+    layers.value = restacked(layers.value, id, by) ?? layers.value
   }
 
   function clear() {
@@ -109,7 +91,7 @@ export const useComposition = defineStore('composition', () => {
 
   async function open(file: string) {
     const opened = await call<Layer[]>('open_composition', { path: file })
-    layers.value = opened.slice(0, MAX_LAYERS).map((l) => ({ ...NEW_EFFECTS, ...l, brightness: l.brightness ?? 0, id: l.id || crypto.randomUUID() }))
+    layers.value = opened.slice(0, MAX_LAYERS).flatMap((l) => readLayer(l) ?? [])
     selectedId.value = ''
     path.value = file
     saved.value = snapshot(layers.value)

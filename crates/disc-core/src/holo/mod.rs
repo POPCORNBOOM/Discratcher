@@ -15,3 +15,4 @@ pub mod model3d;
 pub mod lightfield;
 pub mod ink;
 pub mod turntable;
+pub mod flat;

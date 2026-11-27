@@ -393,6 +393,8 @@ pub enum Mode {
     Real,
     /// Transform animation: fixed centre eye, objects transformed by per-object T(t).
     Transform,
+    /// Flat pictures carved as the carve page carves them, with no models (`Scene::images`).
+    Flat,
 }
 
 /// Per-object animation transform for transform mode.
@@ -498,6 +500,29 @@ pub struct Scene {
     /// Where the lamp stands, in scene space; the default when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lamp_mm: Option<[f64; 3]>,
+    /// Pictures of the positions in `Mode::Flat`, bottom first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<SceneImage>,
+}
+
+/// A picture on a flat position. Its layer is placed as on the carve page, in the position's own
+/// frame: upright with the position at the top, a share of the diameter from the centre, y down.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneImage {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    /// The picture's own pixel size.
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+    /// The viewing position it belongs to.
+    #[serde(default)]
+    pub position_id: String,
+    #[serde(flatten)]
+    pub layer: crate::artwork::Layer,
 }
 
 /// Optional viewing / lamp parameters when composing a 3D `Scene` into hologram target views.
@@ -2285,7 +2310,7 @@ mod tests {
         let obj = |path: &str, pos: [f64; 3], rot: [f64; 3], scale_mm: f64| SceneObject {
             id: "o".into(), path: path.into(), name: "x".into(), visible: true, position_mm: pos, rotation_deg: rot, scale_mm, position_id: String::new(), style: Default::default(), motion: Default::default(),
         };
-        let scene = Scene { version: SCENE_VERSION, lamp_mm: None, positions: vec![], objects: vec![
+        let scene = Scene { version: SCENE_VERSION, lamp_mm: None, positions: vec![], images: vec![], objects: vec![
             obj(&std::env::var("MODEL").unwrap(), [0.0, 40.0, 0.0], [0.0; 3], 34.0),
             obj(BUILTIN_SAMPLE_PATH, [0.0, -41.0, 4.0], [0.0; 3], 26.0),
             obj(BUILTIN_SAMPLE_PATH, [41.0, 0.0, 0.0], [0.0; 3], 22.0),
@@ -2389,6 +2414,7 @@ mod tests {
         // Verify write_scene_views skips invisible objects and accepts builtin sample.
         let dir = std::env::temp_dir().join(format!("holo-scene-test-{}", std::process::id()));
         let scene = Scene {
+            images: vec![],
             version: SCENE_VERSION, lamp_mm: None, positions: vec![],
             objects: vec![
                 SceneObject {

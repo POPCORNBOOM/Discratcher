@@ -62,9 +62,10 @@ import {
   type Vec3,
 } from '../holo/constants'
 import { createAxesGizmo } from '../holo/axesGizmo'
+import { createFlatPictures } from '../holo/flatPictures'
 import { sampleMotion } from '../holo/motion'
 import type { DisplayMeshData } from '../holo/sampleMesh'
-import { DEFAULT_CROP_DEG, round1, type HoloPosition, type HoloSceneObject } from '../holo/scene'
+import { DEFAULT_CROP_DEG, round1, type HoloImage, type HoloPosition, type HoloSceneObject } from '../holo/scene'
 import { zonesMaterial } from '../holo/usability'
 
 export type GizmoMode = 'translate' | 'rotate' | 'scale'
@@ -82,6 +83,10 @@ const props = defineProps<{
   lampMm: Vec3
   distanceMm: number
   previewT: number
+  /** The flat positions' pictures, and their thumbnails by path. */
+  images: HoloImage[]
+  thumbnails: Record<string, string>
+  selectedImageId: string | null
 }>()
 
 const emit = defineEmits<{
@@ -107,6 +112,7 @@ let renderer: WebGLRenderer | null = null
 let scene: Scene | null = null
 let camera: PerspectiveCamera | null = null
 let axes: ReturnType<typeof createAxesGizmo> | null = null
+let pictures: ReturnType<typeof createFlatPictures> | null = null
 let orbit: OrbitControls | null = null
 let gizmo: TransformControls | null = null
 let resizeObs: ResizeObserver | null = null
@@ -869,6 +875,7 @@ onMounted(() => {
 
   scene = new Scene()
   axes = createAxesGizmo()
+  pictures = createFlatPictures(groupFor, () => {})
   camera = new PerspectiveCamera(CAMERA_FOV_DEG, 1, 1, 8000)
   // Scene space: +x right, +y up (12 o'clock), +z toward viewer.
   camera.up.set(0, 0, 1)
@@ -988,6 +995,7 @@ onMounted(() => {
   applyThemeColors()
   syncGizmoModeAndSnap()
   syncObjects()
+  syncPictures()
   resetCamera()
 
   resizeObs = new ResizeObserver(handleResize)
@@ -1012,7 +1020,16 @@ watch(() => [props.mode, props.snap], () => syncGizmoModeAndSnap())
 watch(() => props.previewT, () => syncMotionTransforms())
 watch(() => [props.objects, props.meshes, props.selectedId, props.positions, props.positionId], () => syncObjects(), { deep: true })
 
+function syncPictures() {
+  pictures?.sync({
+    images: props.images, positions: props.positions, positionId: props.positionId, thumbnails: props.thumbnails,
+    selectedId: props.selectedImageId, innerRadiusMm: props.innerRadiusMm, outerRadiusMm: props.outerRadiusMm,
+  })
+}
+watch(() => [props.images, props.thumbnails, props.selectedImageId, props.positions, props.positionId, props.innerRadiusMm, props.outerRadiusMm], syncPictures, { deep: true })
+
 onBeforeUnmount(() => {
+  pictures?.dispose()
   cancelAnimationFrame(animFrame)
   axes?.dispose()
   resizeObs?.disconnect()

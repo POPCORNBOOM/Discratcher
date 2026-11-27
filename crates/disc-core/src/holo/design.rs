@@ -399,6 +399,41 @@ pub fn shared_codebook(bit_um: f64) -> Arc<(Codebook, Responses)> {
     v
 }
 
+/// Light fractions the carve page's dithered bytes are simulated at, dark to light.
+pub const CARVE_LEVELS: usize = 9;
+
+/// The bytes the carve page writes for a light fraction `p`, one codebook core long.
+pub fn carve_bytes(p: f64) -> Vec<u8> {
+    let mut bytes = vec![0u8; CORE_BYTES];
+    let mut acc = 0.0f32;
+    let tone = crate::carver::Tone { servo_safe: true, min_luma: 0.0 };
+    crate::carver::tone_run(tone, (p.clamp(0.0, 1.0) * 255.0) as f32, &mut acc, &mut bytes);
+    bytes
+}
+
+/// What carved bytes look like at each of `CARVE_LEVELS` light fractions: their dithered
+/// sequences through the same encoding and optics as the codebook, on `shared_codebook`'s scale.
+pub fn carve_looks(bit_um: f64) -> Arc<Vec<Vec<[f32; 3]>>> {
+    static CACHE: OnceLock<Mutex<HashMap<u64, Arc<Vec<Vec<[f32; 3]>>>>>> = OnceLock::new();
+    let key = bit_um.to_bits();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(v) = cache.lock().unwrap().get(&key) {
+        return v.clone();
+    }
+    let shared = shared_codebook(bit_um);
+    let cb = &shared.0;
+    let mut with_carve = cb.clone();
+    for l in 0..CARVE_LEVELS {
+        let bytes = carve_bytes(l as f64 / (CARVE_LEVELS - 1) as f64);
+        with_carve.entries.push(codebook::Entry { bytes, f0: 0.0, purity: 0.0, dsv_peak: 0 });
+    }
+    // Normalised against the same reference entries as the codebook itself.
+    let r = responses_with_ref_peak(&with_carve, swatch_codebook(bit_um).entries.len(), cb.bit_um, DEFAULT_SOURCE_BLUR, DEFAULT_SIGMA_R);
+    let v = Arc::new(r.rgb[cb.entries.len()..cb.entries.len() + CARVE_LEVELS].to_vec());
+    cache.lock().unwrap().insert(key, v.clone());
+    v
+}
+
 /// Targets of one view on the cell grid: linear RGB and a weight (the picture's alpha).
 struct Target {
     rgb: Vec<[f32; 3]>,
@@ -888,6 +923,7 @@ pub fn build_iso(
     preset: &DiscGeometryPreset,
     cb: &Codebook,
     solved: &Solved,
+    flat: Option<(&super::flat::Flat, crate::carver::Tone)>,
     output_iso_path: &str,
     cancel: &AtomicBool,
     progress: &(dyn Fn(CarveProgress) + Sync),
@@ -919,6 +955,7 @@ pub fn build_iso(
             return Err(());
         }
         let mut local = vec![0u64; k];
+        let mut acc = crate::carver::block_phase(b as u32);
         for (i, s) in chunk.chunks_exact_mut(SECTOR_BYTES).enumerate() {
             let lba = (b * ECC_BLOCK_SECTORS + i) as u32;
             if crate::iso9660::is_system_sector(lba, total) {
@@ -951,6 +988,14 @@ pub fn build_iso(
                     s[slot.first..slot.first + slot.len].copy_from_slice(&entry.bytes[..slot.len]);
                 }
             }
+            // Flat positions' pictures, carved over whatever the slots held there.
+            if let Some((f, tone)) = flat {
+                crate::carver::for_each_sample(&spiral, lba, |r, x, y| {
+                    if let Some(grey) = f.sample(x, y) {
+                        crate::carver::tone_run(tone, grey, &mut acc, crate::carver::run_of(s, r));
+                    }
+                });
+            }
             xor_sector(&lut, lba, s);
         }
         for (u, l) in usage.iter().zip(local) {
@@ -981,6 +1026,22 @@ pub fn build_iso(
 mod tests {
     use super::*;
     use crate::preset::reference_preset;
+
+    #[test]
+    fn carved_bytes_are_simulated_by_their_share_of_light() {
+        for l in 0..CARVE_LEVELS {
+            let p = l as f64 / (CARVE_LEVELS - 1) as f64;
+            let light = carve_bytes(p).iter().filter(|&&b| b == crate::ecma267::LIGHT_BYTE).count() as f64 / CORE_BYTES as f64;
+            assert!((light - p).abs() <= 1.0 / CORE_BYTES as f64 + 1e-9, "level {l}: {light} light, wanted {p}");
+        }
+        let looks = carve_looks(0.1333);
+        assert_eq!(looks.len(), CARVE_LEVELS);
+        let luma = |v: &Vec<[f32; 3]>| v.iter().map(|c| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]).sum::<f32>();
+        let all: Vec<f32> = looks.iter().map(luma).collect();
+        assert!(all.iter().all(|v| v.is_finite() && *v > 0.0), "{all:?}");
+        // Dark and light bytes are different marks, so they diffract differently.
+        assert!((all[0] - all[CARVE_LEVELS - 1]).abs() > 0.05 * all[0].max(all[CARVE_LEVELS - 1]), "{all:?}");
+    }
 
     #[test]
     fn simplex_projection() {
@@ -1189,7 +1250,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("holo-design-sys-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let iso = dir.join("design.iso");
-        let sum = build_iso(&preset, cb, &solved, iso.to_str().unwrap(), &AtomicBool::new(false), &|_| {}).unwrap();
+        let sum = build_iso(&preset, cb, &solved, None, iso.to_str().unwrap(), &AtomicBool::new(false), &|_| {}).unwrap();
         assert_eq!(sum.total_sectors, total);
         let bytes = std::fs::read(&iso).unwrap();
         crate::iso9660::tests::assert_system_area(&bytes, crate::iso9660::HOLO_VOLUME, total);
@@ -1223,7 +1284,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("holo-design-ext-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let iso = dir.join("design-ext.iso");
-        let sum = build_iso(&preset, cb, &solved, iso.to_str().unwrap(), &AtomicBool::new(false), &|_| {}).unwrap();
+        let sum = build_iso(&preset, cb, &solved, None, iso.to_str().unwrap(), &AtomicBool::new(false), &|_| {}).unwrap();
         assert_eq!(sum.usage.len(), k);
         let sys_sectors = (crate::iso9660::SYSTEM_HEAD_SECTORS + crate::iso9660::SYSTEM_TAIL_SECTORS) as f64;
         let expected_extra = (total as f64 - sys_sectors) / total as f64;
@@ -1258,7 +1319,7 @@ mod tests {
 
         // Mismatched codebook vs solved option count must return an error rather than panic.
         let swatch = swatch_codebook(0.1333);
-        assert!(build_iso(&preset, &swatch, &solved, iso.to_str().unwrap(), &AtomicBool::new(false), &|_| {}).is_err());
+        assert!(build_iso(&preset, &swatch, &solved, None, iso.to_str().unwrap(), &AtomicBool::new(false), &|_| {}).is_err());
 
         let _ = std::fs::remove_dir_all(dir);
     }

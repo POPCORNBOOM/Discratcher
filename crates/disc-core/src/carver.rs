@@ -66,47 +66,64 @@ pub struct BlockStats {
 /// Low-discrepancy start phase, so neighbouring blocks do not line their dither up
 /// into radial streaks. Deterministic, which keeps builds reproducible.
 #[inline]
-fn block_phase(block: u32) -> f32 {
+pub(crate) fn block_phase(block: u32) -> f32 {
     let f = (block as f64 * 0.618_033_988_749_894_9).fract();
     (f - 0.5) as f32
+}
+
+/// Walk one sector's bytes in runs of `SAMPLE_EVERY_BYTES`, handing `f` each run's index and
+/// where on the disc it lies, as a share of the diameter from the centre (see `artwork`).
+#[inline]
+pub(crate) fn for_each_sample(spiral: &Spiral, lba: u32, mut f: impl FnMut(usize, f64, f64)) {
+    let bits = SECTOR_CHANNEL_BITS as f64;
+    let half_step = 0.5 / SECTOR_BYTES as f64;
+    let (r0, th0) = spiral.locate((lba as f64 + half_step) * bits);
+    let (r1, th1) = spiral.locate((lba as f64 + 1.0 - half_step) * bits);
+    let chunks = SECTOR_BYTES / SAMPLE_EVERY_BYTES;
+    let (dr, dth) = ((r1 - r0) / (chunks - 1) as f64, (th1 - th0) / (chunks - 1) as f64);
+    let ro2 = 2.0 * spiral.params.ro;
+    // Phasor stepping: the angle moves a fraction of a radian per sector, and this loop
+    // runs billions of times on a full disc, so no sin/cos per sample.
+    let (mut s, mut c) = th0.sin_cos();
+    let (ds, dc) = dth.sin_cos();
+    for i in 0..chunks {
+        let r = r0 + i as f64 * dr;
+        f(i, r * c / ro2, r * s / ro2);
+        let (ns, nc) = (s * dc + c * ds, c * dc - s * ds);
+        s = ns;
+        c = nc;
+    }
+}
+
+/// Write `grey` (0 ..= 255) as dark and light bytes into one run, the way the carve page
+/// does. `acc` carries the error diffusion along the track.
+#[inline]
+pub(crate) fn tone_run(tone: Tone, grey: f32, acc: &mut f32, run: &mut [u8]) {
+    if tone.servo_safe {
+        let p = grey.max(tone.min_luma) / 255.0;
+        for b in run {
+            *acc += p;
+            let white = *acc >= 0.5;
+            if white {
+                *acc -= 1.0;
+            }
+            *b = if white { LIGHT_BYTE } else { DARK_BYTE };
+        }
+    } else {
+        run.fill(if grey >= 128.0 { LIGHT_BYTE } else { DARK_BYTE });
+    }
+}
+
+/// The bytes of the `i`th run of a sector.
+#[inline]
+pub(crate) fn run_of(sector: &mut [u8], i: usize) -> &mut [u8] {
+    &mut sector[i * SAMPLE_EVERY_BYTES..(i + 1) * SAMPLE_EVERY_BYTES]
 }
 
 /// Fill `out` with the wanted scrambled bytes of one sector, before the XOR.
 /// `acc` carries the 1D error-diffusion state along the track.
 fn sector_bytes(ctx: &CarveCtx, lba: u32, acc: &mut f32, out: &mut [u8]) {
-    let bits = SECTOR_CHANNEL_BITS as f64;
-    let half_step = 0.5 / SECTOR_BYTES as f64;
-    let (r0, th0) = ctx.spiral.locate((lba as f64 + half_step) * bits);
-    let (r1, th1) = ctx.spiral.locate((lba as f64 + 1.0 - half_step) * bits);
-    let chunks = SECTOR_BYTES / SAMPLE_EVERY_BYTES;
-    let (dr, dth) = ((r1 - r0) / (chunks - 1) as f64, (th1 - th0) / (chunks - 1) as f64);
-    let ro2 = 2.0 * ctx.spiral.params.ro;
-    // Phasor stepping: the angle moves a fraction of a radian per sector, and this loop
-    // runs billions of times on a full disc, so no sin/cos per sample.
-    let (mut s, mut c) = th0.sin_cos();
-    let (ds, dc) = dth.sin_cos();
-    let Tone { servo_safe, min_luma } = ctx.tone;
-    for (i, chunk) in out.chunks_exact_mut(SAMPLE_EVERY_BYTES).enumerate() {
-        let r = r0 + i as f64 * dr;
-        let grey = ctx.art.sample(r * c / ro2, r * s / ro2);
-        if servo_safe {
-            let p = grey.max(min_luma) / 255.0;
-            for b in chunk {
-                *acc += p;
-                let white = *acc >= 0.5;
-                if white {
-                    *acc -= 1.0;
-                }
-                *b = if white { LIGHT_BYTE } else { DARK_BYTE };
-            }
-        } else {
-            let q = if grey >= 128.0 { LIGHT_BYTE } else { DARK_BYTE };
-            chunk.fill(q);
-        }
-        let (ns, nc) = (s * dc + c * ds, c * dc - s * ds);
-        s = ns;
-        c = nc;
-    }
+    for_each_sample(ctx.spiral, lba, |i, x, y| tone_run(ctx.tone, ctx.art.sample(x, y), acc, run_of(out, i)));
 }
 
 /// Carve the ECC block `block` into a 32 KiB buffer, ready to write.

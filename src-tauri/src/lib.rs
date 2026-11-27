@@ -487,7 +487,7 @@ async fn holo_build_design_iso(
     blocking(move || {
         let solved = solved_design(&preset, &input, uniform_background.unwrap_or(false))?;
         let shared = disc_core::holo::design::shared_codebook(preset.channel_bit_length_nm * 1e-3);
-        disc_core::holo::design::build_iso(&preset, &shared.0, &solved, &output_iso_path, &cancel, &|p| {
+        disc_core::holo::design::build_iso(&preset, &shared.0, &solved, None, &output_iso_path, &cancel, &|p| {
             let _ = app.emit("carve://progress", p);
         })
     })
@@ -558,10 +558,18 @@ async fn holo_scene_weights(
     scene: disc_core::holo::model3d::Scene,
     options: disc_core::holo::turntable::Options,
     preset: DiscGeometryPreset,
+    tone: FlatTone,
 ) -> Result<tauri::ipc::Response, String> {
     blocking(move || {
         let s = solved_scene(&scene, &options, &preset)?;
-        Ok(tauri::ipc::Response::new(disc_core::holo::turntable::weight_layers(&s.solved)))
+        // Pictures are drawn at the solve grid's size, so a long edge of 1024 is plenty.
+        let flat = if s.flat.positions.is_empty() {
+            vec![]
+        } else {
+            let tone = disc_core::carver::Tone::from_duty(tone.servo_safe_dither, tone.max_dark_duty_cycle);
+            disc_core::holo::flat::Flat::load(s.flat.clone(), &scene, Some(1024))?.preview_layer(tone)
+        };
+        Ok(tauri::ipc::Response::new(disc_core::holo::turntable::weight_layers(&s.solved, &flat)))
     })
     .await
 }
@@ -571,9 +579,18 @@ async fn holo_scene_weights(
 async fn holo_response_tables(preset: DiscGeometryPreset) -> Result<tauri::ipc::Response, String> {
     blocking(move || {
         let shared = disc_core::holo::design::shared_codebook(preset.channel_bit_length_nm * 1e-3);
-        Ok(tauri::ipc::Response::new(disc_core::holo::turntable::response_tables(&shared.1, preset.base_pitch_um)))
+        let carve = disc_core::holo::design::carve_looks(preset.channel_bit_length_nm * 1e-3);
+        Ok(tauri::ipc::Response::new(disc_core::holo::turntable::response_tables(&shared.1, &carve, preset.base_pitch_um)))
     })
     .await
+}
+
+/// How flat pictures are dithered: the carve page's own settings.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FlatTone {
+    servo_safe_dither: bool,
+    max_dark_duty_cycle: f64,
 }
 
 #[tauri::command]
@@ -583,13 +600,17 @@ async fn holo_build_scene_iso(
     scene: disc_core::holo::model3d::Scene,
     options: disc_core::holo::turntable::Options,
     preset: DiscGeometryPreset,
+    tone: FlatTone,
     output_iso_path: String,
 ) -> Result<disc_core::holo::design::DesignSummary, String> {
     let cancel = fresh_cancel(&state);
     blocking(move || {
         let s = solved_scene(&scene, &options, &preset)?;
         let shared = disc_core::holo::design::shared_codebook(preset.channel_bit_length_nm * 1e-3);
-        disc_core::holo::design::build_iso(&preset, &shared.0, &s.solved, &output_iso_path, &cancel, &|p| {
+        // Flat pictures at full size, as the carve page burns them.
+        let flat = if s.flat.positions.is_empty() { None } else { Some(disc_core::holo::flat::Flat::load(s.flat.clone(), &scene, None)?) };
+        let tone = disc_core::carver::Tone::from_duty(tone.servo_safe_dither, tone.max_dark_duty_cycle);
+        disc_core::holo::design::build_iso(&preset, &shared.0, &s.solved, flat.as_ref().map(|f| (f, tone)), &output_iso_path, &cancel, &|p| {
             let _ = app.emit("carve://progress", p);
         })
     })

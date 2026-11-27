@@ -52,45 +52,12 @@
             <div class="small muted">{{ t('carve.twistHelp') }}</div>
           </section>
 
-          <section v-if="sel" class="section">
-            <div class="title row">
-              <span class="grow">{{ t('carve.position') }}</span>
-              <a class="action-link" role="button" tabindex="0" @click="resetLayer" @keydown.enter="resetLayer">{{ t('carve.reset') }}</a>
-            </div>
-            <UiSlider v-model="percent.x" :label="t('carve.x')" :min="-50" :max="50" :step="0.5" :format="formatOffset" />
-            <UiSlider v-model="percent.y" :label="t('carve.y')" :min="-50" :max="50" :step="0.5" :format="formatOffset" />
-            <UiSlider v-model="percent.size" :label="t('carve.size')" :min="5" :max="300" :step="1" :format="(v) => `${Math.round(v)}%`" />
-            <UiSlider v-model="sel.rotationDeg" :label="t('carve.rotate')" :min="-180" :max="180" :step="0.5" :format="(v) => `${v.toFixed(1)}°`" />
-          </section>
+          <template v-if="sel">
+            <LayerPlace :layer="sel" @reset="resetLayer" />
+            <LayerLook :layer="sel" />
+          </template>
 
-          <section v-if="sel" class="section">
-            <div class="title">{{ t('carve.tone') }}</div>
-            <UiSwitch v-model="sel.invert">{{ t('carve.invert') }}</UiSwitch>
-            <UiSlider v-model="sel.brightness" :label="t('carve.brightness')" :min="-100" :max="100" :step="1" />
-            <UiSlider v-model="sel.contrast" :label="t('carve.contrast')" :min="-100" :max="100" :step="1" />
-            <UiSwitch v-model="sel.pixelated">{{ t('carve.pixelated') }}</UiSwitch>
-          </section>
-
-          <section v-if="sel" class="section">
-            <div class="title">{{ t('carve.effects') }}</div>
-            <UiSwitch v-model="sel.repeat">{{ t('carve.repeat') }}</UiSwitch>
-            <template v-if="sel.repeat">
-              <UiSlider v-model="sel.repeatDensity" :label="t('carve.repeatDensity')" :min="20" :max="100" :step="1" :format="(v) => `${Math.round(v)}%`" />
-              <UiSlider v-model="sel.repeatAngle" :label="t('carve.repeatAngle')" :min="-90" :max="90" :step="0.5" :format="(v) => `${v.toFixed(1)}°`" />
-              <UiSlider v-model="sel.repeatStagger" :label="t('carve.repeatStagger')" :min="0" :max="50" :step="1" :format="(v) => `${Math.round(v)}%`" />
-            </template>
-          </section>
-
-          <UiSwitch v-model="c.servoSafeDither">{{ t('carve.servoSafe') }}</UiSwitch>
-          <UiSlider v-model="c.maxDarkDutyCycle" :label="t('carve.maxDuty')" :min="0.5" :max="0.85" :step="0.01" :disabled="!c.servoSafeDither" :format="(v) => `${Math.round(v * 100)}%`" :ends="[t('carve.maxDutyLow'), t('carve.maxDutyHigh')]" />
-          <div v-if="c.servoSafeDither && c.maxDarkDutyCycle > MAX_SECTOR_DARK" class="notice danger">
-            <UiIcon :path="mdiAlertOctagonOutline" />
-            <div>{{ t('carve.dutyWarn') }}</div>
-          </div>
-          <div v-if="!c.servoSafeDither" class="notice danger">
-            <UiIcon :path="mdiAlertOctagonOutline" />
-            <div>{{ t('carve.servoWarn') }}</div>
-          </div>
+          <CarveSafety />
         </UiAdvanced>
       </div>
 
@@ -130,6 +97,9 @@
 import { mdiAlertOctagonOutline, mdiAlertOutline, mdiArrowDown, mdiArrowUp, mdiClose, mdiContentCopy, mdiFire, mdiImagePlusOutline, mdiPlus } from '@mdi/js'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue'
 import { call, pickComposition, pickCompositionSave, pickImage, pickSavePath } from '../api'
+import CarveSafety from '../components/CarveSafety.vue'
+import LayerLook from '../components/LayerLook.vue'
+import LayerPlace from '../components/LayerPlace.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiButton from '../components/UiButton.vue'
 import UiDialog from '../components/UiDialog.vue'
@@ -151,8 +121,6 @@ const s = useStudio()
 const p = useProcess()
 const comp = useComposition()
 const c = s.config
-/** The servo safety line the build measures against; going past it is allowed but warned. */
-const MAX_SECTOR_DARK = 0.7
 const stem = (f: string) => fileName(f).replace(/\.[^.]+$/, '')
 const formatOffset = (v: number) => (v > 0 ? `+${v.toFixed(1)}%` : `${v.toFixed(1)}%`)
 
@@ -160,12 +128,6 @@ const formatOffset = (v: number) => (v > 0 ? `+${v.toFixed(1)}%` : `${v.toFixed(
 const stack = computed(() => [...comp.layers].reverse())
 const sel = computed(() => comp.selected)
 const title = computed(() => (comp.path ? stem(comp.path) : t('carve.image')))
-/** The selected picture's place in percent of the diameter, for the precise sliders. */
-const percent = reactive({
-  x: computed({ get: () => (sel.value?.x ?? 0) * 100, set: (v) => sel.value && (sel.value.x = v / 100) }),
-  y: computed({ get: () => (sel.value?.y ?? 0) * 100, set: (v) => sel.value && (sel.value.y = v / 100) }),
-  size: computed({ get: () => (sel.value?.size ?? 1) * 100, set: (v) => sel.value && (sel.value.size = v / 100) }),
-})
 function resetLayer() {
   const l = sel.value
   if (!l) return
@@ -486,8 +448,6 @@ onBeforeUnmount(() => {
 .layer .tools { display: flex; opacity: 0; }
 .layer:hover .tools, .layer.on .tools, .layer:focus-within .tools { opacity: 1; }
 a { color: var(--oc-fg-accent); cursor: pointer; }
-.action-link { font-size: var(--oc-text-xs); color: var(--oc-fg-muted); text-decoration: none; cursor: pointer; user-select: none; }
-.action-link:hover { color: var(--oc-fg-default); }
 .side { width: calc(var(--oc-page-gutter) + 348px); flex: none; min-height: 0; display: flex; flex-direction: column; gap: var(--oc-space-md); padding: 64px 0 var(--oc-space-lg) var(--oc-page-gutter); }
 .fields { width: auto; max-width: none; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 .fields .section + .section { margin-top: var(--oc-space-sm); }

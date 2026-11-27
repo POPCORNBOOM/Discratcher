@@ -28,7 +28,8 @@ const demo = {
 }
 /** Two sequences: one bright at the top of the disc, one dark for the rest. */
 function mockWeights(grid: number): ArrayBuffer {
-  const out = new Uint8Array(8 + grid * grid * 4)
+  // One option layer, then the flat layer, left empty (`turntable::weight_layers`).
+  const out = new Uint8Array(8 + 2 * grid * grid * 4)
   new Uint32Array(out.buffer, 0, 2).set([grid, 2])
   for (let i = 0; i < grid * grid; i++) {
     const top = Math.floor(i / grid) < grid / 4 && Math.abs((i % grid) / grid - 0.5) < 0.1
@@ -38,10 +39,11 @@ function mockWeights(grid: number): ArrayBuffer {
 }
 function mockTables(): ArrayBuffer {
   const [options, gt, gr, groove] = [2, 400, 64, 64]
-  const out = new ArrayBuffer(24 + (options * gt * gr + groove) * 12)
-  new Uint32Array(out, 0, 4).set([options, gt, gr, groove])
-  new Float32Array(out, 16, 2).set([2, 0.01])
-  const rgb = new Float32Array(out, 24)
+  // No carve levels in the mock (`turntable::response_tables`).
+  const out = new ArrayBuffer(28 + (options * gt * gr + groove) * 12)
+  new Uint32Array(out, 0, 5).set([options, gt, gr, groove, 0])
+  new Float32Array(out, 20, 2).set([2, 0.01])
+  const rgb = new Float32Array(out, 28)
   for (let i = 0; i < gt * gr; i++) {
     const g = (Math.floor(i / gr) / (gt - 1)) * 2
     const v = Math.exp(-(((g - 0.35) / 0.12) ** 2))

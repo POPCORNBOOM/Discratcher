@@ -1,4 +1,5 @@
-import type { DiscGeometryPreset } from '../types'
+import { readLayer } from '../layers'
+import type { DiscGeometryPreset, Layer } from '../types'
 import {
   DEFAULT_DATA_INNER_MM,
   DEFAULT_DATA_OUTER_MM,
@@ -20,7 +21,8 @@ import {
 export const SCENE_VERSION = 1 as const
 const LAST_SCENE_STORAGE_KEY = 'discratcher.holo.lastScene.v1'
 
-export type HoloPositionMode = 'real' | 'transform'
+/** Real parallax and transform animation solve models; flat carves pictures, as the carve page does. */
+export type HoloPositionMode = 'real' | 'transform' | 'flat'
 
 export interface HoloInkStyle {
   lines: number
@@ -68,10 +70,18 @@ export interface HoloPosition {
   neutral?: number
 }
 
+/**
+ * A picture on a flat position, placed as on the carve page but in the position's own frame:
+ * upright with the position at the top (`disc_core::holo::model3d::SceneImage`).
+ */
+export type HoloImage = Layer & { positionId: string }
+
 export interface HoloScene {
   version: typeof SCENE_VERSION
   positions: HoloPosition[]
   objects: HoloSceneObject[]
+  /** Pictures of the flat positions, bottom first. */
+  images: HoloImage[]
   lampMm?: Vec3
 }
 
@@ -140,11 +150,12 @@ export function cloneScene(scene: HoloScene): HoloScene {
       style: { ...o.style },
       motion: cloneMotion(o.motion),
     })),
+    images: scene.images.map((i) => ({ ...i })),
   }
 }
 
 export function emptyScene(): HoloScene {
-  return { version: SCENE_VERSION, positions: [makePosition(0)], objects: [] }
+  return { version: SCENE_VERSION, positions: [makePosition(0)], objects: [], images: [] }
 }
 
 export function makePosition(
@@ -264,7 +275,7 @@ export function validateScene(raw: unknown): HoloScene {
         typeof q.cropDeg === 'number' && Number.isFinite(q.cropDeg)
           ? Math.min(90, Math.max(5, q.cropDeg))
           : DEFAULT_CROP_DEG
-      const mode: HoloPositionMode = q.mode === 'transform' ? 'transform' : 'real'
+      const mode: HoloPositionMode = q.mode === 'transform' || q.mode === 'flat' ? q.mode : 'real'
       const parallax =
         typeof q.parallax === 'number' && Number.isFinite(q.parallax)
           ? Math.min(6, Math.max(1, round1(q.parallax)))
@@ -304,7 +315,17 @@ export function validateScene(raw: unknown): HoloScene {
       motion: asMotion(o.motion),
     })
   }
-  return Array.isArray(rec.lampMm) ? { version: SCENE_VERSION, positions, objects, lampMm: asVec3(rec.lampMm, LAMP_HELD_MM) } : { version: SCENE_VERSION, positions, objects }
+  // Pictures only belong on flat positions, and models never do.
+  const flatIds = new Set(positions.filter((q) => q.mode === 'flat').map((q) => q.id))
+  const images: HoloImage[] = []
+  for (const item of Array.isArray(rec.images) ? rec.images : []) {
+    const l = readLayer(item)
+    const positionId = (item as Record<string, unknown>).positionId
+    if (l && typeof positionId === 'string' && flatIds.has(positionId)) images.push({ ...l, positionId })
+  }
+  const kept = objects.filter((o) => !flatIds.has(o.positionId))
+  const scene: HoloScene = { version: SCENE_VERSION, positions, objects: kept, images }
+  return Array.isArray(rec.lampMm) ? { ...scene, lampMm: asVec3(rec.lampMm, LAMP_HELD_MM) } : scene
 }
 
 export function saveLastScene(scene: HoloScene): void {

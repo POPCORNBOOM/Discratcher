@@ -248,7 +248,22 @@ impl Composition {
     /// the disc it stays light, so empty space adds no write load.
     #[inline]
     pub fn sample(&self, x: f64, y: f64) -> f32 {
+        self.sample_with_cover(x, y).0
+    }
+
+    /// Grey where pictures cover at least half of the spot, and none where they leave it bare:
+    /// for carving only what is drawn and leaving the rest of the disc alone.
+    #[inline]
+    pub fn sample_covered(&self, x: f64, y: f64) -> Option<f32> {
+        let (grey, cover) = self.sample_with_cover(x, y);
+        (cover >= 0.5).then_some(grey)
+    }
+
+    /// Grey as `sample` gives it, and how much of the spot pictures cover, 0 ..= 1.
+    #[inline]
+    fn sample_with_cover(&self, x: f64, y: f64) -> (f32, f32) {
         let mut grey = 255.0f32;
+        let mut cover = 0.0f32;
         for l in &self.layers {
             let (dx, dy) = (x - l.cx, y - l.cy);
             let (dx, dy) = l.grid.as_ref().map_or((dx, dy), |g| g.tile_offset(dx, dy));
@@ -262,8 +277,9 @@ impl Composition {
             let t = ((luma - 128.0) * l.gain + 128.0 + l.shift).clamp(0.0, 255.0);
             let t = if l.invert { 255.0 - t } else { t };
             grey += (t - grey) * alpha / 255.0;
+            cover += (1.0 - cover) * alpha / 255.0;
         }
-        grey
+        (grey, cover)
     }
 }
 

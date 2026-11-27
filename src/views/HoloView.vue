@@ -28,7 +28,7 @@
         </div>
 
         <!-- Empty state: one drop area + "试试示例" -->
-        <section v-if="!scene.objects.length && !expViews.length" class="section empty-section">
+        <section v-if="!scene.objects.length && !scene.images.length && !expViews.length" class="section empty-section">
           <button
             class="drop"
             :class="{ over: dropHover }"
@@ -50,10 +50,11 @@
           >
             {{ t('holo.trySample') }}
           </UiButton>
+          <UiButton variant="ghost" :icon="mdiImagePlusOutline" :disabled="!!s.job" @click="startWithImage">{{ t('holo.orImage') }}</UiButton>
         </section>
 
         <UiAccordion v-model="openGroup">
-        <template v-if="scene.objects.length">
+        <template v-if="scene.objects.length || scene.images.length">
           <!-- Where on the disc this position is, and how it is solved. -->
           <UiSection name="positions" :icon="mdiCrosshairsGps" :title="t('holo.positions')">
             <template #actions><a v-if="scene.positions.length > 1 && !manyPicked" class="action-link" role="button" tabindex="0" @click="removePosition" @keydown.enter="removePosition">{{ t('holo.removePosition') }}</a></template>
@@ -65,6 +66,7 @@
             <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" :disabled="manyPicked" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
             <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
             <UiSlider
+              v-if="position.mode !== 'flat'"
               :model-value="neutralNow"
               :label="t('holo.chroma')"
               :min="0"
@@ -88,7 +90,7 @@
               @pointerdown="beginControlEdit"
               @update:model-value="setParallax"
             />
-            <template v-else>
+            <template v-else-if="position.mode === 'transform'">
               <UiSlider :model-value="tiltNow.deg" :disabled="manyPicked" :label="t('holo.tiltRange')" :min="1" :max="MAX_TRANSFORM_TILT_DEG" :step="0.5" :format="(x) => t('holo.tiltRangeWords', { n: x })" :ends="[t('holo.tiltLow'), t('holo.tiltHigh')]" @pointerdown="beginControlEdit" @update:model-value="setTilt" />
               <a v-if="position.tiltDeg > 0" class="action-link end" role="button" tabindex="0" @click="setTilt(0)" @keydown.enter="setTilt(0)">{{ t('holo.tiltAuto', { n: tiltNow.autoDeg }) }}</a>
             </template>
@@ -98,7 +100,52 @@
             </div>
           </UiSection>
 
-          <UiSection name="models" :icon="mdiCubeOutline" :title="t('holo.models')">
+          <!-- A flat position carves pictures, as the carve page does. -->
+          <UiSection v-if="position.mode === 'flat'" name="models" :icon="mdiImageOutline" :title="t('holo.images')">
+            <div class="obj-list" role="listbox" :aria-label="t('holo.images')">
+              <div
+                v-for="(img, i) in positionImagesTop"
+                :key="img.id"
+                class="obj-row"
+                role="option"
+                tabindex="0"
+                :aria-selected="img.id === selectedImageId"
+                :class="{ on: img.id === selectedImageId }"
+                @click="selectedImageId = img.id"
+                @keydown.enter.prevent="selectedImageId = img.id"
+                @keydown.space.prevent="selectedImageId = img.id"
+              >
+                <img v-if="pictures[img.path]" class="thumb" :src="pictures[img.path].thumbnail" alt="" />
+                <span v-else class="thumb" />
+                <span class="grow ellipsis" :data-tooltip="img.name" data-tooltip-overflow>{{ img.name }}</span>
+                <span class="obj-tools">
+                  <UiButton icon-only variant="ghost" :icon="mdiArrowUp" :aria-label="t('carve.raise')" :data-tooltip="t('carve.raise')" :disabled="i === 0" @click.stop="restackImage(img.id, 1)" />
+                  <UiButton icon-only variant="ghost" :icon="mdiArrowDown" :aria-label="t('carve.lower')" :data-tooltip="t('carve.lower')" :disabled="i === positionImagesTop.length - 1" @click.stop="restackImage(img.id, -1)" />
+                  <UiButton icon-only variant="ghost" :icon="mdiContentCopy" :aria-label="t('carve.duplicate')" :data-tooltip="t('carve.duplicate')" :disabled="imagesFull" @click.stop="duplicateImage(img.id)" />
+                  <UiButton icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('holo.delete')" :data-tooltip="t('holo.delete')" @click.stop="removeImage(img.id)" />
+                </span>
+              </div>
+            </div>
+            <UiButton variant="ghost" :icon="mdiPlus" :disabled="imagesFull || !!s.job" :data-tooltip="imagesFull ? t('carve.full') : undefined" @click="addImage">{{ t('holo.addImage') }}</UiButton>
+            <div v-if="selectedImage && pictures[selectedImage.path]?.suggestInvert && !selectedImage.invert" class="notice warn">
+              <UiIcon :path="mdiAlertOutline" />
+              <div class="grow">
+                {{ t('carve.darkWarn') }}
+                <a role="button" tabindex="0" @click="invertSelectedImage" @keydown.enter="invertSelectedImage">{{ t('carve.invertWhite') }}</a>
+              </div>
+            </div>
+            <div v-if="selectedImage" class="image-controls" @pointerdown.capture="beginControlEdit">
+              <LayerPlace :layer="selectedImage" @reset="resetImage" />
+              <UiAdvanced :label="t('holo.toneEffects')">
+                <LayerLook :layer="selectedImage" />
+              </UiAdvanced>
+            </div>
+            <UiAdvanced :label="t('holo.carveSafety')">
+              <CarveSafety />
+            </UiAdvanced>
+          </UiSection>
+
+          <UiSection v-else name="models" :icon="mdiCubeOutline" :title="t('holo.models')">
             <div class="obj-list" role="listbox" :aria-label="t('holo.models')">
               <div
                 v-for="obj in positionObjects"
@@ -397,7 +444,7 @@
         <span class="grow" />
         <div class="toolbar">
           <UiButton icon-only variant="ghost" :icon="mdiFolderOpenOutline" :aria-label="t('holo.openScene')" :data-tooltip="`${t('holo.openScene')} (${modKey}O)`" @click="openSceneFile" />
-          <UiButton icon-only variant="ghost" :icon="mdiContentSaveOutline" :disabled="!scene.objects.length" :aria-label="t('holo.saveScene')" :data-tooltip="`${t('holo.saveScene')} (${modKey}S)`" @click="saveSceneFile" />
+          <UiButton icon-only variant="ghost" :icon="mdiContentSaveOutline" :disabled="!scene.objects.length && !scene.images.length" :aria-label="t('holo.saveScene')" :data-tooltip="`${t('holo.saveScene')} (${modKey}S)`" @click="saveSceneFile" />
         </div>
 
         <Transition name="bar" mode="out-in">
@@ -520,6 +567,9 @@
           :lamp-mm="opts.lampMm"
           :distance-mm="opts.distanceMm"
           :preview-t="previewT"
+          :images="scene.images"
+          :thumbnails="thumbnails"
+          :selected-image-id="position.mode === 'flat' ? selectedImageId : null"
           @select="selectObject"
           @position="goToPosition"
           @transform-start="onTransformStart"
@@ -530,7 +580,7 @@
           <UiIcon :path="mdiCubeOutline" :size="28" />
           <span>{{ t('holo.dropHint') }}</span>
         </div>
-        <div v-if="!scene.objects.length && !loadingMesh" class="hint">{{ t('holo.dropHint') }}</div>
+        <div v-if="!scene.objects.length && !scene.images.length && !loadingMesh" class="hint">{{ t('holo.dropHint') }}</div>
         <div v-if="loadingMesh" class="hint">{{ t('holo.loadingModel') }}</div>
         <div class="float legend small muted" aria-hidden="true">
           <span class="legend-name">{{ t('holo.legendDepth') }}</span>
@@ -561,6 +611,13 @@
       </div>
       </Transition>
     </div>
+    <UiDialog v-if="modeChange" :title="t('holo.modeChangeTitle')" @close="modeChange = null">
+      <p>{{ modeChange === 'flat' ? t('holo.modeDropsModels', { n: positionObjects.length }) : t('holo.modeDropsImages', { n: positionImages.length }) }}</p>
+      <template #actions>
+        <UiButton variant="ghost" @click="modeChange = null">{{ t('common.cancel') }}</UiButton>
+        <UiButton variant="danger" @click="confirmModeChange">{{ t('holo.modeChangeConfirm') }}</UiButton>
+      </template>
+    </UiDialog>
   </div>
 </template>
 
@@ -568,6 +625,8 @@
 import {
   mdiAlertOctagonOutline,
   mdiAlertOutline,
+  mdiArrowDown,
+  mdiArrowUp,
   mdiClose,
   mdiContentCopy,
   mdiContentSaveOutline,
@@ -581,6 +640,8 @@ import {
   mdiFlaskOutline,
   mdiFolderOpenOutline,
   mdiGrid,
+  mdiImageOutline,
+  mdiImagePlusOutline,
   mdiLightbulbOutline,
   mdiMouseLeftClickOutline,
   mdiMouseScrollWheel,
@@ -602,6 +663,9 @@ import UiButton from '../components/UiButton.vue'
 import UiIcon from '../components/UiIcon.vue'
 import UiAccordion from '../components/UiAccordion.vue'
 import UiSection from '../components/UiSection.vue'
+import CarveSafety from '../components/CarveSafety.vue'
+import LayerLook from '../components/LayerLook.vue'
+import LayerPlace from '../components/LayerPlace.vue'
 import UiSegmented from '../components/UiSegmented.vue'
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue'
 import UiSlider from '../components/UiSlider.vue'
@@ -662,7 +726,10 @@ import { t } from '../i18n'
 import { notifyError, notifySuccess } from '../notices'
 import { useProcess, type StepContext } from '../stores/process'
 import { useStudio } from '../stores/studio'
-import type { DiscGeometryPreset } from '../types'
+import type { ArtworkAnalysis, DiscGeometryPreset } from '../types'
+import { copyLayer, coverSize, makeLayer, restacked } from '../layers'
+import { MAX_LAYERS } from '../discRenderer'
+import UiDialog from '../components/UiDialog.vue'
 
 type LightMode = 'flash' | 'lamp' | 'far'
 type LampPreset = 'held' | 'ceiling' | 'custom'
@@ -830,7 +897,7 @@ let previewTimer = 0
 const isDvd = computed(() => !!s.preset && s.preset.media !== 'cd')
 const ready = computed(() => isDvd.value && !s.job)
 const visibleObjects = computed(() => scene.value.objects.filter((o) => o.visible))
-const hasPreviewSource = computed(() => expViews.value.length > 0 || visibleObjects.value.length > 0)
+const hasPreviewSource = computed(() => expViews.value.length > 0 || visibleObjects.value.length > 0 || flatImages.value.length > 0)
 const canBurn = computed(() => ready.value && hasPreviewSource.value)
 const radii = computed(() => discRadiiMm(s.preset))
 const selectedObj = computed(() => scene.value.objects.find((o) => o.id === selectedId.value) ?? null)
@@ -852,6 +919,7 @@ const lightModeOptions = computed<UiSelectOption[]>(() => [
 const calcModeOptions = computed<UiSelectOption[]>(() => [
   { value: 'real', label: t('holo.calcModeReal') },
   { value: 'transform', label: t('holo.calcModeTransform') },
+  { value: 'flat', label: t('holo.calcModeFlat') },
 ])
 const motionPresetLabels: Record<MotionPresetId, string> = {
   none: 'holo.motionNone',
@@ -936,6 +1004,10 @@ async function ensureMeshesLoaded(objects: HoloSceneObject[]): Promise<string[]>
 }
 
 async function addModelPath(path: string, displayName?: string) {
+  if (position.value.mode === 'flat') {
+    notifyError(t('holo.flatNoModels'))
+    return
+  }
   loadingMesh.value = true
   loadError.value = ''
   try {
@@ -1052,10 +1124,123 @@ function setCrop(deg: number) {
   for (const q of pickedPositions.value) q.cropDeg = Math.min(90, Math.max(5, Math.round(deg)))
 }
 
+/** How flat pictures are dithered: the carve page's burn safety settings. */
+function carveTone() {
+  return { servoSafeDither: s.config.servoSafeDither, maxDarkDutyCycle: s.config.maxDarkDutyCycle }
+}
+
+/** A mode change waiting for the user to agree to drop what the old mode had. */
+const modeChange = ref<HoloPositionMode | null>(null)
+
+/** Models and pictures do not share a position: switching drops the other kind, after asking. */
 function setMode(mode: HoloPositionMode) {
   if (position.value.mode === mode) return
+  const losing = mode === 'flat' ? positionObjects.value.length : position.value.mode === 'flat' ? positionImages.value.length : 0
+  if (losing) modeChange.value = mode
+  else applyMode(mode)
+}
+
+function confirmModeChange() {
+  const mode = modeChange.value
+  modeChange.value = null
+  if (mode) applyMode(mode)
+}
+
+function applyMode(mode: HoloPositionMode) {
   pushHistory()
+  const id = position.value.id
+  if (mode === 'flat') {
+    scene.value.objects = scene.value.objects.filter((o) => o.positionId !== id)
+    if (selectedId.value && !scene.value.objects.some((o) => o.id === selectedId.value)) selectedId.value = null
+  } else if (position.value.mode === 'flat') {
+    scene.value.images = scene.value.images.filter((i) => i.positionId !== id)
+  }
   position.value.mode = mode
+}
+
+// ---- Pictures of flat positions ----
+/** Every flat position's pictures, bottom first. */
+const flatImages = computed(() => scene.value.images.filter((i) => scene.value.positions.some((q) => q.id === i.positionId && q.mode === 'flat')))
+const positionImages = computed(() => scene.value.images.filter((i) => i.positionId === position.value.id))
+/** Top first, as layer lists read. */
+const positionImagesTop = computed(() => [...positionImages.value].reverse())
+const imagesFull = computed(() => positionImages.value.length >= MAX_LAYERS)
+const selectedImageId = ref<string | null>(null)
+const selectedImage = computed(() => positionImages.value.find((i) => i.id === selectedImageId.value) ?? null)
+/** Thumbnails and tone hints, by path. */
+const pictures = ref<Record<string, ArtworkAnalysis>>({})
+const thumbnails = computed(() => Object.fromEntries(Object.entries(pictures.value).map(([p, a]) => [p, a.thumbnail])))
+watch(() => [...new Set(scene.value.images.map((i) => i.path))].join('\n'), async (joined) => {
+  for (const path of joined ? joined.split('\n') : []) {
+    if (pictures.value[path]) continue
+    try {
+      pictures.value[path] = await call<ArtworkAnalysis>('analyze_artwork', { imagePath: path })
+    } catch {
+      // Shown as missing when the scene is opened; a picture gone since keeps a blank thumbnail.
+    }
+  }
+}, { immediate: true })
+
+async function addImage() {
+  if (imagesFull.value) return
+  const file = await pickImage()
+  if (!file) return
+  try {
+    const a = await call<ArtworkAnalysis>('analyze_artwork', { imagePath: file })
+    pictures.value[file] = a
+    pushHistory()
+    const l = makeLayer(file, a, positionImages.value.length === 0)
+    scene.value.images.push({ ...l, positionId: position.value.id })
+    selectedImageId.value = l.id
+    tab.value = 'edit'
+  } catch (e) {
+    notifyError(String(e))
+  }
+}
+
+/** From the empty page: this position becomes flat, and gets its first picture. */
+async function startWithImage() {
+  if (position.value.mode !== 'flat') position.value.mode = 'flat'
+  openGroup.value = 'models'
+  await addImage()
+}
+
+function removeImage(id: string) {
+  pushHistory()
+  scene.value.images = scene.value.images.filter((i) => i.id !== id)
+  if (selectedImageId.value === id) selectedImageId.value = null
+}
+
+function duplicateImage(id: string) {
+  const at = scene.value.images.findIndex((i) => i.id === id)
+  if (at < 0 || imagesFull.value) return
+  pushHistory()
+  const copy = copyLayer(scene.value.images[at])
+  scene.value.images.splice(at + 1, 0, copy)
+  selectedImageId.value = copy.id
+}
+
+/** `by` 1 brings the picture forward among its position's, -1 sends it back. */
+function restackImage(id: string, by: 1 | -1) {
+  const mine = restacked(positionImages.value, id, by)
+  if (!mine) return
+  pushHistory()
+  // Other positions' pictures keep their places; this position's take its slots in the new order.
+  let k = 0
+  scene.value.images = scene.value.images.map((i) => (i.positionId === position.value.id ? mine[k++] : i))
+}
+
+function resetImage() {
+  const l = selectedImage.value
+  if (!l) return
+  pushHistory()
+  Object.assign(l, { x: 0, y: 0, rotationDeg: 0, size: positionImages.value[0] === l ? coverSize(l) : 0.5 })
+}
+
+function invertSelectedImage() {
+  if (!selectedImage.value) return
+  pushHistory()
+  selectedImage.value.invert = true
 }
 
 /** The position's neutral colour, or its mode's default (`turntable::default_neutral`). */
@@ -1321,10 +1506,10 @@ watch(() => scene.value, (sc) => {
 
 // ---- Save / Open scene JSON project file ----
 async function saveSceneFile() {
-  if (!scene.value.objects.length) return
+  if (!scene.value.objects.length && !scene.value.images.length) return
   const defaultName = sceneFilePath.value
     ? fileName(sceneFilePath.value)
-    : `${scene.value.objects[0].name || 'scene'}.holo.json`
+    : `${(scene.value.objects[0] ?? scene.value.images[0]).name.replace(/\.[^.]+$/, '') || 'scene'}.holo.json`
   const path = await pickHoloSceneSave(defaultName)
   if (!path) return
   try {
@@ -1340,10 +1525,19 @@ async function saveSceneFile() {
 
 async function applyLoadedScene(loaded: HoloScene, sourcePath: string | null) {
   const missing = await ensureMeshesLoaded(loaded.objects)
+  // A picture is there if it can be read.
+  for (const path of new Set(loaded.images.map((i) => i.path))) {
+    try {
+      pictures.value[path] = await call<ArtworkAnalysis>('analyze_artwork', { imagePath: path })
+    } catch {
+      missing.push(path)
+    }
+  }
   const missingSet = new Set(missing)
   const kept = loaded.objects.filter((o) => !missingSet.has(o.path))
+  const images = loaded.images.filter((i) => !missingSet.has(i.path))
   missingFiles.value = missing.map((p) => fileName(p))
-  scene.value = { version: SCENE_VERSION, positions: loaded.positions, objects: kept, ...(loaded.lampMm ? { lampMm: loaded.lampMm } : {}) }
+  scene.value = { version: SCENE_VERSION, positions: loaded.positions, objects: kept, images, ...(loaded.lampMm ? { lampMm: loaded.lampMm } : {}) }
   positionId.value = loaded.positions[0].id
   lookTurn.value = loaded.positions[0].phiDeg
   selectedId.value = kept.find((o) => o.positionId === positionId.value)?.id ?? null
@@ -1539,7 +1733,7 @@ async function solveScene() {
         if (version !== sceneVersion) break
         overlapping.value = solved.overlapping
         tilts.value = solved.tilts ?? []
-        weights.value = await call<ArrayBuffer>('holo_scene_weights', { ...request, options })
+        weights.value = await call<ArrayBuffer>('holo_scene_weights', { ...request, options, tone: carveTone() })
         if (grid === GRID) solvedVersion = version
       }
     }
@@ -1631,23 +1825,27 @@ function burnDesign() {
 
   const guidePos = positionObjects.value.some((o) => o.visible)
     ? position.value
-    : sceneSnapshot.positions.find((q) => sceneSnapshot.objects.some((o) => o.visible && o.positionId === q.id)) ?? position.value
+    : sceneSnapshot.positions.find((q) => sceneSnapshot.objects.some((o) => o.visible && o.positionId === q.id)) ?? null
+  // Flat pictures show in any light; a disc of nothing else needs no viewing guide.
+  const tone = carveTone()
 
   p.openBurn({
     title: t('holo.burnTitle'),
     note: usingExp
       ? t('holo.burnNote', { n: expSnapshot.length })
-      : t('holo.burnNoteModels', { n: visibleObjects.value.length }),
+      : visibleObjects.value.length
+        ? t('holo.burnNoteModels', { n: visibleObjects.value.length })
+        : t('holo.burnNoteImages', { n: flatImages.value.length }),
     fileName: 'holo.iso',
     prepareLabel: t('holo.compose'),
-    viewingGuide: usingExp ? 'real' : guidePos.mode,
-    viewingTiltDeg: guidePos.tiltDeg > 0 ? guidePos.tiltDeg : (tilts.value.find((x) => x.id === guidePos.id)?.autoDeg ?? DEFAULT_TRANSFORM_TILT_DEG),
+    viewingGuide: usingExp ? 'real' : guidePos ? guidePos.mode : false,
+    viewingTiltDeg: guidePos && guidePos.tiltDeg > 0 ? guidePos.tiltDeg : (tilts.value.find((x) => x.id === guidePos?.id)?.autoDeg ?? DEFAULT_TRANSFORM_TILT_DEG),
     prepare: async (path: string, ctx: StepContext) => {
       if (usingExp) {
         await call('holo_build_design_iso', { preset, input: { views: expSnapshot, chromaWeight, exposure, grid }, outputIsoPath: path })
       } else {
         ctx.report(5, t('holo.previewSolve'))
-        await call('holo_build_scene_iso', { preset, scene: sceneSnapshot, options: sceneOpts, outputIsoPath: path })
+        await call('holo_build_scene_iso', { preset, scene: sceneSnapshot, options: sceneOpts, tone, outputIsoPath: path })
       }
     },
   })
@@ -1712,6 +1910,10 @@ watch(scene, (val) => {
 }, { deep: true })
 
 watch([opts, () => s.preset], sceneChanged, { deep: true })
+// Flat pictures are previewed with the burn safety they will be burned with.
+watch(() => [s.config.servoSafeDither, s.config.maxDarkDutyCycle], () => {
+  if (flatImages.value.length) sceneChanged()
+})
 
 watch([expViews, expOpts], () => {
   if (tab.value === 'preview') requestFrame()
@@ -1748,7 +1950,7 @@ onMounted(async () => {
   void setupTauriFileDrop()
 
   const restored = loadLastScene()
-  if (restored && restored.objects.length) {
+  if (restored && (restored.objects.length || restored.images.length)) {
     await applyLoadedScene(restored, null)
   }
 })
@@ -1771,6 +1973,8 @@ onBeforeUnmount(() => {
 .drop:disabled { opacity: var(--oc-opacity-disabled); }
 .drop-inner { display: flex; flex-direction: column; align-items: center; gap: var(--oc-space-2xs); }
 .obj-list { display: flex; flex-direction: column; gap: 2px; }
+.image-controls { display: flex; flex-direction: column; gap: var(--oc-space-md); }
+img.thumb { object-fit: cover; }
 .obj-row { display: flex; align-items: center; gap: var(--oc-space-sm); height: 40px; padding: 0 var(--oc-space-2xs) 0 var(--oc-space-xs); border-radius: var(--oc-radius-control); cursor: pointer; user-select: none; }
 .obj-row:hover { background: var(--oc-bg-hover); }
 .obj-row.on { background: var(--oc-bg-selected, var(--oc-bg-hover)); box-shadow: inset 0 0 0 1px var(--oc-accent); }
@@ -1778,8 +1982,6 @@ onBeforeUnmount(() => {
 .thumb { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 4px; background: var(--oc-bg-base); }
 .obj-tools { display: flex; opacity: 0; }
 .obj-row:hover .obj-tools, .obj-row.on .obj-tools, .obj-row:focus-within .obj-tools { opacity: 1; }
-.action-link { font-size: var(--oc-text-xs); color: var(--oc-fg-muted); text-decoration: none; cursor: pointer; user-select: none; }
-.action-link:hover { color: var(--oc-fg-default); }
 .positions { display: flex; flex-wrap: wrap; gap: 2px; }
 /* Square, like the add button beside them. */
 .positions .pos { width: var(--oc-size-md); padding: 0; }

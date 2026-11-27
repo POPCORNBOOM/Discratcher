@@ -71,7 +71,7 @@ out vec4 color;
 uniform sampler2DArray weights, looks;
 uniform sampler2D groove;
 uniform vec3 eye, lamp;
-uniform float outer, gMax, spread, plain;
+uniform float outer, gMax, spread, plain, carveBase, carveLevels;
 uniform vec2 bins;
 void main() {
   vec3 p = vec3(at, 0.0);
@@ -88,6 +88,14 @@ void main() {
   }
   // What the drive writes of its own accord, which nobody chooses.
   c = mix(c, textureLod(looks, vec3(look, plain), 0.0).rgb, 0.153);
+  // A flat position's picture: the carve page's dithered bytes at this spot's share of light
+  // bytes, as simulated through the same optics (design::carve_looks).
+  vec4 picture = textureLod(weights, vec3(cell, float(LAYERS)), 0.0);
+  if (picture.g > 0.5 && carveLevels > 1.0) {
+    float at = picture.r * (carveLevels - 1.0);
+    float i0 = min(floor(at), carveLevels - 2.0);
+    c = mix(textureLod(looks, vec3(look, carveBase + i0), 0.0).rgb, textureLod(looks, vec3(look, carveBase + i0 + 1.0), 0.0).rgb, at - i0);
+  }
   c += textureLod(groove, vec2(min(gr / gMax, 1.0), 0.5), 0.0).rgb * exp(-gt * gt / (2.0 * spread * spread));
   c = clamp(c, 0.0, 1.0);
   color = vec4(mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)), 1.0);
@@ -111,7 +119,8 @@ function loadWeights() {
   if (!material || !props.weights) return
   const [grid, options] = new Uint32Array(props.weights, 0, 2)
   const layers = Math.ceil(options / 4)
-  const tex = new DataArrayTexture(new Uint8Array(props.weights, 8), grid, grid, layers)
+  // One more layer after the options: the flat positions' greys (`turntable::weight_layers`).
+  const tex = new DataArrayTexture(new Uint8Array(props.weights, 8), grid, grid, layers + 1)
   tex.format = RGBAFormat
   tex.minFilter = tex.magFilter = NearestFilter
   tex.unpackAlignment = 1
@@ -127,11 +136,13 @@ function loadWeights() {
 
 function loadTables() {
   if (!material || !props.tables) return
-  const [options, gtBins, grBins, grooves] = new Uint32Array(props.tables, 0, 4)
-  const [gMax, spread] = new Float32Array(props.tables, 16, 2)
-  const texels = options * gtBins * grBins
-  const looks = new DataArrayTexture(halves(new Float32Array(props.tables, 24, texels * 3), texels), grBins, gtBins, options)
-  const groove = new DataTexture(halves(new Float32Array(props.tables, 24 + texels * 12, grooves * 3), grooves), grooves, 1)
+  // `turntable::response_tables`: the options, then the carve page's bytes at each level.
+  const [options, gtBins, grBins, grooves, carveLevels] = new Uint32Array(props.tables, 0, 5)
+  const [gMax, spread] = new Float32Array(props.tables, 20, 2)
+  const layers = options + carveLevels
+  const texels = layers * gtBins * grBins
+  const looks = new DataArrayTexture(halves(new Float32Array(props.tables, 28, texels * 3), texels), grBins, gtBins, layers)
+  const groove = new DataTexture(halves(new Float32Array(props.tables, 28 + texels * 12, grooves * 3), grooves), grooves, 1)
   for (const t of [looks, groove]) {
     t.format = RGBAFormat
     t.type = HalfFloatType
@@ -145,6 +156,8 @@ function loadTables() {
   material.uniforms.gMax.value = gMax
   material.uniforms.spread.value = spread
   material.uniforms.plain.value = options - 1
+  material.uniforms.carveBase.value = options
+  material.uniforms.carveLevels.value = carveLevels
   material.uniforms.bins.value = [grBins, gtBins]
   dirty = true
 }
@@ -277,7 +290,7 @@ onMounted(() => {
     uniforms: {
       weights: { value: null }, looks: { value: null }, groove: { value: null },
       eye: { value: new Vector3() }, lamp: { value: new Vector3() },
-      outer: { value: 1 }, gMax: { value: 2 }, spread: { value: 0.01 }, plain: { value: 0 }, bins: { value: [1, 1] },
+      outer: { value: 1 }, gMax: { value: 2 }, spread: { value: 0.01 }, plain: { value: 0 }, carveBase: { value: 0 }, carveLevels: { value: 0 }, bins: { value: [1, 1] },
     },
   })
   buildDisc()
