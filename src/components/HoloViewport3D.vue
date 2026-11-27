@@ -1084,16 +1084,17 @@ function routeOrbitButtons(e: PointerEvent) {
 let fingersUntil = 0
 
 /**
- * Whether a scroll comes from a trackpad or a Magic Mouse: smooth, often sideways, its legacy
- * delta not in a wheel's whole notches of 120. A pinch (ctrlKey) is left to the zoom.
+ * Whether a scroll comes from a trackpad or a Magic Mouse: only fingers move sideways. A mouse
+ * wheel never does (macOS accelerates its steps, so their size tells nothing), so it always zooms;
+ * a gesture once seen to be fingers stays so until it pauses. A pinch (ctrlKey) is left to the zoom.
  */
 function fromFingers(e: WheelEvent): boolean {
   const now = performance.now()
-  if (now < fingersUntil) return true
-  const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY
-  const fingers = e.deltaMode === 0 && (e.deltaX !== 0 || (legacy !== undefined ? legacy % 120 !== 0 : !Number.isInteger(e.deltaY)))
-  if (fingers) fingersUntil = now + 300
-  return fingers
+  if (now < fingersUntil || (e.deltaMode === 0 && e.deltaX !== 0)) {
+    fingersUntil = now + 300
+    return true
+  }
+  return false
 }
 
 /**
