@@ -16,3 +16,4 @@ pub mod lightfield;
 pub mod ink;
 pub mod turntable;
 pub mod flat;
+pub mod project;

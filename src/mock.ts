@@ -241,14 +241,14 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     case 'holo_build_scene_iso':
       await wait(300)
       return { outputIsoPath: a.outputIsoPath, totalSectors: 2295104, usage: [] }
-    case 'holo_save_scene': {
-      holoScenes.set(String(a.path), JSON.stringify(a.scene))
-      return null
+    case 'design_save': {
+      holoScenes.set(`${a.dir}/design.json`, JSON.stringify(a.scene))
+      return a.scene
     }
-    case 'holo_open_scene': {
+    case 'design_open': {
       const raw = holoScenes.get(String(a.path))
-      if (!raw) throw '不是有效的全息场景文件'
-      return JSON.parse(raw)
+      if (!raw) throw '不是有效的设计文件'
+      return { scene: JSON.parse(raw), dir: String(a.path).replace(/\/design\.json$/, '') }
     }
     case 'cache_iso_path': return `/cache/${a.name}`
     case 'burn_iso_to_drive':

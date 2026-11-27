@@ -617,30 +617,27 @@ async fn holo_build_scene_iso(
     .await
 }
 
-/// Atomically save a versioned 3D hologram scene JSON project file.
+/// Save a design into its folder, bringing every file it uses inside. Returns the scene with its
+/// paths pointing at those copies.
 #[tauri::command]
-async fn holo_save_scene(path: String, scene: disc_core::holo::model3d::Scene) -> Result<(), String> {
-    blocking(move || {
-        if scene.version != disc_core::holo::model3d::SCENE_VERSION {
-            return Err(format!("不支持的场景版本：{}", scene.version));
-        }
-        let text = serde_json::to_vec_pretty(&scene).map_err(|e| e.to_string())?;
-        write_atomic(Path::new(&path), &text)
-    })
-    .await
+async fn design_save(dir: String, scene: disc_core::holo::model3d::Scene) -> Result<disc_core::holo::model3d::Scene, String> {
+    blocking(move || disc_core::holo::project::save(Path::new(&dir), &scene)).await
 }
 
-/// Open and validate a versioned 3D hologram scene JSON project file.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenedDesign {
+    scene: disc_core::holo::model3d::Scene,
+    /// The design's folder; none for a scene file from before designs were folders.
+    dir: Option<String>,
+}
+
+/// Open a design folder, its `design.json`, or an older scene file.
 #[tauri::command]
-async fn holo_open_scene(path: String) -> Result<disc_core::holo::model3d::Scene, String> {
+async fn design_open(path: String) -> Result<OpenedDesign, String> {
     blocking(move || {
-        let bytes = std::fs::read(&path).map_err(|e| format!("无法读取场景文件：{e}"))?;
-        let scene: disc_core::holo::model3d::Scene =
-            serde_json::from_slice(&bytes).map_err(|e| format!("不是有效的全息场景文件：{e}"))?;
-        if scene.version != disc_core::holo::model3d::SCENE_VERSION {
-            return Err(format!("不支持的场景版本：{}", scene.version));
-        }
-        Ok(scene)
+        let (scene, dir) = disc_core::holo::project::open(Path::new(&path))?;
+        Ok(OpenedDesign { scene, dir: dir.map(|d| d.to_string_lossy().into()) })
     })
     .await
 }
@@ -736,8 +733,8 @@ pub fn run() {
             holo_scene_weights,
             holo_response_tables,
             holo_build_scene_iso,
-            holo_save_scene,
-            holo_open_scene,
+            design_save,
+            design_open,
             cache_iso_path,
             remove_cached_iso,
         ])

@@ -7,7 +7,10 @@
   >
     <aside class="side">
       <div class="flow fields">
-        <h1>{{ t('holo.title') }}</h1>
+        <div class="design-title">
+          <h1>{{ t('holo.title') }}</h1>
+          <div class="small muted ellipsis" :data-tooltip="designDir ?? undefined">{{ designName }}<template v-if="dirty"> · {{ t('carve.unsaved') }}</template></div>
+        </div>
 
         <div v-if="missingFiles.length" class="notice warn">
           <UiIcon :path="mdiAlertOutline" />
@@ -28,7 +31,7 @@
         </div>
 
         <!-- Empty state: one drop area + "试试示例" -->
-        <section v-if="!scene.objects.length && !scene.images.length && !expViews.length" class="section empty-section">
+        <section v-if="!scene.objects.length && !scene.images.length && scene.positions.length < 2 && !expViews.length" class="section empty-section">
           <button
             class="drop"
             :class="{ over: dropHover }"
@@ -54,7 +57,7 @@
         </section>
 
         <UiAccordion v-model="openGroup">
-        <template v-if="scene.objects.length || scene.images.length">
+        <template v-if="scene.objects.length || scene.images.length || scene.positions.length > 1">
           <!-- Where on the disc this position is, and how it is solved. -->
           <UiSection name="positions" :icon="mdiCrosshairsGps" :title="t('holo.positions')">
             <template #actions><a v-if="scene.positions.length > 1 && !manyPicked" class="action-link" role="button" tabindex="0" @click="removePosition" @keydown.enter="removePosition">{{ t('holo.removePosition') }}</a></template>
@@ -443,8 +446,9 @@
         <UiSegmented v-model="tab" class="mode-seg" :options="tabOptions" />
         <span class="grow" />
         <div class="toolbar">
-          <UiButton icon-only variant="ghost" :icon="mdiFolderOpenOutline" :aria-label="t('holo.openScene')" :data-tooltip="`${t('holo.openScene')} (${modKey}O)`" @click="openSceneFile" />
-          <UiButton icon-only variant="ghost" :icon="mdiContentSaveOutline" :disabled="!scene.objects.length && !scene.images.length" :aria-label="t('holo.saveScene')" :data-tooltip="`${t('holo.saveScene')} (${modKey}S)`" @click="saveSceneFile" />
+          <UiButton icon-only variant="ghost" :icon="mdiFilePlusOutline" :aria-label="t('holo.newDesign')" :data-tooltip="t('holo.newDesign')" @click="guardUnsaved(() => (templatePicker = true))" />
+          <UiButton icon-only variant="ghost" :icon="mdiFolderOpenOutline" :aria-label="t('holo.openDesign')" :data-tooltip="`${t('holo.openDesign')} (${modKey}O)`" @click="guardUnsaved(openDesign)" />
+          <UiButton icon-only variant="ghost" :icon="mdiContentSaveOutline" :aria-label="t('holo.saveDesign')" :data-tooltip="`${t('holo.saveDesign')} (${modKey}S)`" @click="saveDesign()" />
         </div>
 
         <Transition name="bar" mode="out-in">
@@ -611,6 +615,22 @@
       </div>
       </Transition>
     </div>
+    <UiDialog v-if="templatePicker" :title="t('holo.chooseTemplate')" @close="templatePicker = false">
+      <div class="templates">
+        <button v-for="tpl in DESIGN_TEMPLATES" :key="tpl.id" type="button" class="template" @click="newDesign(tpl)">
+          <UiIcon :path="tpl.icon" :size="24" />
+          <span class="title">{{ t(tpl.name) }}</span>
+          <span class="small muted">{{ t(tpl.description) }}</span>
+        </button>
+      </div>
+    </UiDialog>
+    <UiDialog v-if="pendingDiscard" :title="t('holo.discardTitle')" @close="pendingDiscard = null">
+      <p>{{ t('holo.discardBody') }}</p>
+      <template #actions>
+        <UiButton variant="ghost" @click="pendingDiscard = null">{{ t('common.cancel') }}</UiButton>
+        <UiButton variant="danger" @click="discardAndGo">{{ t('holo.discard') }}</UiButton>
+      </template>
+    </UiDialog>
     <UiDialog v-if="modeChange" :title="t('holo.modeChangeTitle')" @close="modeChange = null">
       <p>{{ modeChange === 'flat' ? t('holo.modeDropsModels', { n: positionObjects.length }) : t('holo.modeDropsImages', { n: positionImages.length }) }}</p>
       <template #actions>
@@ -636,6 +656,7 @@ import {
   mdiCursorMove,
   mdiEyeOffOutline,
   mdiEyeOutline,
+  mdiFilePlusOutline,
   mdiFire,
   mdiFlaskOutline,
   mdiFolderOpenOutline,
@@ -655,7 +676,8 @@ import {
   mdiUndo,
 } from '@mdi/js'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, shallowRef, watch } from 'vue'
-import { call, pickHoloScene, pickHoloSceneSave, pickImage, pickModel } from '../api'
+import { call, pickDesign, pickDesignFolder, pickImage, pickModel } from '../api'
+import { DESIGN_TEMPLATES, type DesignTemplate } from '../holo/templates'
 import HoloPreview from '../components/HoloPreview.vue'
 import HoloViewport3D, { type GizmoMode } from '../components/HoloViewport3D.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
@@ -813,7 +835,6 @@ const weights = shallowRef<ArrayBuffer | null>(null)
 const tables = shallowRef<ArrayBuffer | null>(null)
 let tablesFor = ''
 const previewVisited = ref(false)
-const sceneFilePath = ref<string | null>(null)
 const missingFiles = ref<string[]>([])
 const loadingMesh = ref(false)
 /** Kept on the page: the title bar's notice is gone before a slow load is noticed. */
@@ -1504,26 +1525,91 @@ watch(() => scene.value, (sc) => {
   }
 })
 
-// ---- Save / Open scene JSON project file ----
-async function saveSceneFile() {
-  if (!scene.value.objects.length && !scene.value.images.length) return
-  const defaultName = sceneFilePath.value
-    ? fileName(sceneFilePath.value)
-    : `${(scene.value.objects[0] ?? scene.value.images[0]).name.replace(/\.[^.]+$/, '') || 'scene'}.holo.json`
-  const path = await pickHoloSceneSave(defaultName)
-  if (!path) return
+// ---- Designs: a folder holding design.json and every file the design uses ----
+/** The design's folder, once saved or opened. */
+const designDir = ref<string | null>(null)
+/** The scene as last saved, opened or started, to tell unsaved changes. */
+const savedScene = ref('')
+const markSaved = () => (savedScene.value = JSON.stringify(scene.value))
+/** The design's folder and its last saved state, kept for the next start with the scene itself. */
+const LAST_DESIGN_KEY = 'discratcher.holo.lastDesign'
+watch([designDir, savedScene], () => {
   try {
-    const payload: HoloScene = cloneScene(scene.value)
-    await call('holo_save_scene', { path, scene: payload })
-    sceneFilePath.value = path
-    saveLastScene(payload)
-    notifySuccess(t('holo.saved', { name: fileName(path) }))
+    localStorage.setItem(LAST_DESIGN_KEY, JSON.stringify({ dir: designDir.value, saved: savedScene.value }))
+  } catch {
+    // Storage unavailable: the next start just forgets the folder.
+  }
+})
+/** A design never saved counts as changed once it holds anything. */
+const dirty = computed(() =>
+  designDir.value ? JSON.stringify(scene.value) !== savedScene.value : scene.value.objects.length + scene.value.images.length > 0 && JSON.stringify(scene.value) !== savedScene.value,
+)
+const designName = computed(() => (designDir.value ? fileName(designDir.value) : t('holo.untitled')))
+const templatePicker = ref(false)
+
+/** Something that would replace the design, waiting for the user to let unsaved changes go. */
+const pendingDiscard = ref<null | (() => void)>(null)
+function guardUnsaved(then: () => void) {
+  if (dirty.value) pendingDiscard.value = then
+  else then()
+}
+function discardAndGo() {
+  const then = pendingDiscard.value
+  pendingDiscard.value = null
+  then?.()
+}
+
+/** Save into the design's folder, or a new one when there is none yet or `asNew`. */
+async function saveDesign(asNew = false) {
+  let dir = asNew ? null : designDir.value
+  if (!dir) dir = await pickDesignFolder(t('holo.untitled'))
+  if (!dir) return
+  try {
+    const saved = validateScene(await call<HoloScene>('design_save', { dir, scene: cloneScene(scene.value) }))
+    // Only the paths change: they now point at the copies inside the folder.
+    for (const o of scene.value.objects) o.path = saved.objects.find((x) => x.id === o.id)?.path ?? o.path
+    for (const i of scene.value.images) i.path = saved.images.find((x) => x.id === i.id)?.path ?? i.path
+    await ensureMeshesLoaded(scene.value.objects)
+    designDir.value = dir
+    markSaved()
+    saveLastScene(scene.value)
+    notifySuccess(t('holo.saved', { name: fileName(dir) }))
   } catch (e) {
     notifyError(String(e))
   }
 }
 
-async function applyLoadedScene(loaded: HoloScene, sourcePath: string | null) {
+async function openDesign() {
+  const path = await pickDesign()
+  if (!path) return
+  try {
+    const opened = await call<{ scene: unknown; dir: string | null }>('design_open', { path })
+    await applyLoadedScene(validateScene(opened.scene), opened.dir)
+    notifySuccess(t('holo.opened', { name: fileName(opened.dir ?? path) }))
+  } catch (e) {
+    notifyError(String(e))
+  }
+}
+
+/** A new, unsaved design from `tpl`. */
+function newDesign(tpl: DesignTemplate) {
+  templatePicker.value = false
+  const fresh = tpl.make()
+  scene.value = fresh
+  positionId.value = fresh.positions[0].id
+  pickedRaw.value = []
+  lookTurn.value = fresh.positions[0].phiDeg
+  selectedId.value = null
+  selectedImageId.value = null
+  designDir.value = null
+  missingFiles.value = []
+  expViews.value = []
+  undoStack.value = []
+  redoStack.value = []
+  markSaved()
+}
+
+async function applyLoadedScene(loaded: HoloScene, dir: string | null) {
   const missing = await ensureMeshesLoaded(loaded.objects)
   // A picture is there if it can be read.
   for (const path of new Set(loaded.images.map((i) => i.path))) {
@@ -1541,24 +1627,13 @@ async function applyLoadedScene(loaded: HoloScene, sourcePath: string | null) {
   positionId.value = loaded.positions[0].id
   lookTurn.value = loaded.positions[0].phiDeg
   selectedId.value = kept.find((o) => o.positionId === positionId.value)?.id ?? null
-  sceneFilePath.value = sourcePath
+  designDir.value = dir
   expViews.value = []
   undoStack.value = []
   redoStack.value = []
+  markSaved()
 }
 
-async function openSceneFile() {
-  const path = await pickHoloScene()
-  if (!path) return
-  try {
-    const raw = await call<unknown>('holo_open_scene', { path })
-    const validated = validateScene(raw)
-    await applyLoadedScene(validated, path)
-    notifySuccess(t('holo.opened', { name: fileName(path) }))
-  } catch (e) {
-    notifyError(String(e))
-  }
-}
 
 // ---- Drag & drop (HTML5 + Tauri native file drop) ----
 const MODEL_EXT_RE = /\.(obj|glb|gltf)$/i
@@ -1881,12 +1956,12 @@ function onKeyDown(e: KeyboardEvent) {
   }
   if (mod && key === 's') {
     e.preventDefault()
-    void saveSceneFile()
+    void saveDesign(e.shiftKey)
     return
   }
   if (mod && key === 'o') {
     e.preventDefault()
-    void openSceneFile()
+    guardUnsaved(openDesign)
     return
   }
   if (mod || e.altKey) return
@@ -1951,7 +2026,14 @@ onMounted(async () => {
 
   const restored = loadLastScene()
   if (restored && (restored.objects.length || restored.images.length)) {
-    await applyLoadedScene(restored, null)
+    let last: { dir?: string | null; saved?: string } = {}
+    try {
+      last = JSON.parse(localStorage.getItem(LAST_DESIGN_KEY) ?? '{}')
+    } catch {
+      // Unreadable: start as unsaved.
+    }
+    await applyLoadedScene(restored, last.dir ?? null)
+    if (typeof last.saved === 'string') savedScene.value = last.saved
   }
 })
 
@@ -1973,6 +2055,10 @@ onBeforeUnmount(() => {
 .drop:disabled { opacity: var(--oc-opacity-disabled); }
 .drop-inner { display: flex; flex-direction: column; align-items: center; gap: var(--oc-space-2xs); }
 .obj-list { display: flex; flex-direction: column; gap: 2px; }
+.design-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.templates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--oc-space-sm); }
+.template { display: flex; flex-direction: column; align-items: flex-start; gap: var(--oc-space-2xs); padding: var(--oc-space-md); border: 1px solid var(--oc-border-muted); border-radius: var(--oc-radius-control); background: var(--oc-bg-base); color: var(--oc-fg-default); text-align: left; }
+.template:hover { border-color: var(--oc-accent); }
 .image-controls { display: flex; flex-direction: column; gap: var(--oc-space-md); }
 img.thumb { object-fit: cover; }
 .obj-row { display: flex; align-items: center; gap: var(--oc-space-sm); height: 40px; padding: 0 var(--oc-space-2xs) 0 var(--oc-space-xs); border-radius: var(--oc-radius-control); cursor: pointer; user-select: none; }

@@ -77,20 +77,19 @@ export async function pickModel(): Promise<string | null> {
   return typeof r === 'string' ? r : null
 }
 
-let mockHoloScene = '/Users/demo/scene.holo.json'
+let mockDesign = '/Users/demo/My design'
 
-export async function pickHoloScene(): Promise<string | null> {
-  if (mock) return mockHoloScene
-  const r = await open({
-    multiple: false,
-    filters: [{ name: t('dialog.sceneFilter'), extensions: ['json'] }],
-  })
+/** A design to open: the `design.json` in its folder, or an older scene file. */
+export async function pickDesign(): Promise<string | null> {
+  if (mock) return `${mockDesign}/design.json`
+  const r = await open({ multiple: false, filters: [{ name: t('dialog.designFilter'), extensions: ['json'] }] })
   return typeof r === 'string' ? r : null
 }
 
-export async function pickHoloSceneSave(defaultPath: string): Promise<string | null> {
-  if (mock) return (mockHoloScene = `/Users/demo/${defaultPath}`)
-  return save({ defaultPath, filters: [{ name: t('dialog.sceneFilter'), extensions: ['json'] }] })
+/** Where to make a new design folder, named by the user. */
+export async function pickDesignFolder(defaultName: string): Promise<string | null> {
+  if (mock) return (mockDesign = `/Users/demo/${defaultName}`)
+  return save({ defaultPath: defaultName })
 }
 
 let mockSaved = '/Users/demo/flowers.discratch'
