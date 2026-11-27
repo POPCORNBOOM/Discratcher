@@ -563,7 +563,7 @@ async fn holo_scene_weights(
     blocking(move || {
         let s = solved_scene(&scene, &options, &preset)?;
         // Pictures are drawn at the solve grid's size, so a long edge of 1024 is plenty.
-        let flat = if s.flat.positions.is_empty() {
+        let flat = if s.flat.pictures.is_empty() {
             vec![]
         } else {
             let tone = disc_core::carver::Tone::from_duty(tone.servo_safe_dither, tone.max_dark_duty_cycle);
@@ -608,7 +608,7 @@ async fn holo_build_scene_iso(
         let s = solved_scene(&scene, &options, &preset)?;
         let shared = disc_core::holo::design::shared_codebook(preset.channel_bit_length_nm * 1e-3);
         // Flat pictures at full size, as the carve page burns them.
-        let flat = if s.flat.positions.is_empty() { None } else { Some(disc_core::holo::flat::Flat::load(s.flat.clone(), &scene, None)?) };
+        let flat = if s.flat.pictures.is_empty() { None } else { Some(disc_core::holo::flat::Flat::load(s.flat.clone(), &scene, None)?) };
         let tone = disc_core::carver::Tone::from_duty(tone.servo_safe_dither, tone.max_dark_duty_cycle);
         disc_core::holo::design::build_iso(&preset, &shared.0, &s.solved, flat.as_ref().map(|f| (f, tone)), &output_iso_path, &cancel, &|p| {
             let _ = app.emit("carve://progress", p);
@@ -627,7 +627,8 @@ async fn design_save(dir: String, scene: disc_core::holo::model3d::Scene) -> Res
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenedDesign {
-    scene: disc_core::holo::model3d::Scene,
+    /// As written, of whatever version; the page brings it up to date.
+    scene: serde_json::Value,
     /// The design's folder; none for a scene file from before designs were folders.
     dir: Option<String>,
 }

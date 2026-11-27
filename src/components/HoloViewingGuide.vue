@@ -47,10 +47,10 @@ import {
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { DEFAULT_TRANSFORM_TILT_DEG, LAMP_RIGHT_CM, LAMP_UP_CM } from '../holo/constants'
-import type { HoloPositionMode } from '../holo/scene'
+import type { HoloMode } from '../holo/scene'
 import { t } from '../i18n'
 
-const props = withDefaults(defineProps<{ mode?: HoloPositionMode; tiltDeg?: number }>(), { mode: 'real', tiltDeg: DEFAULT_TRANSFORM_TILT_DEG })
+const props = withDefaults(defineProps<{ mode?: HoloMode; tiltDeg?: number }>(), { mode: 'real', tiltDeg: DEFAULT_TRANSFORM_TILT_DEG })
 const isTransform = computed(() => props.mode === 'transform')
 const tiltWords = computed(() => Math.round(props.tiltDeg))
 

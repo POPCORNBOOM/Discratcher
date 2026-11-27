@@ -6,7 +6,7 @@ import { burnSeconds, COMPOSE_SECONDS, isCd } from '../etaModel'
 import { notifySuccess } from '../notices'
 import { removeTask, setTask } from '../tasks'
 import type { BurnProgress, CarveProgress, DiscGeometryPreset } from '../types'
-import type { HoloPositionMode } from '../holo/scene'
+import type { HoloMode } from '../holo/scene'
 import { canBurn } from '../disc'
 import { useStudio } from './studio'
 
@@ -63,7 +63,7 @@ export interface ProcessRequest {
   /** The step that writes the composition: as it runs, the picture appears on the disc. */
   revealStep?: number
   /** Show the hologram phone-light viewing diagram on the burn screen. */
-  viewingGuide?: boolean | HoloPositionMode
+  viewingGuide?: boolean | HoloMode
   /** How far to tilt the disc either way, for a transform-mode guide, degrees. */
   viewingTiltDeg?: number
 }
@@ -82,7 +82,7 @@ export interface BurnPlan {
   /** Show the composition growing on the disc while it burns. */
   reveal?: boolean
   /** Show the hologram phone-light viewing diagram on the burn screen. */
-  viewingGuide?: boolean | HoloPositionMode
+  viewingGuide?: boolean | HoloMode
   /** How far to tilt the disc either way, for a transform-mode guide, degrees. */
   viewingTiltDeg?: number
   /** Work on the burned disc that belongs to the same job, such as measuring it. */

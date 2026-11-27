@@ -436,8 +436,7 @@ function updateObjectMaterials() {
  */
 function applyMotionWrapper(entry: ObjectEntry, obj: HoloSceneObject) {
   const { mesh, ghost, wrapper } = entry
-  const activePos = currentPosition()
-  const moving = activePos?.mode === 'transform' && obj.positionId === props.positionId && obj.motion.samples.length > 0
+  const moving = obj.mode === 'transform' && obj.positionId === props.positionId && obj.motion.samples.length > 0
   if (!moving) {
     wrapper.visible = false
     return

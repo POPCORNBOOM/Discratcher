@@ -82,8 +82,13 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
   }
 
   function sync(st: FlatPictureState) {
-    const flat = new Set(st.positions.filter((q) => q.mode === 'flat').map((q) => q.id))
-    const shown = st.images.filter((i) => flat.has(i.positionId))
+    // Lower in its position's list is drawn first, under what is higher.
+    const depth = (i: HoloImage) => {
+      const order = st.positions.find((q) => q.id === i.positionId)?.order ?? []
+      const at = order.indexOf(i.id)
+      return at < 0 ? order.length : at
+    }
+    const shown = [...st.images].sort((a, b) => depth(b) - depth(a))
     const ids = new Set(shown.map((i) => i.id))
     for (const [id, e] of entries) if (!ids.has(id)) drop(id, e)
     // Share of the diameter to mm, y down to y up: the carve page's frame to the scene's.

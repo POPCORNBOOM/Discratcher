@@ -18,11 +18,12 @@ import {
   type MotionVar,
 } from './motion'
 
-export const SCENE_VERSION = 1 as const
+/** 2: modes moved from positions to models, and positions order their models and pictures. */
+export const SCENE_VERSION = 2 as const
 const LAST_SCENE_STORAGE_KEY = 'discratcher.holo.lastScene.v1'
 
-/** Real parallax and transform animation solve models; flat carves pictures, as the carve page does. */
-export type HoloPositionMode = 'real' | 'transform' | 'flat'
+/** How a model's views are made: real parallax, or transform animation. */
+export type HoloMode = 'real' | 'transform'
 
 export interface HoloInkStyle {
   lines: number
@@ -32,7 +33,6 @@ export interface HoloInkStyle {
 
 export const DEFAULT_INK_STYLE: HoloInkStyle = { lines: 0.85, shading: 0.25, texture: 0.8 }
 export const DEFAULT_CROP_DEG = 30
-export const DEFAULT_POSITION_MODE: HoloPositionMode = 'real'
 export const DEFAULT_PARALLAX = 2
 
 export function defaultInkStyle(): HoloInkStyle {
@@ -50,9 +50,14 @@ export interface HoloSceneObject {
   positionId: string
   style: HoloInkStyle
   motion: HoloMotion
+  mode: HoloMode
+  /** Parallax boost in real mode. */
+  parallax: number
+  /** How far the disc tilts either way in transform mode, degrees; 0 takes the default. */
+  tiltDeg: number
 }
 
-/** One way the disc is turned to be looked at, with its own objects. */
+/** One way the disc is turned to be looked at, with its own models and pictures. */
 export interface HoloPosition {
   id: string
   name: string
@@ -60,19 +65,15 @@ export interface HoloPosition {
   phiDeg: number
   /** Half-angle kept around 12 and 6 o'clock of this position, degrees; 90 means no crop. */
   cropDeg: number
-  /** Target generation mode: real parallax or transform animation. */
-  mode: HoloPositionMode
-  /** Parallax boost factor used in real mode. */
-  parallax: number
-  /** How far the disc tilts either way in transform mode, degrees; 0 picks it from the lamp. */
-  tiltDeg: number
-  /** How hard every view is held white rather than sharper and in colour; absent takes the mode's default. */
+  /** How hard every view is held white rather than sharper and in colour; absent takes each model's mode's default. */
   neutral?: number
+  /** Its models' and pictures' ids, top first: where two want the same disc, the higher wins. */
+  order: string[]
 }
 
 /**
- * A picture on a flat position, placed as on the carve page but in the position's own frame:
- * upright with the position at the top (`disc_core::holo::model3d::SceneImage`).
+ * A picture carved flat, placed as on the carve page but in its position's own frame: upright
+ * with the position at the top (`disc_core::holo::model3d::SceneImage`).
  */
 export type HoloImage = Layer & { positionId: string }
 
@@ -80,7 +81,7 @@ export interface HoloScene {
   version: typeof SCENE_VERSION
   positions: HoloPosition[]
   objects: HoloSceneObject[]
-  /** Pictures of the flat positions, bottom first. */
+  /** The positions' pictures. */
   images: HoloImage[]
   lampMm?: Vec3
 }
@@ -142,7 +143,7 @@ export function cloneScene(scene: HoloScene): HoloScene {
   return {
     version: SCENE_VERSION,
     ...(scene.lampMm ? { lampMm: [...scene.lampMm] as Vec3 } : {}),
-    positions: scene.positions.map((p) => ({ ...p })),
+    positions: scene.positions.map((p) => ({ ...p, order: [...p.order] })),
     objects: scene.objects.map((o) => ({
       ...o,
       positionMm: [...o.positionMm] as Vec3,
@@ -158,13 +159,32 @@ export function emptyScene(): HoloScene {
   return { version: SCENE_VERSION, positions: [makePosition(0)], objects: [], images: [] }
 }
 
-export function makePosition(
-  phiDeg: number,
-  cropDeg = DEFAULT_CROP_DEG,
-  mode: HoloPositionMode = DEFAULT_POSITION_MODE,
-  parallax = DEFAULT_PARALLAX,
-): HoloPosition {
-  return { id: makeObjectId(), name: '', phiDeg, cropDeg, mode, parallax, tiltDeg: 0 }
+export function makePosition(phiDeg: number, cropDeg = DEFAULT_CROP_DEG): HoloPosition {
+  return { id: makeObjectId(), name: '', phiDeg, cropDeg, order: [] }
+}
+
+/** A model or a picture in a position's list. */
+export type HoloItem = { kind: 'model'; item: HoloSceneObject } | { kind: 'picture'; item: HoloImage }
+
+/**
+ * Position `q`'s models and pictures, top first: as its `order` lists them, then any it leaves
+ * out (`turntable::items`).
+ */
+export function positionItems(scene: HoloScene, q: HoloPosition): HoloItem[] {
+  const all: HoloItem[] = [
+    ...scene.objects.filter((o) => o.positionId === q.id).map((item) => ({ kind: 'model' as const, item })),
+    ...scene.images.filter((i) => i.positionId === q.id).map((item) => ({ kind: 'picture' as const, item })),
+  ]
+  const listed = q.order.flatMap((id) => all.filter((x) => x.item.id === id))
+  return [...new Set([...listed, ...all])]
+}
+
+/** Each position's `order` as it stands: gone ids dropped, new ones added at the bottom. */
+export function normalizeOrder(scene: HoloScene): void {
+  for (const q of scene.positions) {
+    const ids = positionItems(scene, q).map((x) => x.item.id)
+    if (ids.join() !== q.order.join()) q.order = ids
+  }
 }
 
 export const wrapDeg = (d: number) => ((Math.round(d * 10) / 10) % 360 + 360) % 360
@@ -259,13 +279,19 @@ function asMotion(raw: unknown): HoloMotion {
   return defaultMotion()
 }
 
-/** Parse and validate a versioned scene JSON payload. Throws a concise error on invalid data. */
+const asMode = (v: unknown): HoloMode => (v === 'transform' ? 'transform' : 'real')
+const asParallax = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(6, Math.max(1, round1(v))) : DEFAULT_PARALLAX)
+const asTilt = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(30, Math.max(0, v)) : 0)
+
+/** Parse and validate a versioned scene JSON payload, bringing older versions up to date. */
 export function validateScene(raw: unknown): HoloScene {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid scene payload')
   const rec = raw as Record<string, unknown>
-  if (rec.version !== SCENE_VERSION) {
+  if (rec.version !== 1 && rec.version !== SCENE_VERSION) {
     throw new Error(`Unsupported scene version: ${String(rec.version)}`)
   }
+  // Version 1 kept the mode, parallax and tilt on the position; its models take them over.
+  const legacy = new Map<string, { mode: HoloMode; parallax: number; tiltDeg: number }>()
   if (!Array.isArray(rec.objects)) throw new Error('Scene objects must be an array')
   const positions: HoloPosition[] = []
   for (const item of Array.isArray(rec.positions) ? rec.positions : []) {
@@ -275,20 +301,14 @@ export function validateScene(raw: unknown): HoloScene {
         typeof q.cropDeg === 'number' && Number.isFinite(q.cropDeg)
           ? Math.min(90, Math.max(5, q.cropDeg))
           : DEFAULT_CROP_DEG
-      const mode: HoloPositionMode = q.mode === 'transform' || q.mode === 'flat' ? q.mode : 'real'
-      const parallax =
-        typeof q.parallax === 'number' && Number.isFinite(q.parallax)
-          ? Math.min(6, Math.max(1, round1(q.parallax)))
-          : DEFAULT_PARALLAX
+      legacy.set(q.id, { mode: asMode(q.mode), parallax: asParallax(q.parallax), tiltDeg: asTilt(q.tiltDeg) })
       positions.push({
         id: q.id,
         name: typeof q.name === 'string' ? q.name : '',
         phiDeg: wrapDeg(q.phiDeg),
         cropDeg,
-        mode,
-        parallax,
-        tiltDeg: typeof q.tiltDeg === 'number' && Number.isFinite(q.tiltDeg) ? Math.min(30, Math.max(0, q.tiltDeg)) : 0,
         ...(typeof q.neutral === 'number' && Number.isFinite(q.neutral) ? { neutral: Math.min(3, Math.max(0, q.neutral)) } : {}),
+        order: Array.isArray(q.order) ? q.order.filter((x): x is string => typeof x === 'string') : [],
       })
     }
   }
@@ -313,18 +333,19 @@ export function validateScene(raw: unknown): HoloScene {
       positionId: positions.some((q) => q.id === o.positionId) ? (o.positionId as string) : positions[0].id,
       style: asStyle(o.style),
       motion: asMotion(o.motion),
+      ...(rec.version === 1
+        ? (legacy.get(o.positionId as string) ?? legacy.get(positions[0].id) ?? { mode: 'real', parallax: DEFAULT_PARALLAX, tiltDeg: 0 })
+        : { mode: asMode(o.mode), parallax: asParallax(o.parallax), tiltDeg: asTilt(o.tiltDeg) }),
     })
   }
-  // Pictures only belong on flat positions, and models never do.
-  const flatIds = new Set(positions.filter((q) => q.mode === 'flat').map((q) => q.id))
   const images: HoloImage[] = []
   for (const item of Array.isArray(rec.images) ? rec.images : []) {
     const l = readLayer(item)
     const positionId = (item as Record<string, unknown>).positionId
-    if (l && typeof positionId === 'string' && flatIds.has(positionId)) images.push({ ...l, positionId })
+    if (l) images.push({ ...l, positionId: positions.some((q) => q.id === positionId) ? (positionId as string) : positions[0].id })
   }
-  const kept = objects.filter((o) => !flatIds.has(o.positionId))
-  const scene: HoloScene = { version: SCENE_VERSION, positions, objects: kept, images }
+  const scene: HoloScene = { version: SCENE_VERSION, positions, objects, images }
+  normalizeOrder(scene)
   return Array.isArray(rec.lampMm) ? { ...scene, lampMm: asVec3(rec.lampMm, LAMP_HELD_MM) } : scene
 }
 

@@ -53,7 +53,7 @@
           >
             {{ t('holo.trySample') }}
           </UiButton>
-          <UiButton variant="ghost" :icon="mdiImagePlusOutline" :disabled="!!s.job" @click="startWithImage">{{ t('holo.orImage') }}</UiButton>
+          <UiButton variant="ghost" :icon="mdiImagePlusOutline" :disabled="!!s.job" @click="addImage">{{ t('holo.orImage') }}</UiButton>
         </section>
 
         <UiAccordion v-model="openGroup">
@@ -69,7 +69,6 @@
             <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" :disabled="manyPicked" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
             <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
             <UiSlider
-              v-if="position.mode !== 'flat'"
               :model-value="neutralNow"
               :label="t('holo.chroma')"
               :min="0"
@@ -79,117 +78,105 @@
               @pointerdown="beginControlEdit"
               @update:model-value="setNeutral"
             />
-            <UiSegmented :model-value="position.mode" :options="calcModeOptions" :disabled="manyPicked" @update:model-value="setMode($event as HoloPositionMode)" />
-            <UiSlider
-              v-if="position.mode === 'real'"
-              :model-value="position.parallax"
-              :label="t('holo.parallax')"
-              :min="1"
-              :max="6"
-              :step="0.1"
-              :format="(x) => t('holo.times', { n: x.toFixed(1) })"
-              :ends="[t('holo.parallaxLow'), t('holo.parallaxHigh')]"
-              :disabled="manyPicked"
-              @pointerdown="beginControlEdit"
-              @update:model-value="setParallax"
-            />
-            <template v-else-if="position.mode === 'transform'">
-              <UiSlider :model-value="tiltNow.deg" :disabled="manyPicked" :label="t('holo.tiltRange')" :min="1" :max="MAX_TRANSFORM_TILT_DEG" :step="0.5" :format="(x) => t('holo.tiltRangeWords', { n: x })" :ends="[t('holo.tiltLow'), t('holo.tiltHigh')]" @pointerdown="beginControlEdit" @update:model-value="setTilt" />
-            </template>
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
             </div>
           </UiSection>
 
-          <!-- A flat position carves pictures, as the carve page does. -->
-          <UiSection v-if="position.mode === 'flat'" name="models" :icon="mdiImageOutline" :title="t('holo.images')">
-            <div class="obj-list" role="listbox" :aria-label="t('holo.images')">
+          <!-- What the position shows, top first: where two want the same disc, the higher wins. -->
+          <UiSection name="models" :icon="mdiLayersOutline" :title="t('holo.contents')">
+            <div class="obj-list" role="listbox" :aria-label="t('holo.contents')">
               <div
-                v-for="(img, i) in positionImagesTop"
-                :key="img.id"
+                v-for="(entry, i) in items"
+                :key="entry.item.id"
                 class="obj-row"
                 role="option"
                 tabindex="0"
-                :aria-selected="img.id === selectedImageId"
-                :class="{ on: img.id === selectedImageId }"
-                @click="selectedImageId = img.id"
-                @keydown.enter.prevent="selectedImageId = img.id"
-                @keydown.space.prevent="selectedImageId = img.id"
+                :aria-selected="isPicked(entry)"
+                :class="{ on: isPicked(entry), hidden: entry.kind === 'model' && !entry.item.visible }"
+                @click="pickItem(entry)"
+                @keydown.enter.prevent="pickItem(entry)"
+                @keydown.space.prevent="pickItem(entry)"
               >
-                <img v-if="pictures[img.path]" class="thumb" :src="pictures[img.path].thumbnail" alt="" />
-                <span v-else class="thumb" />
-                <span class="grow ellipsis" :data-tooltip="img.name" data-tooltip-overflow>{{ img.name }}</span>
+                <img v-if="entry.kind === 'picture' && pictures[entry.item.path]" class="thumb" :src="pictures[entry.item.path].thumbnail" alt="" />
+                <span v-else class="thumb"><UiIcon :path="entry.kind === 'model' ? mdiCubeOutline : mdiImageOutline" :size="16" class="muted" /></span>
+                <span class="grow ellipsis" :data-tooltip="entry.item.name" data-tooltip-overflow>{{ entry.item.name }}</span>
                 <span class="obj-tools">
-                  <UiButton icon-only variant="ghost" :icon="mdiArrowUp" :aria-label="t('carve.raise')" :data-tooltip="t('carve.raise')" :disabled="i === 0" @click.stop="restackImage(img.id, 1)" />
-                  <UiButton icon-only variant="ghost" :icon="mdiArrowDown" :aria-label="t('carve.lower')" :data-tooltip="t('carve.lower')" :disabled="i === positionImagesTop.length - 1" @click.stop="restackImage(img.id, -1)" />
-                  <UiButton icon-only variant="ghost" :icon="mdiContentCopy" :aria-label="t('carve.duplicate')" :data-tooltip="t('carve.duplicate')" :disabled="imagesFull" @click.stop="duplicateImage(img.id)" />
-                  <UiButton icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('holo.delete')" :data-tooltip="t('holo.delete')" @click.stop="removeImage(img.id)" />
-                </span>
-              </div>
-            </div>
-            <UiButton variant="ghost" :icon="mdiPlus" :disabled="imagesFull || !!s.job" :data-tooltip="imagesFull ? t('carve.full') : undefined" @click="addImage">{{ t('holo.addImage') }}</UiButton>
-            <div v-if="selectedImage && pictures[selectedImage.path]?.suggestInvert && !selectedImage.invert" class="notice warn">
-              <UiIcon :path="mdiAlertOutline" />
-              <div class="grow">
-                {{ t('carve.darkWarn') }}
-                <a role="button" tabindex="0" @click="invertSelectedImage" @keydown.enter="invertSelectedImage">{{ t('carve.invertWhite') }}</a>
-              </div>
-            </div>
-            <div v-if="selectedImage" class="image-controls" @pointerdown.capture="beginControlEdit">
-              <LayerPlace :layer="selectedImage" @reset="resetImage" />
-              <UiAdvanced :label="t('holo.toneEffects')">
-                <LayerLook :layer="selectedImage" />
-              </UiAdvanced>
-            </div>
-            <UiAdvanced :label="t('holo.carveSafety')">
-              <CarveSafety />
-            </UiAdvanced>
-          </UiSection>
-
-          <UiSection v-else name="models" :icon="mdiCubeOutline" :title="t('holo.models')">
-            <div class="obj-list" role="listbox" :aria-label="t('holo.models')">
-              <div
-                v-for="obj in positionObjects"
-                :key="obj.id"
-                class="obj-row"
-                role="option"
-                tabindex="0"
-                :aria-selected="obj.id === selectedId"
-                :class="{ on: obj.id === selectedId, hidden: !obj.visible }"
-                @click="selectObject(obj.id)"
-                @keydown.enter.prevent="selectObject(obj.id)"
-                @keydown.space.prevent="selectObject(obj.id)"
-              >
-                <span class="thumb"><UiIcon :path="mdiCubeOutline" :size="16" class="muted" /></span>
-                <span class="grow ellipsis" :data-tooltip="obj.name" data-tooltip-overflow>{{ obj.name }}</span>
-                <span class="obj-tools">
+                  <UiButton icon-only variant="ghost" :icon="mdiArrowUp" :aria-label="t('carve.raise')" :data-tooltip="t('carve.raise')" :disabled="i === 0" @click.stop="restackItem(entry.item.id, -1)" />
+                  <UiButton icon-only variant="ghost" :icon="mdiArrowDown" :aria-label="t('carve.lower')" :data-tooltip="t('carve.lower')" :disabled="i === items.length - 1" @click.stop="restackItem(entry.item.id, 1)" />
                   <UiButton
+                    v-if="entry.kind === 'model'"
                     icon-only
                     variant="ghost"
-                    :icon="obj.visible ? mdiEyeOutline : mdiEyeOffOutline"
-                    :aria-label="obj.visible ? t('holo.hide') : t('holo.show')"
-                    :data-tooltip="obj.visible ? t('holo.hide') : t('holo.show')"
-                    @click.stop="toggleVisibility(obj.id)"
+                    :icon="entry.item.visible ? mdiEyeOutline : mdiEyeOffOutline"
+                    :aria-label="entry.item.visible ? t('holo.hide') : t('holo.show')"
+                    :data-tooltip="entry.item.visible ? t('holo.hide') : t('holo.show')"
+                    @click.stop="toggleVisibility(entry.item.id)"
                   />
+                  <UiButton v-else icon-only variant="ghost" :icon="mdiContentCopy" :aria-label="t('carve.duplicate')" :data-tooltip="t('carve.duplicate')" :disabled="imagesFull" @click.stop="duplicateImage(entry.item.id)" />
                   <UiButton
                     icon-only
                     variant="ghost"
                     :icon="mdiTrashCanOutline"
                     :aria-label="t('holo.delete')"
                     :data-tooltip="t('holo.delete')"
-                    @click.stop="deleteObject(obj.id)"
+                    @click.stop="entry.kind === 'model' ? deleteObject(entry.item.id) : removeImage(entry.item.id)"
                   />
                 </span>
               </div>
             </div>
-            <UiButton variant="ghost" :icon="mdiPlus" :disabled="loadingMesh || !!s.job" @click="addModelFromPicker">{{ t('holo.addModel') }}</UiButton>
+            <div class="add-row">
+              <UiButton variant="ghost" :icon="mdiPlus" :disabled="loadingMesh || !!s.job" @click="addModelFromPicker">{{ t('holo.addModel') }}</UiButton>
+              <UiButton variant="ghost" :icon="mdiImagePlusOutline" :disabled="imagesFull || !!s.job" :data-tooltip="imagesFull ? t('carve.full') : undefined" @click="addImage">{{ t('holo.addImage') }}</UiButton>
+            </div>
+
+            <template v-if="selectedImage">
+              <div v-if="pictures[selectedImage.path]?.suggestInvert && !selectedImage.invert" class="notice warn">
+                <UiIcon :path="mdiAlertOutline" />
+                <div class="grow">
+                  {{ t('carve.darkWarn') }}
+                  <a role="button" tabindex="0" @click="invertSelectedImage" @keydown.enter="invertSelectedImage">{{ t('carve.invertWhite') }}</a>
+                </div>
+              </div>
+              <div class="image-controls" @pointerdown.capture="beginControlEdit">
+                <LayerPlace :layer="selectedImage" @reset="resetImage" />
+                <UiAdvanced :label="t('holo.toneEffects')">
+                  <LayerLook :layer="selectedImage" />
+                </UiAdvanced>
+              </div>
+            </template>
 
           <section v-if="selectedObj" class="section">
             <div class="title row">
               <span class="grow ellipsis">{{ selectedObj.name }}</span>
               <a class="action-link" role="button" tabindex="0" @click="resetSelected" @keydown.enter="resetSelected">{{ t('holo.reset') }}</a>
             </div>
+            <UiSegmented :model-value="selectedObj.mode" :options="calcModeOptions" @update:model-value="setSelectedMode($event as HoloMode)" />
+            <UiSlider
+              v-if="selectedObj.mode === 'real'"
+              :model-value="selectedObj.parallax"
+              :label="t('holo.parallax')"
+              :min="1"
+              :max="6"
+              :step="0.1"
+              :format="(x) => t('holo.times', { n: x.toFixed(1) })"
+              :ends="[t('holo.parallaxLow'), t('holo.parallaxHigh')]"
+              @pointerdown="beginControlEdit"
+              @update:model-value="setSelectedParallax"
+            />
+            <UiSlider
+              v-else
+              :model-value="selectedTilt"
+              :label="t('holo.tiltRange')"
+              :min="1"
+              :max="MAX_TRANSFORM_TILT_DEG"
+              :step="0.5"
+              :format="(x) => t('holo.tiltRangeWords', { n: x })"
+              :ends="[t('holo.tiltLow'), t('holo.tiltHigh')]"
+              @pointerdown="beginControlEdit"
+              @update:model-value="setSelectedTilt"
+            />
             <UiSwitch v-model="modelExact">{{ t('holo.exactEdit') }}</UiSwitch>
             <template v-if="!modelExact">
               <UiSlider
@@ -260,7 +247,7 @@
                 />
               </div>
             </template>
-            <template v-if="position.mode === 'transform'">
+            <template v-if="selectedObj.mode === 'transform'">
               <div class="field">
                 <span class="small muted">{{ t('holo.motionPreset') }}</span>
                 <UiSelect
@@ -304,7 +291,7 @@
                 <div class="grow">{{ motionError }}</div>
               </div>
             </template>
-            <UiAdvanced v-if="position.mode === 'transform'" :label="t('holo.motionMatrix')" :open="selectedObj.motion.preset === 'custom' || matrixOpen" @update:open="matrixOpen = $event">
+            <UiAdvanced v-if="selectedObj.mode === 'transform'" :label="t('holo.motionMatrix')" :open="selectedObj.motion.preset === 'custom' || matrixOpen" @update:open="matrixOpen = $event">
               <div class="field">
                 <div class="mat-grid">
                   <input
@@ -360,6 +347,11 @@
               />
             </UiAdvanced>
           </section>
+          </UiSection>
+
+          <!-- How dark carved pictures may burn: one setting with the carve page. -->
+          <UiSection name="safety" :icon="mdiShieldCheckOutline" :title="t('holo.carveSafety')">
+            <CarveSafety />
           </UiSection>
 
           <!-- The lamp and where you look from, shared by every position. -->
@@ -572,7 +564,7 @@
           :preview-t="previewT"
           :images="scene.images"
           :thumbnails="thumbnails"
-          :selected-image-id="position.mode === 'flat' ? selectedImageId : null"
+          :selected-image-id="selectedImageId"
           @select="selectObject"
           @position="goToPosition"
           @transform-start="onTransformStart"
@@ -602,7 +594,7 @@
       <!-- Preview: drag round the disc to turn it, move across it to tilt it -->
       <Transition name="stage">
       <div v-show="shownTab === 'preview'" class="stage-body">
-        <HoloPreview v-if="previewVisited" v-show="!expViews.length" v-model:turn="lookTurn" v-model:preview-t="previewT" :mode="position.mode" :active="tab === 'preview' && !expViews.length && hasPreviewSource" :weights="weights" :tables="tables" :inner-radius-mm="radii.inner" :outer-radius-mm="radii.outer" :lamp-mm="opts.lampMm" :distance-mm="opts.distanceMm" :tilt-deg="tiltNow.deg" />
+        <HoloPreview v-if="previewVisited" v-show="!expViews.length" v-model:turn="lookTurn" v-model:preview-t="previewT" :mode="previewMode.mode" :active="tab === 'preview' && !expViews.length && hasPreviewSource" :weights="weights" :tables="tables" :inner-radius-mm="radii.inner" :outer-radius-mm="radii.outer" :lamp-mm="opts.lampMm" :distance-mm="opts.distanceMm" :tilt-deg="previewMode.tiltDeg" />
         <div v-if="expViews.length" class="preview-stage" :class="{ dragging: previewDragging }" @pointerdown="onPreviewPointerDown" @pointermove="onPreviewPointerMove" @pointerup="onPreviewPointerUp" @pointercancel="onPreviewPointerUp">
           <canvas ref="previewCanvas" class="preview-disc" />
         </div>
@@ -630,13 +622,6 @@
         <UiButton variant="danger" @click="discardAndGo">{{ t('holo.discard') }}</UiButton>
       </template>
     </UiDialog>
-    <UiDialog v-if="modeChange" :title="t('holo.modeChangeTitle')" @close="modeChange = null">
-      <p>{{ modeChange === 'flat' ? t('holo.modeDropsModels', { n: positionObjects.length }) : t('holo.modeDropsImages', { n: positionImages.length }) }}</p>
-      <template #actions>
-        <UiButton variant="ghost" @click="modeChange = null">{{ t('common.cancel') }}</UiButton>
-        <UiButton variant="danger" @click="confirmModeChange">{{ t('holo.modeChangeConfirm') }}</UiButton>
-      </template>
-    </UiDialog>
   </div>
 </template>
 
@@ -662,10 +647,12 @@ import {
   mdiGrid,
   mdiImageOutline,
   mdiImagePlusOutline,
+  mdiLayersOutline,
   mdiLightbulbOutline,
   mdiMouseLeftClickOutline,
   mdiMouseScrollWheel,
   mdiPlus,
+  mdiShieldCheckOutline,
   mdiRedo,
   mdiResize,
   mdiRestore,
@@ -739,7 +726,12 @@ import {
   SCENE_VERSION,
   validateScene,
   type HoloInkStyle,
-  type HoloPositionMode,
+  DEFAULT_PARALLAX,
+  type HoloItem,
+  type HoloMode,
+  type HoloPosition,
+  normalizeOrder,
+  positionItems,
   type HoloScene,
   type HoloSceneObject,
 } from '../holo/scene'
@@ -871,14 +863,18 @@ const previewT = ref(0.5)
 const modelExact = ref(false)
 /** The transform matrix shown for a preset; a custom one always is. */
 const matrixOpen = ref(false)
-/** How a transform position is tilted, as `turntable::Tilt`. */
-interface Tilt { id: string; deg: number; ok: boolean }
-const tilts = ref<Tilt[]>([])
-const tiltNow = computed<Tilt>(() => {
-  const found = tilts.value.find((x) => x.id === position.value.id)
-  const deg = position.value.tiltDeg > 0 ? position.value.tiltDeg : DEFAULT_TRANSFORM_TILT_DEG
-  return { id: position.value.id, deg, ok: found && found.deg === deg ? found.ok : true }
-})
+/** A model's tilt either way in transform mode (`turntable::tilt_of`). */
+const tiltOf = (o: HoloSceneObject) => (o.tiltDeg > 0 ? o.tiltDeg : DEFAULT_TRANSFORM_TILT_DEG)
+/**
+ * How the preview and the viewing guide treat a position: as the selected model there is made,
+ * else animated if any of its models is (the top one's tilt), else real parallax.
+ */
+function lookOf(q: HoloPosition): { mode: HoloMode; tiltDeg: number } {
+  const mine = scene.value.objects.filter((o) => o.positionId === q.id && o.visible)
+  const chosen = mine.find((o) => o.id === selectedId.value) ?? positionItems(scene.value, q).map((x) => x.item).find((o): o is HoloSceneObject => 'mode' in o && o.mode === 'transform' && o.visible)
+  return chosen ? { mode: chosen.mode, tiltDeg: tiltOf(chosen) } : { mode: 'real', tiltDeg: DEFAULT_TRANSFORM_TILT_DEG }
+}
+const previewMode = computed(() => lookOf(position.value))
 const motionDraft = ref<string[]>([])
 const motionError = ref('')
 
@@ -916,7 +912,7 @@ let previewTimer = 0
 const isDvd = computed(() => !!s.preset && s.preset.media !== 'cd')
 const ready = computed(() => isDvd.value && !s.job)
 const visibleObjects = computed(() => scene.value.objects.filter((o) => o.visible))
-const hasPreviewSource = computed(() => expViews.value.length > 0 || visibleObjects.value.length > 0 || flatImages.value.length > 0)
+const hasPreviewSource = computed(() => expViews.value.length > 0 || visibleObjects.value.length > 0 || scene.value.images.length > 0)
 const canBurn = computed(() => ready.value && hasPreviewSource.value)
 const radii = computed(() => discRadiiMm(s.preset))
 const selectedObj = computed(() => scene.value.objects.find((o) => o.id === selectedId.value) ?? null)
@@ -938,7 +934,6 @@ const lightModeOptions = computed<UiSelectOption[]>(() => [
 const calcModeOptions = computed<UiSelectOption[]>(() => [
   { value: 'real', label: t('holo.calcModeReal') },
   { value: 'transform', label: t('holo.calcModeTransform') },
-  { value: 'flat', label: t('holo.calcModeFlat') },
 ])
 const motionPresetLabels: Record<MotionPresetId, string> = {
   none: 'holo.motionNone',
@@ -962,8 +957,8 @@ const signedMm = (x: number) => {
 const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path
 const previewReadout = computed(() => {
   if (!expViews.value.length) {
-    return position.value.mode === 'transform'
-      ? `${degInt(lookTurn.value)}  ${deg(transformTiltDeg(tiltNow.value.deg, previewT.value))}`
+    return previewMode.value.mode === 'transform'
+      ? `${degInt(lookTurn.value)}  ${deg(transformTiltDeg(previewMode.value.tiltDeg, previewT.value))}`
       : degInt(lookTurn.value)
   }
   return expOpts.lightMode === 'lamp' ? `${signedMm(lookHeadX.value)}  ${deg(lookTilt.value)}` : `${deg(lookTilt.value)}  ${degInt(lookDir.value)}`
@@ -1023,10 +1018,6 @@ async function ensureMeshesLoaded(objects: HoloSceneObject[]): Promise<string[]>
 }
 
 async function addModelPath(path: string, displayName?: string) {
-  if (position.value.mode === 'flat') {
-    notifyError(t('holo.flatNoModels'))
-    return
-  }
   loadingMesh.value = true
   loadError.value = ''
   try {
@@ -1042,10 +1033,14 @@ async function addModelPath(path: string, displayName?: string) {
       positionId: position.value.id,
       style: defaultInkStyle(),
       motion: defaultMotion(),
+      mode: 'real',
+      parallax: DEFAULT_PARALLAX,
+      tiltDeg: 0,
       ...place,
     }
     scene.value.objects.push(obj)
-    selectedId.value = obj.id
+    putOnTop(obj.id)
+    chooseModel(obj.id)
     tab.value = 'edit'
   } catch (e) {
     loadError.value = String(e)
@@ -1065,9 +1060,39 @@ async function addSample() {
 }
 
 function selectObject(id: string | null) {
-  selectedId.value = id
+  chooseModel(id)
   const obj = scene.value.objects.find((o) => o.id === id)
   if (obj && obj.positionId !== positionId.value) goToPosition(obj.positionId)
+}
+
+// ---- The position's list: models and pictures, top first ----
+const items = computed(() => positionItems(scene.value, position.value))
+/** One thing is selected at a time, a model or a picture. */
+function chooseModel(id: string | null) {
+  selectedId.value = id
+  if (id) selectedImageId.value = null
+}
+function choosePicture(id: string | null) {
+  selectedImageId.value = id
+  if (id) selectedId.value = null
+}
+const isPicked = (x: HoloItem) => (x.kind === 'model' ? selectedId.value : selectedImageId.value) === x.item.id
+function pickItem(x: HoloItem) {
+  if (x.kind === 'model') chooseModel(x.item.id)
+  else choosePicture(x.item.id)
+}
+/** `id` to the top of the shown position's list. */
+function putOnTop(id: string) {
+  const q = position.value
+  q.order = [id, ...positionItems(scene.value, q).map((x) => x.item.id).filter((x) => x !== id)]
+}
+/** `by` -1 moves `id` up the list, 1 down. */
+function restackItem(id: string, by: 1 | -1) {
+  const ids = items.value.map((x) => ({ id: x.item.id }))
+  const next = restacked(ids, id, by)
+  if (!next) return
+  pushHistory()
+  position.value.order = next.map((x) => x.id)
 }
 
 /**
@@ -1148,41 +1173,8 @@ function carveTone() {
   return { servoSafeDither: s.config.servoSafeDither, maxDarkDutyCycle: s.config.maxDarkDutyCycle }
 }
 
-/** A mode change waiting for the user to agree to drop what the old mode had. */
-const modeChange = ref<HoloPositionMode | null>(null)
-
-/** Models and pictures do not share a position: switching drops the other kind, after asking. */
-function setMode(mode: HoloPositionMode) {
-  if (position.value.mode === mode) return
-  const losing = mode === 'flat' ? positionObjects.value.length : position.value.mode === 'flat' ? positionImages.value.length : 0
-  if (losing) modeChange.value = mode
-  else applyMode(mode)
-}
-
-function confirmModeChange() {
-  const mode = modeChange.value
-  modeChange.value = null
-  if (mode) applyMode(mode)
-}
-
-function applyMode(mode: HoloPositionMode) {
-  pushHistory()
-  const id = position.value.id
-  if (mode === 'flat') {
-    scene.value.objects = scene.value.objects.filter((o) => o.positionId !== id)
-    if (selectedId.value && !scene.value.objects.some((o) => o.id === selectedId.value)) selectedId.value = null
-  } else if (position.value.mode === 'flat') {
-    scene.value.images = scene.value.images.filter((i) => i.positionId !== id)
-  }
-  position.value.mode = mode
-}
-
-// ---- Pictures of flat positions ----
-/** Every flat position's pictures, bottom first. */
-const flatImages = computed(() => scene.value.images.filter((i) => scene.value.positions.some((q) => q.id === i.positionId && q.mode === 'flat')))
+// ---- Pictures ----
 const positionImages = computed(() => scene.value.images.filter((i) => i.positionId === position.value.id))
-/** Top first, as layer lists read. */
-const positionImagesTop = computed(() => [...positionImages.value].reverse())
 const imagesFull = computed(() => positionImages.value.length >= MAX_LAYERS)
 const selectedImageId = ref<string | null>(null)
 const selectedImage = computed(() => positionImages.value.find((i) => i.id === selectedImageId.value) ?? null)
@@ -1210,23 +1202,19 @@ async function addImage() {
     pushHistory()
     const l = makeLayer(file, a, positionImages.value.length === 0)
     scene.value.images.push({ ...l, positionId: position.value.id })
-    selectedImageId.value = l.id
+    putOnTop(l.id)
+    choosePicture(l.id)
+    openGroup.value = 'models'
     tab.value = 'edit'
   } catch (e) {
     notifyError(String(e))
   }
 }
 
-/** From the empty page: this position becomes flat, and gets its first picture. */
-async function startWithImage() {
-  if (position.value.mode !== 'flat') position.value.mode = 'flat'
-  openGroup.value = 'models'
-  await addImage()
-}
-
 function removeImage(id: string) {
   pushHistory()
   scene.value.images = scene.value.images.filter((i) => i.id !== id)
+  normalizeOrder(scene.value)
   if (selectedImageId.value === id) selectedImageId.value = null
 }
 
@@ -1236,17 +1224,12 @@ function duplicateImage(id: string) {
   pushHistory()
   const copy = copyLayer(scene.value.images[at])
   scene.value.images.splice(at + 1, 0, copy)
-  selectedImageId.value = copy.id
-}
-
-/** `by` 1 brings the picture forward among its position's, -1 sends it back. */
-function restackImage(id: string, by: 1 | -1) {
-  const mine = restacked(positionImages.value, id, by)
-  if (!mine) return
-  pushHistory()
-  // Other positions' pictures keep their places; this position's take its slots in the new order.
-  let k = 0
-  scene.value.images = scene.value.images.map((i) => (i.positionId === position.value.id ? mine[k++] : i))
+  // Just above the original.
+  const q = position.value
+  const ids = positionItems(scene.value, q).map((x) => x.item.id).filter((x) => x !== copy.id)
+  ids.splice(Math.max(0, ids.indexOf(id)), 0, copy.id)
+  q.order = ids
+  choosePicture(copy.id)
 }
 
 function resetImage() {
@@ -1262,19 +1245,29 @@ function invertSelectedImage() {
   selectedImage.value.invert = true
 }
 
-/** The position's neutral colour, or its mode's default (`turntable::default_neutral`). */
-const neutralNow = computed(() => position.value.neutral ?? (position.value.mode === 'real' ? opts.chromaWeight : 0))
+/** The position's neutral colour, or the default for its models: real parallax's when it has any. */
+const neutralNow = computed(() => position.value.neutral ?? (positionObjects.value.some((o) => o.mode === 'real') || !positionObjects.value.length ? opts.chromaWeight : 0))
 
 function setNeutral(v: number) {
   for (const q of pickedPositions.value) q.neutral = Math.round(v * 100) / 100
 }
 
-function setTilt(deg: number) {
-  position.value.tiltDeg = deg > 0 ? Math.min(MAX_TRANSFORM_TILT_DEG, Math.max(1, Math.round(deg * 2) / 2)) : 0
+// ---- The selected model's way of making its views ----
+const selectedTilt = computed(() => (selectedObj.value ? tiltOf(selectedObj.value) : DEFAULT_TRANSFORM_TILT_DEG))
+
+function setSelectedMode(mode: HoloMode) {
+  const obj = selectedObj.value
+  if (!obj || obj.mode === mode) return
+  pushHistory()
+  obj.mode = mode
 }
 
-function setParallax(v: number) {
-  position.value.parallax = Math.min(6, Math.max(1, round1(v)))
+function setSelectedTilt(deg: number) {
+  if (selectedObj.value) selectedObj.value.tiltDeg = Math.min(MAX_TRANSFORM_TILT_DEG, Math.max(1, Math.round(deg * 2) / 2))
+}
+
+function setSelectedParallax(v: number) {
+  if (selectedObj.value) selectedObj.value.parallax = Math.min(6, Math.max(1, round1(v)))
 }
 
 function setMotionPreset(preset: MotionPresetId) {
@@ -1392,6 +1385,7 @@ function deleteObject(id: string) {
   if (idx < 0) return
   pushHistory()
   scene.value.objects.splice(idx, 1)
+  normalizeOrder(scene.value)
   if (selectedId.value === id) {
     selectedId.value = scene.value.objects[Math.min(idx, scene.value.objects.length - 1)]?.id ?? null
   }
@@ -1410,7 +1404,8 @@ function duplicateSelected() {
     motion: cloneMotion(src.motion),
   }
   scene.value.objects.push(copy)
-  selectedId.value = copy.id
+  putOnTop(copy.id)
+  chooseModel(copy.id)
 }
 
 function resetSelected() {
@@ -1802,10 +1797,9 @@ async function solveScene() {
       }
       for (const grid of [DRAFT_GRID, GRID]) {
         const options = { ...request.options, grid }
-        const solved = await call<{ overlapping: string[]; tilts?: Tilt[] }>('holo_solve_scene', { ...request, options })
+        const solved = await call<{ overlapping: string[] }>('holo_solve_scene', { ...request, options })
         if (version !== sceneVersion) break
         overlapping.value = solved.overlapping
-        tilts.value = solved.tilts ?? []
         weights.value = await call<ArrayBuffer>('holo_scene_weights', { ...request, options, tone: carveTone() })
         if (grid === GRID) solvedVersion = version
       }
@@ -1908,11 +1902,11 @@ function burnDesign() {
       ? t('holo.burnNote', { n: expSnapshot.length })
       : visibleObjects.value.length
         ? t('holo.burnNoteModels', { n: visibleObjects.value.length })
-        : t('holo.burnNoteImages', { n: flatImages.value.length }),
+        : t('holo.burnNoteImages', { n: scene.value.images.length }),
     fileName: 'holo.iso',
     prepareLabel: t('holo.compose'),
-    viewingGuide: usingExp ? 'real' : guidePos ? guidePos.mode : false,
-    viewingTiltDeg: guidePos && guidePos.tiltDeg > 0 ? guidePos.tiltDeg : DEFAULT_TRANSFORM_TILT_DEG,
+    viewingGuide: usingExp ? 'real' : guidePos ? lookOf(guidePos).mode : false,
+    viewingTiltDeg: guidePos ? lookOf(guidePos).tiltDeg : DEFAULT_TRANSFORM_TILT_DEG,
     prepare: async (path: string, ctx: StepContext) => {
       if (usingExp) {
         await call('holo_build_design_iso', { preset, input: { views: expSnapshot, chromaWeight, exposure, grid }, outputIsoPath: path })
@@ -1985,7 +1979,7 @@ watch(scene, (val) => {
 watch([opts, () => s.preset], sceneChanged, { deep: true })
 // Flat pictures are previewed with the burn safety they will be burned with.
 watch(() => [s.config.servoSafeDither, s.config.maxDarkDutyCycle], () => {
-  if (flatImages.value.length) sceneChanged()
+  if (scene.value.images.length) sceneChanged()
 })
 
 watch([expViews, expOpts], () => {
@@ -2058,6 +2052,8 @@ onBeforeUnmount(() => {
 .template { display: flex; flex-direction: column; align-items: flex-start; gap: var(--oc-space-2xs); padding: var(--oc-space-md); border: 1px solid var(--oc-border-muted); border-radius: var(--oc-radius-control); background: var(--oc-bg-base); color: var(--oc-fg-default); text-align: left; }
 .template:hover { border-color: var(--oc-accent); }
 .image-controls { display: flex; flex-direction: column; gap: var(--oc-space-md); }
+.add-row { display: flex; gap: var(--oc-space-2xs); }
+.add-row > * { flex: 1; }
 img.thumb { object-fit: cover; }
 .obj-row { display: flex; align-items: center; gap: var(--oc-space-sm); height: 40px; padding: 0 var(--oc-space-2xs) 0 var(--oc-space-xs); border-radius: var(--oc-radius-control); cursor: pointer; user-select: none; }
 .obj-row:hover { background: var(--oc-bg-hover); }

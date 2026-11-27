@@ -43,17 +43,20 @@ fn dot(a: V3, b: V3) -> f64 {
 
 /// Brightness 0..1 of placed meshes seen from `eye`, `n` square over the disc, disc frame. The
 /// light stays with the viewer: it is turned by `angle` with them. Each mesh carries its own style.
-pub fn draw(meshes: &[(Mesh, Style)], eye: V3, angle: f64, n: usize, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
-    draw_with(meshes, Some(eye), angle, n, inner_mm, outer_mm)
+///
+/// `ranks`, one per mesh or empty for all equal: a higher rank is drawn over a lower one wherever
+/// both fall, whatever their depth; depth decides only between equal ranks.
+pub fn draw(meshes: &[(Mesh, Style)], ranks: &[u32], eye: V3, angle: f64, n: usize, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
+    draw_with(meshes, ranks, Some(eye), angle, n, inner_mm, outer_mm)
 }
 
 /// As [`draw`], seen face-on from infinitely far along `+z` (orthographic, 1:1 mm scale at any
 /// depth). Viewing distance has no effect; overlaps are still inked by relative depth.
-pub fn draw_ortho(meshes: &[(Mesh, Style)], angle: f64, n: usize, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
-    draw_with(meshes, None, angle, n, inner_mm, outer_mm)
+pub fn draw_ortho(meshes: &[(Mesh, Style)], ranks: &[u32], angle: f64, n: usize, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
+    draw_with(meshes, ranks, None, angle, n, inner_mm, outer_mm)
 }
 
-fn draw_with(meshes: &[(Mesh, Style)], eye: Option<V3>, angle: f64, n: usize, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
+fn draw_with(meshes: &[(Mesh, Style)], ranks: &[u32], eye: Option<V3>, angle: f64, n: usize, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
     const SS: usize = 2;
     let w = n * SS;
     let px_mm = 2.0 * outer_mm / w as f64;
@@ -62,8 +65,10 @@ fn draw_with(meshes: &[(Mesh, Style)], eye: Option<V3>, angle: f64, n: usize, in
     let mut normal = vec![[0.0f32; 3]; w * w];
     let mut albedo = vec![0.0f32; w * w];
     let mut owner = vec![0u32; w * w];
+    let mut rank = vec![0u32; w * w];
     let (mut x0, mut x1, mut y0, mut y1) = (w, 0usize, w, 0usize);
     for (mi, (m, _)) in meshes.iter().enumerate() {
+        let r = ranks.get(mi).copied().unwrap_or(0);
         for tri in &m.tris {
             let mut p = [(0.0, 0.0, 0.0); 3];
             let mut ok = true;
@@ -97,11 +102,13 @@ fn draw_with(meshes: &[(Mesh, Style)], eye: Option<V3>, angle: f64, n: usize, in
                     }
                     let d = a * p[0].2 + b * p[1].2 + c * p[2].2;
                     let i = y * w + x;
-                    if d as f32 <= depth[i] {
+                    let drawn = depth[i] > empty;
+                    if drawn && (r < rank[i] || (r == rank[i] && d as f32 <= depth[i])) {
                         continue;
                     }
                     hit = true;
                     depth[i] = d as f32;
+                    rank[i] = r;
                     owner[i] = mi as u32;
                     let k = if eye.is_some() { [a * p[0].2 / d, b * p[1].2 / d, c * p[2].2 / d] } else { [a, b, c] };
                     let mix = |f: &dyn Fn(usize) -> f64| k[0] * f(0) + k[1] * f(1) + k[2] * f(2);
@@ -251,7 +258,7 @@ mod tests {
     fn faces_are_even_and_overlaps_are_inked() {
         let n = 512;
         let s = Style::default();
-        let p = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), s), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), s)], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
+        let p = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), s), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), s)], &[], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
         assert!(at(&p, n, 0.0, -41.0) > 0.85 && at(&p, n, 9.0, -41.0) > 0.85);
         let darkest = (0..40).map(|i| at(&p, n, 3.0 + i as f64 * 0.06, -41.0)).fold(1.0f32, f32::min);
         assert!(darkest < 0.5, "a line where one stands before the other: {darkest}");
@@ -263,10 +270,26 @@ mod tests {
         let n = 512;
         let style = Style { lines: 0.0, ..Style::default() };
         // A dark spot on a bright face shows; a face dark all over is still bright.
-        let spot = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 0.8), style), (quad([-0.6, 0.6], [-41.6, -40.4], 0.01, 0.1), style)], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
-        let dark = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 0.1), style)], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
+        let spot = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 0.8), style), (quad([-0.6, 0.6], [-41.6, -40.4], 0.01, 0.1), style)], &[], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
+        let dark = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 0.1), style)], &[], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
         assert!(at(&spot, n, 0.0, -41.0) < 0.6 * at(&spot, n, 6.0, -41.0));
         assert!(at(&dark, n, 0.0, -41.0) > 0.5);
+    }
+
+    #[test]
+    fn a_higher_rank_is_drawn_over_a_nearer_mesh() {
+        let n = 512;
+        let s = Style::default();
+        // A small quad in front of a large one: by depth its edge is inked across the large one;
+        // with the large one ranked above, the large one is whole and there is no edge to ink.
+        let meshes = [(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), s), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), s)];
+        let darkest = |p: &[f32]| (0..40).map(|i| at(p, n, 3.0 + i as f64 * 0.06, -41.0)).fold(1.0f32, f32::min);
+        let by_depth = draw(&meshes, &[], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
+        let ranked = draw(&meshes, &[2, 1], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
+        assert!(darkest(&by_depth) < 0.5, "{}", darkest(&by_depth));
+        assert!(darkest(&ranked) > 0.85, "{}", darkest(&ranked));
+        let ortho = draw_ortho(&meshes, &[2, 1], 0.0, n, 24.0, 58.0);
+        assert!(darkest(&ortho) > 0.85, "{}", darkest(&ortho));
     }
 
     #[test]
@@ -275,7 +298,7 @@ mod tests {
         let inked = Style { lines: 1.0, shading: 0.0, texture: 0.0 };
         let plain = Style { lines: 0.0, shading: 0.0, texture: 0.0 };
         // Far quad with lines=0 should not receive an overlap ink line from the nearer quad.
-        let p = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), plain), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), inked)], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
+        let p = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), plain), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), inked)], &[], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
         let darkest = (0..40).map(|i| at(&p, n, 3.0 + i as f64 * 0.06, -41.0)).fold(1.0f32, f32::min);
         assert!(darkest > 0.9, "lines=0 mesh should stay un-inked: {darkest}");
     }
@@ -286,11 +309,11 @@ mod tests {
         let s = Style::default();
         // Flat quad at z = 0 matches perspective draw from [0, 0, 350] pixel-for-pixel.
         let q0 = [(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), s)];
-        let persp = draw(&q0, [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
-        let ortho = draw_ortho(&q0, 0.0, n, 24.0, 58.0);
+        let persp = draw(&q0, &[], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
+        let ortho = draw_ortho(&q0, &[], 0.0, n, 24.0, 58.0);
         assert_eq!(ortho, persp, "depth-0 ortho must match perspective size and tone");
         // Overlapping quads still ink the far edge without perspective scaling.
-        let p = draw_ortho(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), s), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), s)], 0.0, n, 24.0, 58.0);
+        let p = draw_ortho(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), s), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), s)], &[], 0.0, n, 24.0, 58.0);
         assert!(at(&p, n, 0.0, -41.0) > 0.85 && at(&p, n, 9.0, -41.0) > 0.85);
         let darkest = (0..40).map(|i| at(&p, n, 3.0 + i as f64 * 0.06, -41.0)).fold(1.0f32, f32::min);
         assert!(darkest < 0.6, "ortho overlap should be inked: {darkest}");

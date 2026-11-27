@@ -54,27 +54,25 @@ pub fn save(dir: &Path, scene: &Scene) -> Result<Scene, String> {
 }
 
 /// Open a design: its folder, its `design.json`, or a scene file from before designs were
-/// folders. Returns the scene with absolute paths, and the folder when it is a design.
-pub fn open(path: &Path) -> Result<(Scene, Option<PathBuf>), String> {
+/// folders. Returns the scene as it was written, of whatever version, with its paths made
+/// absolute (the editor brings older versions up to date), and the folder when it is a design.
+pub fn open(path: &Path) -> Result<(serde_json::Value, Option<PathBuf>), String> {
     let file = if path.is_dir() { path.join(DESIGN_FILE) } else { path.to_path_buf() };
     let bytes = std::fs::read(&file).map_err(|e| format!("无法读取设计文件：{e}"))?;
-    let mut scene: Scene = serde_json::from_slice(&bytes).map_err(|e| format!("不是有效的设计文件：{e}"))?;
-    if scene.version != SCENE_VERSION {
-        return Err(format!("不支持的场景版本：{}", scene.version));
+    let mut scene: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| format!("不是有效的设计文件：{e}"))?;
+    match scene.get("version").and_then(|v| v.as_u64()) {
+        Some(v) if (1..=SCENE_VERSION as u64).contains(&v) => {}
+        v => return Err(format!("不支持的场景版本：{}", v.map_or("?".into(), |v| v.to_string()))),
     }
     let dir = file.parent().map(Path::to_path_buf).unwrap_or_default();
-    let resolve = |p: &str| -> String {
-        if p == BUILTIN_SAMPLE_PATH || Path::new(p).is_absolute() {
-            p.to_string()
-        } else {
-            dir.join(p).to_string_lossy().into()
+    for list in ["objects", "images"] {
+        for item in scene.get_mut(list).and_then(|v| v.as_array_mut()).into_iter().flatten() {
+            if let Some(p) = item.get("path").and_then(|p| p.as_str()) {
+                if p != BUILTIN_SAMPLE_PATH && !Path::new(p).is_absolute() {
+                    item["path"] = dir.join(p).to_string_lossy().into_owned().into();
+                }
+            }
         }
-    };
-    for o in &mut scene.objects {
-        o.path = resolve(&o.path);
-    }
-    for i in &mut scene.images {
-        i.layer.path = resolve(&i.layer.path);
     }
     let is_design = file.file_name().is_some_and(|n| n == DESIGN_FILE);
     Ok((scene, is_design.then_some(dir)))
@@ -187,7 +185,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::artwork::Layer;
-    use crate::holo::model3d::{Mode, Position, SceneImage, SceneObject};
+    use crate::holo::model3d::{Position, SceneImage, SceneObject};
 
     fn dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("design-{name}-{}", std::process::id()));
@@ -197,14 +195,17 @@ mod tests {
     }
 
     fn scene(model: &str, picture: &str) -> Scene {
-        let pos = |id: &str, mode| Position { id: id.into(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, mode, parallax: 2.0, tilt_deg: 0.0, neutral: None };
+        let pos = |id: &str| Position { id: id.into(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, neutral: None, order: vec![] };
         Scene {
             version: SCENE_VERSION,
-            positions: vec![pos("a", Mode::Real), pos("b", Mode::Flat)],
+            positions: vec![pos("a"), pos("b")],
             objects: vec![
                 SceneObject {
                     id: "o".into(), path: model.into(), name: "m".into(), visible: true, position_mm: [0.0, 40.0, 0.0], rotation_deg: [0.0; 3],
                     scale_mm: 20.0, position_id: "a".into(), style: Default::default(), motion: Default::default(),
+                    mode: Default::default(),
+                    parallax: 2.0,
+                    tilt_deg: 0.0,
                 },
             ],
             images: vec![SceneImage { id: "i".into(), name: "p".into(), width: 4, height: 4, position_id: "b".into(), layer: Layer { path: picture.into(), ..Layer::plain() } }],
@@ -258,8 +259,8 @@ mod tests {
         std::fs::rename(&design, &moved).unwrap();
         let (opened, folder) = open(&moved).unwrap();
         assert_eq!(folder.as_deref(), Some(moved.as_path()));
-        assert_eq!(std::fs::read(&opened.images[0].layer.path).unwrap(), [1u8, 2, 3]);
-        assert_eq!(opened.objects[1].path, BUILTIN_SAMPLE_PATH);
+        assert_eq!(std::fs::read(opened["images"][0]["path"].as_str().unwrap()).unwrap(), [1u8, 2, 3]);
+        assert_eq!(opened["objects"][1]["path"], BUILTIN_SAMPLE_PATH);
         for d in [outside, moved.parent().unwrap().to_path_buf()] {
             std::fs::remove_dir_all(d).unwrap();
         }

@@ -1,28 +1,28 @@
-//! Flat positions: pictures carved as the carve page carves them, each inside its position's kept
-//! area and laid out in the position's own frame.
+//! Pictures: carved flat as the carve page carves them, each inside its position's kept area,
+//! laid out in the position's own frame, and only where it covers the disc.
 //!
 //! Disc points here are the carve page's: a share of the diameter from the centre, y down (see
-//! `artwork`). That is the solve grid's frame too, so a picture on a flat position at 0° burns
+//! `artwork`). That is the solve grid's frame too, so a picture on a position at 0° burns
 //! exactly as the same layer does on the carve page.
 
-use super::model3d::{Mode, Scene};
-use super::turntable::turn;
+use super::model3d::{Position, Scene};
+use super::turntable::{items, turn, Item};
 use crate::artwork::{Composition, Layer};
 use crate::preset::DiscGeometryPreset;
 use std::sync::{Arc, Mutex};
 
-/// Which flat position owns each cell of the solve grid.
+/// Which picture owns each cell of the solve grid.
 #[derive(Clone, Debug, Default)]
 pub struct FlatOwners {
     pub grid: usize,
-    /// 0 where none does, otherwise 1 + an index into `positions`.
+    /// 0 where none does, otherwise 1 + an index into `pictures`.
     pub owner: Vec<u8>,
-    /// The flat positions that have pictures: id, and turn in radians.
-    pub positions: Vec<(String, f64)>,
+    /// The pictures: id, and their position's turn in radians.
+    pub pictures: Vec<(String, f64)>,
 }
 
 impl FlatOwners {
-    /// The flat position owning the disc point (`x`, `y`), if any.
+    /// The picture owning the disc point (`x`, `y`), if any.
     #[inline]
     pub fn at(&self, x: f64, y: f64) -> Option<usize> {
         let (u, v) = (x + 0.5, y + 0.5);
@@ -37,9 +37,39 @@ impl FlatOwners {
     }
 }
 
-/// The flat positions that have pictures, in scene order.
-pub fn flat_positions(scene: &Scene) -> Vec<&super::model3d::Position> {
-    scene.positions.iter().filter(|p| p.mode == Mode::Flat && scene.images.iter().any(|i| i.position_id == p.id)).collect()
+/// One picture, turned with its position.
+pub struct Picture {
+    pub id: String,
+    /// Its position's index.
+    pub at: usize,
+    /// Its place in its position's list.
+    pub rank: usize,
+    pub phi_rad: f64,
+    picture: Arc<Composition>,
+}
+
+impl Picture {
+    /// Grey at the disc point (`x`, `y`) where the picture covers it; none where it leaves the
+    /// disc bare, which then stays as it would be without it.
+    #[inline]
+    pub fn covered(&self, x: f64, y: f64) -> Option<f32> {
+        let [lx, ly, _] = turn([x, y, 0.0], -self.phi_rad);
+        self.picture.sample_covered(lx, ly)
+    }
+}
+
+/// Every position's pictures, read with their long edge cut to `max_edge` when given.
+pub fn pictures(scene: &Scene, positions: &[Position], max_edge: Option<u32>) -> Result<Vec<Picture>, String> {
+    let mut out = vec![];
+    for (at, pos) in positions.iter().enumerate() {
+        for (rank, it) in items(scene, positions, at).into_iter().enumerate() {
+            if let Item::Picture(p) = it {
+                let picture = composition(std::slice::from_ref(&p.layer), max_edge)?;
+                out.push(Picture { id: p.id.clone(), at, rank, phi_rad: pos.phi_deg.to_radians(), picture });
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Whether the disc point (`x`, `y`), in mm on the solve grid, is in the kept area of a position
@@ -60,49 +90,32 @@ pub fn on_ring(x: f64, y: f64, preset: &DiscGeometryPreset) -> bool {
     r >= preset.inner_radius_mm && r <= preset.outer_radius_mm
 }
 
-/// One flat position's pictures, turned with it.
-pub struct Part {
-    phi_rad: f64,
-    pictures: Arc<Composition>,
-}
-
-impl Part {
-    /// Grey at the disc point (`x`, `y`) where the position's pictures cover it; none where they
-    /// leave the disc bare, which then stays as it would be without them.
-    #[inline]
-    pub fn covered(&self, x: f64, y: f64) -> Option<f32> {
-        let [lx, ly, _] = turn([x, y, 0.0], -self.phi_rad);
-        self.pictures.sample_covered(lx, ly)
-    }
-}
-
-/// Every flat position's pictures, in `flat_positions` order, their long edge cut to `max_edge`.
-pub fn parts(scene: &Scene, max_edge: Option<u32>) -> Result<Vec<Part>, String> {
-    flat_positions(scene)
-        .iter()
-        .map(|p| {
-            let layers: Vec<Layer> = scene.images.iter().filter(|i| i.position_id == p.id).map(|i| i.layer.clone()).collect();
-            Ok(Part { phi_rad: p.phi_deg.to_radians(), pictures: composition(&layers, max_edge)? })
-        })
-        .collect()
-}
-
-/// The pictures of every flat position, ready to sample.
+/// The pictures where they own the disc, ready to sample.
 pub struct Flat {
     pub owners: Arc<FlatOwners>,
-    parts: Vec<Part>,
+    parts: Vec<Arc<Composition>>,
 }
 
 impl Flat {
-    /// Reads each flat position's pictures, their long edge cut to `max_edge` when given.
+    /// Reads each owning picture, its long edge cut to `max_edge` when given.
     pub fn load(owners: Arc<FlatOwners>, scene: &Scene, max_edge: Option<u32>) -> Result<Self, String> {
-        Ok(Self { owners, parts: parts(scene, max_edge)? })
+        let parts = owners
+            .pictures
+            .iter()
+            .map(|(id, _)| {
+                let image = scene.images.iter().find(|i| &i.id == id).ok_or("图片已不在设计里")?;
+                composition(std::slice::from_ref(&image.layer), max_edge)
+            })
+            .collect::<Result<_, String>>()?;
+        Ok(Self { owners, parts })
     }
 
-    /// Grey, 0 ..= 255, at the disc point (`x`, `y`), or none where no flat picture is drawn there.
+    /// Grey, 0 ..= 255, at the disc point (`x`, `y`), or none where no picture is drawn there.
     #[inline]
     pub fn sample(&self, x: f64, y: f64) -> Option<f32> {
-        self.parts[self.owners.at(x, y)?].covered(x, y)
+        let p = self.owners.at(x, y)?;
+        let [lx, ly, _] = turn([x, y, 0.0], -self.owners.pictures[p].1);
+        self.parts[p].sample_covered(lx, ly)
     }
 
     /// One RGBA texel per solve-grid cell for the preview: the share of light bytes `tone` writes
@@ -126,7 +139,7 @@ impl Flat {
 /// A composition of `layers`, kept for the next ask while the files are unchanged: the preview
 /// asks again on every edit, and reading pictures is the slow part.
 fn composition(layers: &[Layer], max_edge: Option<u32>) -> Result<Arc<Composition>, String> {
-    const KEEP: usize = 8;
+    const KEEP: usize = 64;
     static CACHE: Mutex<Vec<(String, Arc<Composition>)>> = Mutex::new(Vec::new());
     let modified: Vec<_> = layers.iter().map(|l| std::fs::metadata(&l.path).and_then(|m| m.modified()).ok()).collect();
     let key = serde_json::to_string(&(layers, &modified, max_edge)).map_err(|e| e.to_string())?;
@@ -160,7 +173,7 @@ mod tests {
     }
 
     fn flat_pos(id: &str, phi_deg: f64, crop_deg: f64) -> Position {
-        Position { id: id.into(), name: String::new(), phi_deg, crop_deg, mode: Mode::Flat, parallax: model3d::DEFAULT_PARALLAX, tilt_deg: 0.0, neutral: None }
+        Position { id: id.into(), name: String::new(), phi_deg, crop_deg, neutral: None, order: vec![] }
     }
 
     fn image(path: &str, position: &str) -> SceneImage {
@@ -235,8 +248,11 @@ mod tests {
         let star = SceneObject {
             id: "s".into(), path: model3d::BUILTIN_SAMPLE_PATH.into(), name: "s".into(), visible: true, position_mm: [0.0, 40.0, 6.0],
             rotation_deg: [0.0; 3], scale_mm: 22.0, position_id: "r".into(), style: Default::default(), motion: Default::default(),
+            mode: Default::default(),
+            parallax: 2.0,
+            tilt_deg: 0.0,
         };
-        let real = Position { mode: Mode::Real, ..flat_pos("r", 0.0, 30.0) };
+        let real = flat_pos("r", 0.0, 30.0);
         let scene = |phi: f64| Scene { version: SCENE_VERSION, objects: vec![star.clone()], positions: vec![real.clone(), flat_pos("f", phi, 30.0)], lamp_mm: None, images: vec![image(&path, "f")] };
         let mut both = solve(&scene(0.0)).overlapping;
         both.sort();

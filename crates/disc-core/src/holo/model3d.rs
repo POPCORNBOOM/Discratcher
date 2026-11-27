@@ -325,7 +325,8 @@ pub const MAX_MODEL_FILE_BYTES: u64 = 512 * 1024 * 1024;
 /// so on a model a few centimetres across more than this cannot be told apart.
 pub const MAX_SCENE_TRIANGLES: usize = 150_000;
 /// Current schema version for serialized 3D hologram scenes.
-pub const SCENE_VERSION: u32 = 1;
+/// 2: modes moved from positions to models, and positions order their models and pictures.
+pub const SCENE_VERSION: u32 = 2;
 
 /// Bundled faceted five-pointed star OBJ (right-handed, +Y up, +Z toward viewer).
 const BUILTIN_STAR_OBJ: &str = "\
@@ -393,8 +394,6 @@ pub enum Mode {
     Real,
     /// Transform animation: fixed centre eye, objects transformed by per-object T(t).
     Transform,
-    /// Flat pictures carved as the carve page carves them, with no models (`Scene::images`).
-    Flat,
 }
 
 /// Per-object animation transform for transform mode.
@@ -459,6 +458,15 @@ pub struct SceneObject {
     /// Per-object transform animation used when the owning position is in `Mode::Transform`.
     #[serde(default)]
     pub motion: Motion,
+    /// How its views are made.
+    #[serde(default)]
+    pub mode: Mode,
+    /// Parallax boost in `Mode::Real`.
+    #[serde(default = "default_parallax")]
+    pub parallax: f64,
+    /// How far the disc tilts either way in `Mode::Transform`, degrees; 0 takes the default.
+    #[serde(default)]
+    pub tilt_deg: f64,
 }
 
 /// One way the disc is turned to be looked at, with its own objects.
@@ -473,19 +481,13 @@ pub struct Position {
     /// Half-angle kept around 12 and 6 o'clock of this position, degrees; 90 or more means no crop.
     #[serde(default = "default_crop_deg")]
     pub crop_deg: f64,
-    /// Target generation mode: real parallax or transform animation.
-    #[serde(default)]
-    pub mode: Mode,
-    /// Parallax boost factor used in `Mode::Real`.
-    #[serde(default = "default_parallax")]
-    pub parallax: f64,
-    /// How far the disc is tilted either way in `Mode::Transform`, degrees; 0 picks it from the lamp.
-    #[serde(default)]
-    pub tilt_deg: f64,
     /// How hard the solve holds every view white rather than letting it take the colour that is
-    /// sharper; none takes the mode's default.
+    /// sharper; none takes each model's mode's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub neutral: Option<f64>,
+    /// Its models' and pictures' ids, top first: where two want the same disc, the higher wins.
+    #[serde(default)]
+    pub order: Vec<String>,
 }
 
 /// Versioned 3D hologram scene contract shared between the editor UI, project files, and renderer.
@@ -500,7 +502,7 @@ pub struct Scene {
     /// Where the lamp stands, in scene space; the default when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lamp_mm: Option<[f64; 3]>,
-    /// Pictures of the positions in `Mode::Flat`, bottom first.
+    /// The positions' pictures, carved flat.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<SceneImage>,
 }
@@ -2184,6 +2186,9 @@ mod tests {
             position_mm: [0.0, 41.0, 0.0],
             rotation_deg: [0.0, 0.0, 0.0],
             scale_mm: 20.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+            mode: Default::default(),
+            parallax: 2.0,
+            tilt_deg: 0.0,
         };
         let placed = place_scene_object(&letter_f, &obj).unwrap();
         let views = scene_head_motion_views(&SceneViewOptions { views: 3, ..Default::default() });
@@ -2246,6 +2251,9 @@ mod tests {
         let mk = |pos: [f64; 3], scale_mm: f64| SceneObject {
             id: "o".into(), path: "x".into(), name: "x".into(), visible: true,
             position_mm: pos, rotation_deg: [0.0; 3], scale_mm, position_id: String::new(), style: Default::default(), motion: Default::default(),
+            mode: Default::default(),
+            parallax: 2.0,
+            tilt_deg: 0.0,
         };
         let placed = [
             place_scene_object(&star, &mk([0.0, -41.0, 8.0], 24.0)).unwrap(),
@@ -2309,6 +2317,9 @@ mod tests {
         let dir = std::env::temp_dir().join("holo-editor-path");
         let obj = |path: &str, pos: [f64; 3], rot: [f64; 3], scale_mm: f64| SceneObject {
             id: "o".into(), path: path.into(), name: "x".into(), visible: true, position_mm: pos, rotation_deg: rot, scale_mm, position_id: String::new(), style: Default::default(), motion: Default::default(),
+            mode: Default::default(),
+            parallax: 2.0,
+            tilt_deg: 0.0,
         };
         let scene = Scene { version: SCENE_VERSION, lamp_mm: None, positions: vec![], images: vec![], objects: vec![
             obj(&std::env::var("MODEL").unwrap(), [0.0, 40.0, 0.0], [0.0; 3], 34.0),
@@ -2354,6 +2365,9 @@ mod tests {
             let placed = place_scene_object(&m, &SceneObject {
                 id: "o".into(), path: "x".into(), name: "x".into(), visible: true,
                 position_mm: [0.0, -41.0, 0.0], rotation_deg: [0.0; 3], scale_mm: 30.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+                mode: Default::default(),
+                parallax: 2.0,
+                tilt_deg: 0.0,
             }).unwrap();
             let v = &scene_head_motion_views(&SceneViewOptions { views: 3, ..Default::default() })[1];
             let p = reference_preset();
@@ -2389,6 +2403,9 @@ mod tests {
                 position_mm: [0.0, -41.0, 10.0],
                 rotation_deg: [0.0, 0.0, 0.0],
                 scale_mm: 16.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+                mode: Default::default(),
+                parallax: 2.0,
+                tilt_deg: 0.0,
             },
         )
         .unwrap();
@@ -2402,6 +2419,9 @@ mod tests {
                 position_mm: [0.0, -41.0, -10.0],
                 rotation_deg: [0.0, 0.0, 0.0],
                 scale_mm: 24.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+                mode: Default::default(),
+                parallax: 2.0,
+                tilt_deg: 0.0,
             },
         )
         .unwrap();
@@ -2425,6 +2445,9 @@ mod tests {
                     position_mm: [0.0, -41.0, 8.0],
                     rotation_deg: [0.0, 0.0, 0.0],
                     scale_mm: 22.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+                    mode: Default::default(),
+                    parallax: 2.0,
+                    tilt_deg: 0.0,
                 },
                 SceneObject {
                     id: "hidden".into(),
@@ -2434,6 +2457,9 @@ mod tests {
                     position_mm: [0.0, 41.0, 0.0],
                     rotation_deg: [0.0, 0.0, 0.0],
                     scale_mm: 20.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+                    mode: Default::default(),
+                    parallax: 2.0,
+                    tilt_deg: 0.0,
                 },
             ],
         };
@@ -2510,6 +2536,9 @@ mod tests {
             position_id: String::new(),
             style: Default::default(),
             motion: Default::default(),
+            mode: Default::default(),
+            parallax: 2.0,
+            tilt_deg: 0.0,
         };
         let mat = [
             2.0, 0.0, 0.0, 5.0,

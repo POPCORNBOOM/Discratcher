@@ -11,7 +11,7 @@
 import { Camera, DataArrayTexture, DataTexture, DataUtils, GLSL3, Group, HalfFloatType, LinearFilter, Mesh, NearestFilter, PerspectiveCamera, RawShaderMaterial, RGBAFormat, RingGeometry, Scene, Vector3, WebGLRenderer } from 'three'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { DEFAULT_TRANSFORM_TILT_DEG, transformTiltDeg, type Vec3 } from '../holo/constants'
-import type { HoloPositionMode } from '../holo/scene'
+import type { HoloMode } from '../holo/scene'
 import { t } from '../i18n'
 
 const props = withDefaults(defineProps<{
@@ -22,7 +22,7 @@ const props = withDefaults(defineProps<{
   outerRadiusMm: number
   lampMm: Vec3
   distanceMm: number
-  mode?: HoloPositionMode
+  mode?: HoloMode
   /** How far the disc tilts either way in transform mode, degrees. */
   tiltDeg?: number
 }>(), {

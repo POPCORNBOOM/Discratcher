@@ -14,7 +14,7 @@ export interface DesignTemplate {
 /** Twelve positions, one every 15° so the twelve kept pairs tile the disc without overlap. */
 function twelvePictures(): HoloScene {
   const scene = emptyScene()
-  scene.positions = Array.from({ length: 12 }, (_, i) => makePosition(i * 15, 7.5, 'flat'))
+  scene.positions = Array.from({ length: 12 }, (_, i) => makePosition(i * 15, 7.5))
   return scene
 }
 
