@@ -86,7 +86,7 @@
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
             </div>
-            <UiAdvanced v-if="position.mode === 'real'">
+            <UiAdvanced v-if="position.mode === 'real'" :label="t('holo.colour')">
               <UiSlider
                 v-model="opts.chromaWeight"
                 :label="t('holo.chroma')"
@@ -105,7 +105,7 @@
               <a class="action-link" role="button" tabindex="0" @click="setLampPreset('held')" @keydown.enter="setLampPreset('held')">{{ t('holo.reset') }}</a>
             </div>
             <UiSelect :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset($event as LampPreset)" />
-            <UiAdvanced>
+            <UiAdvanced :label="t('holo.exactPlacement')">
               <UiSlider :model-value="opts.lampMm[0]" :label="t('holo.lampSide')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampSideWords" @update:model-value="(v) => setLampAxis(0, v)" />
               <UiSlider :model-value="opts.lampMm[1]" :label="t('holo.lampAway')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampAwayWords" @update:model-value="(v) => setLampAxis(1, v)" />
               <UiSlider v-if="opts.lampPreset !== 'ceiling'" :model-value="opts.lampMm[2]" :label="t('holo.lampUp')" :min="LAMP_MIN_UP_MM" :max="LAMP_MAX_UP_MM" :step="5" :format="cm" @update:model-value="(v) => setLampAxis(2, v)" />
@@ -165,6 +165,7 @@
               <span class="grow ellipsis">{{ selectedObj.name }}</span>
               <a class="action-link" role="button" tabindex="0" @click="resetSelected" @keydown.enter="resetSelected">{{ t('holo.reset') }}</a>
             </div>
+            <UiSwitch v-model="modelExact">{{ t('holo.exactEdit') }}</UiSwitch>
             <template v-if="!modelExact">
               <UiSlider
                 :model-value="selectedObj.positionMm[2]"
@@ -186,6 +187,53 @@
                 @pointerdown="beginControlEdit"
                 @update:model-value="setSelectedScale"
               />
+            </template>
+            <template v-else>
+              <div class="field">
+                <span class="small muted">{{ t('holo.pos') }}</span>
+                <div class="num-grid">
+                  <label v-for="(axis, idx) in ['X', 'Y', 'Z']" :key="axis" class="num-field">
+                    <span class="small muted">{{ axis }}</span>
+                    <input
+                      type="number"
+                      class="num-input mono"
+                      :value="selectedObj.positionMm[idx]"
+                      step="0.5"
+                      @focus="beginControlEdit"
+                      @change="setSelectedPosAxis(idx, $event)"
+                    />
+                  </label>
+                </div>
+              </div>
+              <div class="field">
+                <span class="small muted">{{ t('holo.rot') }}</span>
+                <div class="num-grid">
+                  <label v-for="(axis, idx) in ['X', 'Y', 'Z']" :key="axis" class="num-field">
+                    <span class="small muted">{{ axis }}</span>
+                    <input
+                      type="number"
+                      class="num-input mono"
+                      :value="selectedObj.rotationDeg[idx]"
+                      step="5"
+                      @focus="beginControlEdit"
+                      @change="setSelectedRotAxis(idx, $event)"
+                    />
+                  </label>
+                </div>
+              </div>
+              <div class="field">
+                <span class="small muted">{{ t('holo.size') }} (mm)</span>
+                <input
+                  type="number"
+                  class="num-input mono"
+                  :value="selectedObj.scaleMm"
+                  min="4"
+                  max="120"
+                  step="1"
+                  @focus="beginControlEdit"
+                  @change="setSelectedScaleInput"
+                />
+              </div>
             </template>
             <template v-if="position.mode === 'transform'">
               <div class="field">
@@ -226,8 +274,13 @@
                   <UiButton v-if="selectedObj.motion.preset === 'custom'" icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('holo.delete')" :data-tooltip="t('holo.delete')" @click="removeMotionVar(i)" />
                 </div>
               </div>
-              <div v-if="selectedObj.motion.preset === 'custom'" class="field">
-                <span class="small muted">{{ t('holo.motionMatrix') }}</span>
+              <div v-if="motionError" class="notice warn">
+                <UiIcon :path="mdiAlertOutline" />
+                <div class="grow">{{ motionError }}</div>
+              </div>
+            </template>
+            <UiAdvanced v-if="position.mode === 'transform'" :label="t('holo.motionMatrix')" :open="selectedObj.motion.preset === 'custom' || matrixOpen" @update:open="matrixOpen = $event">
+              <div class="field">
                 <div class="mat-grid">
                   <input
                     v-for="(expr, idx) in motionDraft"
@@ -248,156 +301,78 @@
                   />
                 </div>
               </div>
-              <div v-if="motionError" class="notice warn">
-                <UiIcon :path="mdiAlertOutline" />
-                <div class="grow">{{ motionError }}</div>
-              </div>
-            </template>
-            <UiAdvanced v-model:open="modelExact">
-            <div class="field">
-              <span class="small muted">{{ t('holo.pos') }}</span>
-              <div class="num-grid">
-                <label v-for="(axis, idx) in ['X', 'Y', 'Z']" :key="axis" class="num-field">
-                  <span class="small muted">{{ axis }}</span>
-                  <input
-                    type="number"
-                    class="num-input mono"
-                    :value="selectedObj.positionMm[idx]"
-                    step="0.5"
-                    @focus="beginControlEdit"
-                    @change="setSelectedPosAxis(idx, $event)"
-                  />
-                </label>
-              </div>
-            </div>
-            <div class="field">
-              <span class="small muted">{{ t('holo.rot') }}</span>
-              <div class="num-grid">
-                <label v-for="(axis, idx) in ['X', 'Y', 'Z']" :key="axis" class="num-field">
-                  <span class="small muted">{{ axis }}</span>
-                  <input
-                    type="number"
-                    class="num-input mono"
-                    :value="selectedObj.rotationDeg[idx]"
-                    step="5"
-                    @focus="beginControlEdit"
-                    @change="setSelectedRotAxis(idx, $event)"
-                  />
-                </label>
-              </div>
-            </div>
-            <div class="field">
-              <span class="small muted">{{ t('holo.size') }} (mm)</span>
-              <input
-                type="number"
-                class="num-input mono"
-                :value="selectedObj.scaleMm"
-                min="4"
-                max="120"
-                step="1"
-                @focus="beginControlEdit"
-                @change="setSelectedScaleInput"
+            </UiAdvanced>
+            <UiAdvanced :label="t('holo.drawing')">
+              <UiSlider
+                :model-value="selectedObj.style.lines"
+                :label="t('holo.lines')"
+                :min="0"
+                :max="1"
+                :step="0.05"
+                :format="percent"
+                @pointerdown="beginControlEdit"
+                @update:model-value="(v) => setSelectedStyle('lines', v)"
               />
-            </div>
-            <UiSlider
-              :model-value="selectedObj.style.lines"
-              :label="t('holo.lines')"
-              :min="0"
-              :max="1"
-              :step="0.05"
-              :format="percent"
-              @pointerdown="beginControlEdit"
-              @update:model-value="(v) => setSelectedStyle('lines', v)"
-            />
-            <UiSlider
-              :model-value="selectedObj.style.shading"
-              :label="t('holo.shading')"
-              :min="0"
-              :max="1"
-              :step="0.05"
-              :format="percent"
-              @pointerdown="beginControlEdit"
-              @update:model-value="(v) => setSelectedStyle('shading', v)"
-            />
-            <UiSlider
-              :model-value="selectedObj.style.texture"
-              :label="t('holo.texture')"
-              :min="0"
-              :max="1"
-              :step="0.05"
-              :format="percent"
-              @pointerdown="beginControlEdit"
-              @update:model-value="(v) => setSelectedStyle('texture', v)"
-            />
-              <template v-if="position.mode === 'transform' && selectedObj.motion.preset !== 'custom'">
-                <div class="field">
-                  <span class="small muted">{{ t('holo.motionMatrix') }}</span>
-                  <div class="mat-grid">
-                    <input
-                      v-for="(expr, idx) in motionDraft"
-                      :key="idx"
-                      type="text"
-                      class="mat-input mono"
-                      spellcheck="false"
-                      autocomplete="off"
-                      :value="expr"
-                      :readonly="selectedObj.motion.preset !== 'custom'"
-                      :aria-label="`${t('holo.motionMatrix')} ${Math.floor(idx / 4) + 1},${(idx % 4) + 1}`"
-                      :data-tooltip="expr"
-                      data-tooltip-overflow
-                      @input="onMotionCellInput(idx, $event)"
-                      @blur="commitMotionMatrix"
-                      @change="commitMotionMatrix"
-                      @keydown.enter.prevent="commitMotionMatrix"
-                    />
-                  </div>
-                </div>
-              </template>
+              <UiSlider
+                :model-value="selectedObj.style.shading"
+                :label="t('holo.shading')"
+                :min="0"
+                :max="1"
+                :step="0.05"
+                :format="percent"
+                @pointerdown="beginControlEdit"
+                @update:model-value="(v) => setSelectedStyle('shading', v)"
+              />
+              <UiSlider
+                :model-value="selectedObj.style.texture"
+                :label="t('holo.texture')"
+                :min="0"
+                :max="1"
+                :step="0.05"
+                :format="percent"
+                @pointerdown="beginControlEdit"
+                @update:model-value="(v) => setSelectedStyle('texture', v)"
+              />
             </UiAdvanced>
           </section>
         </template>
 
         <!-- Experimental tools -->
-        <div class="exp-box">
-          <button type="button" class="exp-toggle small" :aria-expanded="expOpen" @click="expOpen = !expOpen">
-            <UiIcon :path="mdiChevronRight" :class="{ on: expOpen }" />{{ t('holo.expTools') }}
-          </button>
-          <div v-if="expOpen" class="exp-body">
-            <div class="exp-actions">
-              <UiButton :icon="mdiFire" :disabled="!ready" @click="burnSwatch">{{ t('holo.swatchBurn') }}</UiButton>
-              <UiButton :icon="mdiCubeOutline" :disabled="loadingTest3d || !!s.job" @click="loadTest3d">{{ t('holo.test3dLoad') }}</UiButton>
-            </div>
-
-            <section class="section">
-              <div class="title row">
-                <span class="grow">{{ t('holo.views') }}</span>
-                <UiButton variant="ghost" :icon="mdiPlus" :disabled="expViews.length >= MAX_VIEWS" @click="addExpView">{{ t('holo.addView') }}</UiButton>
-              </div>
-              <div class="field">
-                <div class="field-head"><span>{{ t('holo.lightMode') }}</span></div>
-                <UiSelect
-                  :model-value="expOpts.lightMode"
-                  :label="t('holo.lightMode')"
-                  :options="lightModeOptions"
-                  @update:model-value="expOpts.lightMode = $event as LightMode"
-                />
-              </div>
-              <UiSlider v-model="opts.exposure" :label="t('holo.exposure')" :min="0.1" :max="1.5" :step="0.05" :format="(x) => x.toFixed(2)" />
-              <UiSlider v-if="expOpts.lightMode === 'far'" v-model="expOpts.lightDeg" :label="t('holo.light')" :min="-30" :max="30" :step="0.5" :format="deg" />
-
-              <div v-for="(v, i) in expViews" :key="v.id" class="exp-view">
-                <div class="row">
-                  <span class="grow ellipsis small" :data-tooltip="v.imagePath" data-tooltip-overflow>{{ fileName(v.imagePath) }}</span>
-                  <UiButton icon-only variant="ghost" :icon="mdiClose" :aria-label="t('holo.remove')" @click="removeExpView(i)" />
-                </div>
-                <UiSlider v-if="expOpts.lightMode === 'lamp'" v-model="v.headXMm" :label="t('holo.headX')" :min="-150" :max="150" :step="5" :format="signedMm" />
-                <UiSlider v-model="v.angleDeg" :label="t('holo.tilt')" :min="5" :max="60" :step="0.5" :format="deg" />
-                <UiSlider v-if="expOpts.lightMode !== 'lamp'" v-model="v.dirDeg" :label="t('holo.azimuth')" :min="-180" :max="180" :step="1" :format="degInt" />
-              </div>
-              <UiButton v-if="expViews.length" variant="ghost" @click="clearExpViews">{{ t('holo.clearExp') }}</UiButton>
-            </section>
+        <UiAdvanced :label="t('holo.expTools')">
+          <div class="exp-actions">
+            <UiButton :icon="mdiFire" :disabled="!ready" @click="burnSwatch">{{ t('holo.swatchBurn') }}</UiButton>
+            <UiButton :icon="mdiCubeOutline" :disabled="loadingTest3d || !!s.job" @click="loadTest3d">{{ t('holo.test3dLoad') }}</UiButton>
           </div>
-        </div>
+
+          <section class="section">
+            <div class="title row">
+              <span class="grow">{{ t('holo.views') }}</span>
+              <UiButton variant="ghost" :icon="mdiPlus" :disabled="expViews.length >= MAX_VIEWS" @click="addExpView">{{ t('holo.addView') }}</UiButton>
+            </div>
+            <div class="field">
+              <div class="field-head"><span>{{ t('holo.lightMode') }}</span></div>
+              <UiSelect
+                :model-value="expOpts.lightMode"
+                :label="t('holo.lightMode')"
+                :options="lightModeOptions"
+                @update:model-value="expOpts.lightMode = $event as LightMode"
+              />
+            </div>
+            <UiSlider v-model="opts.exposure" :label="t('holo.exposure')" :min="0.1" :max="1.5" :step="0.05" :format="(x) => x.toFixed(2)" />
+            <UiSlider v-if="expOpts.lightMode === 'far'" v-model="expOpts.lightDeg" :label="t('holo.light')" :min="-30" :max="30" :step="0.5" :format="deg" />
+
+            <div v-for="(v, i) in expViews" :key="v.id" class="exp-view">
+              <div class="row">
+                <span class="grow ellipsis small" :data-tooltip="v.imagePath" data-tooltip-overflow>{{ fileName(v.imagePath) }}</span>
+                <UiButton icon-only variant="ghost" :icon="mdiClose" :aria-label="t('holo.remove')" @click="removeExpView(i)" />
+              </div>
+              <UiSlider v-if="expOpts.lightMode === 'lamp'" v-model="v.headXMm" :label="t('holo.headX')" :min="-150" :max="150" :step="5" :format="signedMm" />
+              <UiSlider v-model="v.angleDeg" :label="t('holo.tilt')" :min="5" :max="60" :step="0.5" :format="deg" />
+              <UiSlider v-if="expOpts.lightMode !== 'lamp'" v-model="v.dirDeg" :label="t('holo.azimuth')" :min="-180" :max="180" :step="1" :format="degInt" />
+            </div>
+            <UiButton v-if="expViews.length" variant="ghost" @click="clearExpViews">{{ t('holo.clearExp') }}</UiButton>
+          </section>
+        </UiAdvanced>
       </div>
 
       <div v-if="!isDvd" class="notice warn">
@@ -597,7 +572,6 @@
 import {
   mdiAlertOctagonOutline,
   mdiAlertOutline,
-  mdiChevronRight,
   mdiClose,
   mdiContentCopy,
   mdiContentSaveOutline,
@@ -765,7 +739,6 @@ const loadingMesh = ref(false)
 /** Kept on the page: the title bar's notice is gone before a slow load is noticed. */
 const loadError = ref('')
 const dropHover = ref(false)
-const expOpen = ref(false)
 const viewportRef = ref<InstanceType<typeof HoloViewport3D> | null>(null)
 
 // Cached decoded meshes keyed by model path
@@ -796,6 +769,8 @@ const opts = reactive<{
 const previewT = ref(0.5)
 /** The selected model's exact position, turn and size replace its depth and size sliders. */
 const modelExact = ref(false)
+/** The transform matrix shown for a preset; a custom one always is. */
+const matrixOpen = ref(false)
 /** How a transform position is tilted, as `turntable::Tilt`. */
 interface Tilt { id: string; deg: number; autoDeg: number; ok: boolean }
 const tilts = ref<Tilt[]>([])
@@ -1742,12 +1717,7 @@ onBeforeUnmount(() => {
 .mat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--oc-space-2xs); }
 .mat-input { width: 100%; min-width: 0; height: var(--oc-size-sm); padding: 0 var(--oc-space-2xs); border: 0; border-radius: 4px; background: var(--oc-bg-input); color: var(--oc-fg-default); font-size: var(--oc-text-xs); text-align: center; }
 .mat-input[readonly] { background: var(--oc-bg-base); color: var(--oc-fg-muted); text-overflow: ellipsis; }
-.exp-box { display: flex; flex-direction: column; gap: var(--oc-space-sm); }
-.exp-toggle { align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; height: var(--oc-size-sm); padding: 0 var(--oc-space-xs) 0 0; border: 0; border-radius: var(--oc-radius-control); background: transparent; color: var(--oc-fg-muted); }
-.exp-toggle:hover { color: var(--oc-fg-default); }
-.exp-toggle svg { transition: transform var(--oc-duration-quick) var(--oc-ease); }
-.exp-toggle svg.on { transform: rotate(90deg); }
-.exp-body, .exp-actions { display: flex; flex-direction: column; gap: var(--oc-space-sm); }
+.exp-actions { display: flex; flex-direction: column; gap: var(--oc-space-sm); }
 .exp-view { display: flex; flex-direction: column; gap: var(--oc-space-2xs); }
 .stage { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .stage-bar { position: absolute; z-index: 1; top: var(--oc-space-md); left: var(--oc-space-lg); right: var(--oc-space-md); display: flex; align-items: center; gap: var(--oc-space-sm); pointer-events: none; }

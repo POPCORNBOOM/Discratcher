@@ -397,5 +397,9 @@
   "holo.motionAddVar": "添加变量",
   "holo.motionVarName": "变量名",
   "holo.models": "模型",
-  "holo.lighting": "光照"
+  "holo.lighting": "光照",
+  "holo.exactEdit": "精确编辑",
+  "holo.drawing": "画法",
+  "holo.colour": "颜色",
+  "holo.exactPlacement": "精确位置"
 }

@@ -1,7 +1,7 @@
 <template>
   <div class="adv">
     <button type="button" class="toggle small" :aria-expanded="open" @click="open = !open">
-      <UiIcon :path="mdiChevronRight" :class="{ on: open }" />{{ t('common.advanced') }}
+      <UiIcon :path="mdiChevronRight" :class="{ on: open }" />{{ label ?? t('common.advanced') }}
     </button>
     <div v-if="open" class="body"><slot /></div>
   </div>
@@ -12,7 +12,8 @@ import { mdiChevronRight } from '@mdi/js'
 import { t } from '../i18n'
 import UiIcon from './UiIcon.vue'
 
-/** Whether the advanced settings are shown; bind it to swap simple controls for exact ones. */
+defineProps<{ label?: string }>()
+/** Whether the settings inside are shown. */
 const open = defineModel<boolean>('open', { default: false })
 </script>
 

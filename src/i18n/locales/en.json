@@ -397,5 +397,9 @@
   "holo.motionAddVar": "Add variable",
   "holo.motionVarName": "Variable name",
   "holo.models": "Models",
-  "holo.lighting": "Lighting"
+  "holo.lighting": "Lighting",
+  "holo.exactEdit": "Exact values",
+  "holo.drawing": "Drawing",
+  "holo.colour": "Colour",
+  "holo.exactPlacement": "Exact placement"
 }
