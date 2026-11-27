@@ -691,10 +691,12 @@
           <span class="scale">
             <i class="ramp" />
             <i class="unusable" />
+            <i class="cropped" />
             <span>{{ t('holo.legendGood') }}</span>
             <span>{{ t('holo.legendFair') }}</span>
             <span>{{ t('holo.legendPoor') }}</span>
             <span>{{ t('holo.legendNone') }}</span>
+            <span>{{ t('holo.crop') }}</span>
           </span>
         </div>
       </div>
@@ -2693,10 +2695,12 @@ img.thumb { object-fit: cover; }
 .gesture { display: inline-flex; align-items: center; gap: var(--oc-space-2xs); }
 .legend { display: flex; align-items: flex-start; gap: var(--oc-space-sm); }
 .legend-name { line-height: 8px; }
-.scale { display: grid; grid-template-columns: repeat(3, 44px) 52px; row-gap: var(--oc-space-2xs); text-align: center; }
-.ramp, .unusable { height: 8px; }
+.scale { display: grid; grid-template-columns: repeat(3, 44px) 52px 64px; row-gap: var(--oc-space-2xs); text-align: center; }
+.ramp, .unusable, .cropped { height: 8px; }
 .ramp { grid-column: span 3; border-radius: var(--oc-radius-pill) 0 0 var(--oc-radius-pill); background: linear-gradient(90deg, rgba(144, 69, 249, 0.85), rgba(144, 69, 249, 0.08)), #2a2a31; }
 .unusable { border-radius: 0 var(--oc-radius-pill) var(--oc-radius-pill) 0; background: repeating-linear-gradient(45deg, #8a8a92 0 1px, #1c1c22 1px 4px); }
+/* The crop's outline on the disc. */
+.cropped { box-sizing: border-box; margin: 0 var(--oc-space-sm); border: 1.5px solid rgba(144, 69, 249, 0.9); border-radius: 2px; }
 .preview-stage { position: absolute; inset: 0; display: grid; place-items: center; cursor: grab; touch-action: none; }
 .preview-stage.dragging { cursor: grabbing; }
 .preview-disc { width: min(86%, 86vh - 108px); aspect-ratio: 1; will-change: transform; }

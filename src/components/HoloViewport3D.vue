@@ -415,6 +415,8 @@ function updateZones() {
   ;(u.lamp.value as Vector3).set(...props.lampMm)
   u.distance.value = props.distanceMm
   u.kind.value = props.zones === 'colour' ? 1 : 0
+  u.inner.value = props.innerRadiusMm
+  u.outer.value = props.outerRadiusMm
   if (usabilityMesh) usabilityMesh.visible = props.zones !== null
   const left = turnLeft()
   u.phi.value = Math.abs(left) < 0.05 ? 0 : MathUtils.degToRad(left)

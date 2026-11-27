@@ -12,6 +12,19 @@ bool inCrop(vec2 p, float crop, float side, float axis) {
   bool bottom = a >= 3.14159265 - c;
   return side < 0.5 ? (top || bottom) : side < 1.5 ? top : bottom;
 }
+float rayDistance(vec2 p, float angle) {
+  vec2 d = vec2(sin(angle), cos(angle));
+  return dot(p, d) > 0.0 ? abs(p.x * d.y - p.y * d.x) : length(p);
+}
+// How far p is from the crop's straight edges, in p's units; far away when nothing is cropped.
+float cropEdge(vec2 p, float crop, float side, float axis) {
+  if (side < 0.5 && crop >= 1.5707) return 1e9;
+  float c = min(crop, 1.5708);
+  float e = 1e9;
+  if (side < 0.5 || side < 1.5) e = min(e, min(rayDistance(p, axis - c), rayDistance(p, axis + c)));
+  if (side < 0.5 || side > 1.5) e = min(e, min(rayDistance(p, axis + 3.14159265 - c), rayDistance(p, axis + 3.14159265 + c)));
+  return e;
+}
 `
 
 const SIDE_INDEX: Record<CropSide, number> = { both: 0, up: 1, down: 2 }

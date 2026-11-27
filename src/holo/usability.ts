@@ -7,10 +7,10 @@ import { DEFAULT_CROP_DEG } from './scene'
 export type ZoneKind = 'depth' | 'colour'
 
 /**
- * Colours the disc by how well each place suits what is selected, more violet the better; where it
- * cannot work, or lies outside the current position's crop (`cropGlsl`, in its frame turned by
- * `phi`), it is hatched. `g_t` is the part of light and view direction along the track, as in
- * `holo::scene::g_at`.
+ * Colours the disc by how well each place suits what is selected, more violet the better; where the
+ * light cannot work it is hatched. The current position's crop (`cropGlsl`, in its frame turned by
+ * `phi`) is a violet outline, with nothing drawn outside it. `g_t` is the part of light and view
+ * direction along the track, as in `holo::scene::g_at`.
  *
  * Depth: the more `g_t` changes as the head moves from side to side, the deeper a model shows.
  * Colour: the two eyes must see the same `g_t` (`turntable::EYE_HALF_MM` either side), and `|g_t|`
@@ -29,6 +29,8 @@ export function zonesMaterial(): ShaderMaterial {
       phi: { value: 0 },
       crop: { value: (DEFAULT_CROP_DEG * Math.PI) / 180 },
       kind: { value: 0 },
+      inner: { value: 0 },
+      outer: { value: 0 },
       side: { value: 0 },
       axis: { value: 0 },
     },
@@ -39,7 +41,7 @@ export function zonesMaterial(): ShaderMaterial {
     fragmentShader: `
       varying vec2 at;
       uniform vec3 lamp;
-      uniform float distance, span, phi, crop, side, axis, kind;
+      uniform float distance, span, phi, crop, side, axis, kind, inner, outer;
 ${CROP_GLSL}
       float gtAt(vec3 p, vec2 r, float eyeX) {
         vec3 g = normalize(lamp - p) + normalize(vec3(eyeX, 0.0, distance) - p);
@@ -70,9 +72,17 @@ ${CROP_GLSL}
         }
         float c = cos(phi), s = sin(phi);
         vec2 q = vec2(at.x * c - at.y * s, at.x * s + at.y * c);
-        bool cropped = !inCrop(q, crop, side, axis);
+        vec4 violet = vec4(0.565, 0.27, 0.976, 1.0);
+        bool kept = inCrop(q, crop, side, axis);
+        float rim = min(length(at) - inner, outer - length(at));
+        bool whole = side < 0.5 && crop >= 1.5707;
+        if (cropEdge(q, crop, side, axis) < 0.35 || (kept && !whole && rim < 0.7)) {
+          gl_FragColor = vec4(violet.rgb, 0.9);
+          return;
+        }
+        if (!kept) discard;
         float line = fract((at.x + at.y) / 1.41421 / 2.4);
-        gl_FragColor = (dead || cropped) ? vec4(vec3(0.92), line < 0.22 ? 0.27 : 0.0) : vec4(0.565, 0.27, 0.976, strength * 0.47);
+        gl_FragColor = dead ? vec4(vec3(0.92), line < 0.22 ? 0.27 : 0.0) : vec4(violet.rgb, strength * 0.47);
       }
     `,
   })
