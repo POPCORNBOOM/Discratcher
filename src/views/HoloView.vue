@@ -540,7 +540,6 @@
         </div>
         <div v-if="!scene.objects.length && !loadingMesh" class="hint">{{ t('holo.dropHint') }}</div>
         <div v-if="loadingMesh" class="hint">{{ t('holo.loadingModel') }}</div>
-        <div v-if="selectedObj" class="float left mono muted">{{ selectedDepthWords }}</div>
         <div class="float legend small muted" aria-hidden="true">
           <span class="legend-name">{{ t('holo.legendDepth') }}</span>
           <span class="scale">
@@ -811,7 +810,6 @@ const hasPreviewSource = computed(() => expViews.value.length > 0 || visibleObje
 const canBurn = computed(() => ready.value && hasPreviewSource.value)
 const radii = computed(() => discRadiiMm(s.preset))
 const selectedObj = computed(() => scene.value.objects.find((o) => o.id === selectedId.value) ?? null)
-const selectedDepthWords = computed(() => (selectedObj.value ? formatDepthWords(selectedObj.value.positionMm[2], t) : ''))
 
 const tabOptions = computed(() => [
   { value: 'edit', label: t('holo.modeEdit') },

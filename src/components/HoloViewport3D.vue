@@ -61,6 +61,7 @@ import {
   LAMP_REACH_MM,
   type Vec3,
 } from '../holo/constants'
+import { createAxesGizmo } from '../holo/axesGizmo'
 import { sampleMotion } from '../holo/motion'
 import type { DisplayMeshData } from '../holo/sampleMesh'
 import { DEFAULT_CROP_DEG, round1, type HoloPosition, type HoloSceneObject } from '../holo/scene'
@@ -105,6 +106,7 @@ const planeDragging = ref(false)
 let renderer: WebGLRenderer | null = null
 let scene: Scene | null = null
 let camera: PerspectiveCamera | null = null
+let axes: ReturnType<typeof createAxesGizmo> | null = null
 let orbit: OrbitControls | null = null
 let gizmo: TransformControls | null = null
 let resizeObs: ResizeObserver | null = null
@@ -710,6 +712,7 @@ function animate() {
   orbit?.update()
   if (renderer && scene && camera) {
     renderer.render(scene, camera)
+    axes?.render(renderer, camera)
   }
 }
 
@@ -730,6 +733,7 @@ onMounted(() => {
   renderer.shadowMap.type = PCFShadowMap
 
   scene = new Scene()
+  axes = createAxesGizmo()
   camera = new PerspectiveCamera(CAMERA_FOV_DEG, 1, 1, 8000)
   // Scene space: +x right, +y up (12 o'clock), +z toward viewer.
   camera.up.set(0, 0, 1)
@@ -875,6 +879,7 @@ watch(() => [props.objects, props.meshes, props.selectedId, props.positions, pro
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(animFrame)
+  axes?.dispose()
   resizeObs?.disconnect()
   gizmo?.detach()
   gizmo?.dispose()
