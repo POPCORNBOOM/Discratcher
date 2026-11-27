@@ -9,7 +9,10 @@
       <div class="flow fields">
         <div class="design-title">
           <h1>{{ t('holo.title') }}</h1>
-          <div class="small muted ellipsis" :data-tooltip="designDir ?? undefined">{{ designName }}<template v-if="dirty"> · {{ t('carve.unsaved') }}</template></div>
+          <div class="design-name small muted">
+            <span class="ellipsis" :data-tooltip="designDir ?? undefined">{{ designName }}</span>
+            <span v-if="dirty" class="unsaved">{{ t('carve.unsaved') }}</span>
+          </div>
         </div>
 
         <div v-if="missingFiles.length" class="notice warn">
@@ -2262,6 +2265,8 @@ onBeforeUnmount(() => {
 .drop-inner { display: flex; flex-direction: column; align-items: center; gap: var(--oc-space-2xs); }
 .obj-list { display: flex; flex-direction: column; gap: 2px; }
 .design-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.design-name { display: flex; align-items: center; gap: var(--oc-space-sm); min-width: 0; }
+.design-name .unsaved { flex: none; color: var(--oc-fg-warning); }
 .templates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--oc-space-sm); }
 .template { display: flex; flex-direction: column; align-items: flex-start; gap: var(--oc-space-2xs); padding: var(--oc-space-md); border: 1px solid var(--oc-border-muted); border-radius: var(--oc-radius-control); background: var(--oc-bg-base); color: var(--oc-fg-default); text-align: left; }
 .template:hover { border-color: var(--oc-accent); }

@@ -105,7 +105,7 @@ vec3 room(vec3 r, float blur, vec3 pointerDir) {
 }
 
 // The grating equation, summed over wavelength. Tracks sit a pitch d apart, so light of
-// wavelength λ leaves in order m only where (L + V)·radial = mλ/d. Each wavelength lands
+// wavelength λ leaves in order m only where dot(L + V, radial) = mλ/d. Each wavelength lands
 // on its own radius, and that separation is the rainbow. The source's size blurs it.
 vec3 diffraction(vec3 lightDir, vec3 view, vec3 radial, vec3 along, float sourceSize, float spread) {
   vec3 h = lightDir + view;
@@ -310,7 +310,7 @@ function etchCanvas(code: string) {
   g.fillStyle = '#fff'
   g.font = '600 15px "SF Mono", Menlo, monospace'
   g.textAlign = 'center'
-  const unit = `${code}   ·   `
+  const unit = `${code}      `
   const text = unit.repeat(Math.ceil(ETCH_CHARS / unit.length))
   const radius = (20.6 / 60) * (size / 2)
   const chars = [...text]

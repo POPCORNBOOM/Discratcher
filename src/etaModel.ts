@@ -44,7 +44,7 @@ export class StepEstimator {
   }
 }
 
-// Calibration. On the GUD1N a rung of 40 pairs takes 5.47 + 17.61·√d seconds, where d is
+// Calibration. On the GUD1N a rung of 40 pairs takes 5.47 + 17.61 × √d seconds, where d is
 // its distance from the reference as a share of the disc (rms 1.1 s over 56 rungs).
 const SECONDS_PER_PAIR = 5.47 / 40
 const SEEK_RATIO = 17.61 / 5.47
