@@ -13,6 +13,7 @@ provide(ACCORDION, open)
 </script>
 
 <style scoped>
-.ui-accordion { display: flex; flex-direction: column; border: 1px solid var(--oc-border-muted); border-radius: var(--oc-radius-surface); background: var(--oc-bg-block); overflow: hidden; }
+/* Never taller than the room it is given: the open section scrolls inside instead. */
+.ui-accordion { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--oc-border-muted); border-radius: var(--oc-radius-surface); background: var(--oc-bg-block); overflow: hidden; }
 .ui-accordion > :deep(.ui-section + .ui-section) { border-top: 1px solid var(--oc-border-muted); }
 </style>

@@ -32,7 +32,9 @@ function toggle() {
 </script>
 
 <style scoped>
-.ui-section { --fold: 280ms; display: flex; flex-direction: column; }
+.ui-section { --fold: 280ms; flex: none; display: flex; flex-direction: column; }
+/* The open section takes what room is left, its heading staying put while its body scrolls. */
+.ui-section.open { flex: 0 1 auto; min-height: 0; }
 .head { display: flex; align-items: center; gap: var(--oc-space-sm); padding: 0 var(--oc-space-md) 0 var(--oc-space-sm); }
 .head:hover { background: var(--oc-bg-hover); }
 .toggle { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: var(--oc-space-xs); height: 36px; padding: 0; border: 0; background: transparent; color: var(--oc-fg-default); font-size: var(--oc-text-lg); font-weight: 600; text-align: left; }
@@ -42,9 +44,10 @@ function toggle() {
 .chevron.on { transform: rotate(90deg); }
 .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Grows from no height to the content's own, so the open section pushes the rest down smoothly. */
-.fold { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--fold) var(--oc-ease); }
+.fold { flex: 0 1 auto; min-height: 0; display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--fold) var(--oc-ease); }
 .open .fold { grid-template-rows: 1fr; }
 .clip { min-height: 0; overflow: hidden; }
+.open .clip { overflow-y: auto; overscroll-behavior: contain; }
 .body { opacity: 0; transform: translateY(-4px); transition: opacity var(--fold) var(--oc-ease), transform var(--fold) var(--oc-ease); }
 .open .body { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) { .fold, .body, .chevron { transition: none; } }
