@@ -7,9 +7,20 @@ import {
   LAMP_HELD_MM,
   type Vec3,
 } from './constants'
+import {
+  cloneMotion,
+  defaultMotion,
+  evaluateMatrixSamples,
+  IDENTITY_MATRIX_STRINGS,
+  isPresetId,
+  presetMatrixStrings,
+  type HoloMotion,
+} from './motion'
 
 export const SCENE_VERSION = 1 as const
 const LAST_SCENE_STORAGE_KEY = 'discratcher.holo.lastScene.v1'
+
+export type HoloPositionMode = 'real' | 'transform'
 
 export interface HoloInkStyle {
   lines: number
@@ -19,6 +30,8 @@ export interface HoloInkStyle {
 
 export const DEFAULT_INK_STYLE: HoloInkStyle = { lines: 0.85, shading: 0.25, texture: 0.8 }
 export const DEFAULT_CROP_DEG = 30
+export const DEFAULT_POSITION_MODE: HoloPositionMode = 'real'
+export const DEFAULT_PARALLAX = 2
 
 export function defaultInkStyle(): HoloInkStyle {
   return { ...DEFAULT_INK_STYLE }
@@ -34,6 +47,7 @@ export interface HoloSceneObject {
   scaleMm: number
   positionId: string
   style: HoloInkStyle
+  motion: HoloMotion
 }
 
 /** One way the disc is turned to be looked at, with its own objects. */
@@ -44,6 +58,10 @@ export interface HoloPosition {
   phiDeg: number
   /** Half-angle kept around 12 and 6 o'clock of this position, degrees; 90 means no crop. */
   cropDeg: number
+  /** Target generation mode: real parallax or transform animation. */
+  mode: HoloPositionMode
+  /** Parallax boost factor used in real mode. */
+  parallax: number
 }
 
 export interface HoloScene {
@@ -116,6 +134,7 @@ export function cloneScene(scene: HoloScene): HoloScene {
       positionMm: [...o.positionMm] as Vec3,
       rotationDeg: [...o.rotationDeg] as Vec3,
       style: { ...o.style },
+      motion: cloneMotion(o.motion),
     })),
   }
 }
@@ -124,8 +143,13 @@ export function emptyScene(): HoloScene {
   return { version: SCENE_VERSION, positions: [makePosition(0)], objects: [] }
 }
 
-export function makePosition(phiDeg: number, cropDeg = DEFAULT_CROP_DEG): HoloPosition {
-  return { id: makeObjectId(), name: '', phiDeg, cropDeg }
+export function makePosition(
+  phiDeg: number,
+  cropDeg = DEFAULT_CROP_DEG,
+  mode: HoloPositionMode = DEFAULT_POSITION_MODE,
+  parallax = DEFAULT_PARALLAX,
+): HoloPosition {
+  return { id: makeObjectId(), name: '', phiDeg, cropDeg, mode, parallax }
 }
 
 export const wrapDeg = (d: number) => ((Math.round(d * 10) / 10) % 360 + 360) % 360
@@ -185,6 +209,51 @@ function asStyle(raw: unknown): HoloInkStyle {
   return { lines: pick('lines'), shading: pick('shading'), texture: pick('texture') }
 }
 
+function asSamples(raw: unknown): number[][] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  const out: number[][] = []
+  for (const row of raw) {
+    if (!Array.isArray(row) || row.length !== 16) return null
+    if (!row.every((v) => typeof v === 'number' && Number.isFinite(v))) return null
+    out.push([...(row as number[])])
+  }
+  return out
+}
+
+function asMotion(raw: unknown): HoloMotion {
+  if (!raw || typeof raw !== 'object') return defaultMotion()
+  const m = raw as Record<string, unknown>
+  const preset = typeof m.preset === 'string' && isPresetId(m.preset) ? m.preset : 'none'
+  const rawMatrix =
+    Array.isArray(m.matrix) && m.matrix.length === 16 && m.matrix.every((v) => typeof v === 'string')
+      ? [...(m.matrix as string[])]
+      : null
+  const rawSamples = asSamples(m.samples)
+
+  if (preset !== 'custom') {
+    const presetMat = presetMatrixStrings(preset)
+    if (presetMat) {
+      const evaluated = evaluateMatrixSamples(presetMat)
+      if (evaluated.ok) {
+        return { preset, matrix: presetMat, samples: evaluated.samples }
+      }
+    }
+  }
+  if (rawMatrix) {
+    const evaluated = evaluateMatrixSamples(rawMatrix)
+    if (evaluated.ok) {
+      return { preset, matrix: rawMatrix, samples: evaluated.samples }
+    }
+    if (rawSamples) {
+      return { preset, matrix: rawMatrix, samples: rawSamples }
+    }
+  }
+  if (rawSamples) {
+    return { preset: 'custom', matrix: [...IDENTITY_MATRIX_STRINGS], samples: rawSamples }
+  }
+  return defaultMotion()
+}
+
 /** Parse and validate a versioned scene JSON payload. Throws a concise error on invalid data. */
 export function validateScene(raw: unknown): HoloScene {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid scene payload')
@@ -201,7 +270,19 @@ export function validateScene(raw: unknown): HoloScene {
         typeof q.cropDeg === 'number' && Number.isFinite(q.cropDeg)
           ? Math.min(90, Math.max(5, q.cropDeg))
           : DEFAULT_CROP_DEG
-      positions.push({ id: q.id, name: typeof q.name === 'string' ? q.name : '', phiDeg: wrapDeg(q.phiDeg), cropDeg })
+      const mode: HoloPositionMode = q.mode === 'transform' ? 'transform' : 'real'
+      const parallax =
+        typeof q.parallax === 'number' && Number.isFinite(q.parallax)
+          ? Math.min(6, Math.max(1, round1(q.parallax)))
+          : DEFAULT_PARALLAX
+      positions.push({
+        id: q.id,
+        name: typeof q.name === 'string' ? q.name : '',
+        phiDeg: wrapDeg(q.phiDeg),
+        cropDeg,
+        mode,
+        parallax,
+      })
     }
   }
   // A scene from before there were positions is one, not turned.
@@ -224,6 +305,7 @@ export function validateScene(raw: unknown): HoloScene {
           : DEFAULT_OBJECT_SCALE_MM,
       positionId: positions.some((q) => q.id === o.positionId) ? (o.positionId as string) : positions[0].id,
       style: asStyle(o.style),
+      motion: asMotion(o.motion),
     })
   }
   return Array.isArray(rec.lampMm) ? { version: SCENE_VERSION, positions, objects, lampMm: asVec3(rec.lampMm, LAMP_HELD_MM) } : { version: SCENE_VERSION, positions, objects }

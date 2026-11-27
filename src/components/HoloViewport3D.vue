@@ -30,6 +30,7 @@ import {
   LineBasicMaterial,
   LineLoop,
   MathUtils,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -60,6 +61,7 @@ import {
   LAMP_REACH_MM,
   type Vec3,
 } from '../holo/constants'
+import { sampleMotion } from '../holo/motion'
 import type { DisplayMeshData } from '../holo/sampleMesh'
 import { DEFAULT_CROP_DEG, round1, type HoloPosition, type HoloSceneObject } from '../holo/scene'
 import { zonesMaterial } from '../holo/usability'
@@ -78,6 +80,7 @@ const props = defineProps<{
   outerRadiusMm: number
   lampMm: Vec3
   distanceMm: number
+  previewT: number
 }>()
 
 const emit = defineEmits<{
@@ -124,8 +127,11 @@ let shownPhi = 0
 let lampMesh: Mesh | null = null
 let lampBeam: LineLoop | null = null
 
-const objectMeshes = new Map<string, { mesh: Mesh; path: string }>()
+const objectMeshes = new Map<string, { wrapper: Group; mesh: Mesh; path: string }>()
 const geometryCache = new Map<string, BufferGeometry>()
+const matPos = new Matrix4()
+const matNeg = new Matrix4()
+const matT = new Matrix4()
 
 const raycaster = new Raycaster()
 // The arrows on the rim are thin lines: let a click come near.
@@ -368,6 +374,35 @@ function updateObjectMaterials() {
   }
 }
 
+function applyMotionWrapper(wrapper: Group, obj: HoloSceneObject, posMm: Vec3) {
+  const activePos = currentPosition()
+  if (activePos?.mode === 'transform' && obj.positionId === props.positionId) {
+    const m = sampleMotion(obj.motion.samples, props.previewT)
+    // Match Rust `place_scene_object_with`: scene_p = pos + L * (scale * R * p) + tr
+    // via translate(pos) * T * translate(-pos) on top of the object's mesh transform.
+    matT.set(
+      m[0], m[1], m[2], m[3],
+      m[4], m[5], m[6], m[7],
+      m[8], m[9], m[10], m[11],
+      0, 0, 0, 1,
+    )
+    matPos.makeTranslation(posMm[0], posMm[1], posMm[2])
+    matNeg.makeTranslation(-posMm[0], -posMm[1], -posMm[2])
+    wrapper.matrix.copy(matPos).multiply(matT).multiply(matNeg)
+  } else {
+    wrapper.matrix.identity()
+  }
+  wrapper.matrixWorldNeedsUpdate = true
+}
+
+function syncMotionTransforms() {
+  for (const obj of props.objects) {
+    const entry = objectMeshes.get(obj.id)
+    if (!entry) continue
+    applyMotionWrapper(entry.wrapper, obj, obj.positionMm)
+  }
+}
+
 function syncObjects() {
   if (!scene || suppressSync) return
   const activeIds = new Set(props.objects.map((o) => o.id))
@@ -376,7 +411,7 @@ function syncObjects() {
   for (const [id, entry] of objectMeshes) {
     if (!activeIds.has(id)) {
       if (gizmo?.object === entry.mesh) gizmo.detach()
-      entry.mesh.removeFromParent()
+      entry.wrapper.removeFromParent()
       ;(entry.mesh.material as MeshStandardMaterial).dispose()
       objectMeshes.delete(id)
     }
@@ -390,7 +425,7 @@ function syncObjects() {
     if (!entry || entry.path !== obj.path) {
       if (entry) {
         if (gizmo?.object === entry.mesh) gizmo.detach()
-        entry.mesh.removeFromParent()
+        entry.wrapper.removeFromParent()
         ;(entry.mesh.material as MeshStandardMaterial).dispose()
       }
       const geo = getOrCreateGeometry(obj.path, data)
@@ -406,12 +441,16 @@ function syncObjects() {
       mesh.userData.objectId = obj.id
       // Match Rust `rot_xyz` (Rz * Ry * Rx).
       mesh.rotation.order = 'ZYX'
-      entry = { mesh, path: obj.path }
+      const wrapper = new Group()
+      wrapper.matrixAutoUpdate = false
+      wrapper.add(mesh)
+      entry = { wrapper, mesh, path: obj.path }
       objectMeshes.set(obj.id, entry)
     }
-    const { mesh } = entry
+    const { wrapper, mesh } = entry
     const group = groupFor(obj.positionId)
-    if (mesh.parent !== group) group.add(mesh)
+    if (wrapper.parent !== group) group.add(wrapper)
+    wrapper.visible = obj.visible
     mesh.visible = obj.visible
     mesh.position.set(obj.positionMm[0], obj.positionMm[1], obj.positionMm[2])
     mesh.rotation.set(
@@ -421,6 +460,7 @@ function syncObjects() {
       'ZYX',
     )
     mesh.scale.setScalar(obj.scaleMm)
+    applyMotionWrapper(wrapper, obj, obj.positionMm)
   }
 
   for (const [id, g] of positionGroups) {
@@ -593,6 +633,7 @@ function onPointerMove(e: PointerEvent) {
   if (!obj || !entry) return
 
   entry.mesh.position.set(nx, ny, dragTargetZ)
+  applyMotionWrapper(entry.wrapper, obj, [nx, ny, dragTargetZ])
   updateDropIndicator({ ...obj, positionMm: [nx, ny, dragTargetZ] })
   suppressSync = true
   emit('transform-change', {
@@ -718,6 +759,7 @@ onMounted(() => {
       emit('transform-start', id)
     } else {
       emit('transform-end', id)
+      syncMotionTransforms()
     }
   })
   gizmo.addEventListener('objectChange', () => {
@@ -803,6 +845,7 @@ watch(() => [props.lampMm, props.distanceMm], () => {
   syncLamp()
 }, { deep: true })
 watch(() => [props.mode, props.snap], () => syncGizmoModeAndSnap())
+watch(() => props.previewT, () => syncMotionTransforms())
 watch(() => [props.objects, props.meshes, props.selectedId, props.positions, props.positionId], () => syncObjects(), { deep: true })
 
 onBeforeUnmount(() => {

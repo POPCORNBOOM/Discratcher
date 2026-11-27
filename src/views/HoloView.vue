@@ -65,6 +65,35 @@
             </div>
             <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
             <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
+            <div class="field">
+              <span class="small muted">{{ t('holo.calcMode') }}</span>
+              <UiSelect
+                :model-value="position.mode"
+                :label="t('holo.calcMode')"
+                :options="calcModeOptions"
+                @update:model-value="setMode($event as HoloPositionMode)"
+              />
+            </div>
+            <UiSlider
+              v-if="position.mode === 'real'"
+              :model-value="position.parallax"
+              :label="t('holo.parallax')"
+              :min="1"
+              :max="6"
+              :step="0.1"
+              :format="(x) => t('holo.times', { n: x.toFixed(1) })"
+              @pointerdown="beginControlEdit"
+              @update:model-value="setParallax"
+            />
+            <UiSlider
+              v-else
+              v-model="previewT"
+              :label="t('holo.previewT')"
+              :min="0"
+              :max="1"
+              :step="0.01"
+              :format="(x) => x.toFixed(2)"
+            />
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
@@ -136,6 +165,43 @@
               @pointerdown="beginControlEdit"
               @update:model-value="setSelectedScale"
             />
+            <template v-if="position.mode === 'transform'">
+              <div class="field">
+                <span class="small muted">{{ t('holo.motionPreset') }}</span>
+                <UiSelect
+                  :model-value="selectedObj.motion.preset"
+                  :label="t('holo.motionPreset')"
+                  :options="motionPresetOptions"
+                  @update:model-value="setMotionPreset($event as MotionPresetId)"
+                />
+              </div>
+              <div class="field">
+                <span class="small muted">{{ t('holo.motionMatrix') }}</span>
+                <div class="mat-grid">
+                  <input
+                    v-for="(expr, idx) in motionDraft"
+                    :key="idx"
+                    type="text"
+                    class="mat-input mono"
+                    spellcheck="false"
+                    autocomplete="off"
+                    :value="expr"
+                    :readonly="selectedObj.motion.preset !== 'custom'"
+                    :aria-label="`${t('holo.motionMatrix')} ${Math.floor(idx / 4) + 1},${(idx % 4) + 1}`"
+                    :data-tooltip="expr"
+                    data-tooltip-overflow
+                    @input="onMotionCellInput(idx, $event)"
+                    @blur="commitMotionMatrix"
+                    @change="commitMotionMatrix"
+                    @keydown.enter.prevent="commitMotionMatrix"
+                  />
+                </div>
+              </div>
+              <div v-if="motionError" class="notice warn">
+                <UiIcon :path="mdiAlertOutline" />
+                <div class="grow">{{ motionError }}</div>
+              </div>
+            </template>
           </section>
 
           <section class="section">
@@ -152,10 +218,6 @@
             </template>
           </section>
         </template>
-
-        <section v-if="scene.objects.length" class="section">
-          <UiSlider v-model="opts.parallax" :label="t('holo.parallax')" :min="1" :max="6" :step="0.1" :format="(x) => t('holo.times', { n: x.toFixed(1) })" />
-        </section>
 
         <!-- Hardcore / advanced settings -->
         <UiAdvanced>
@@ -451,6 +513,7 @@
           :outer-radius-mm="radii.outer"
           :lamp-mm="opts.lampMm"
           :distance-mm="opts.distanceMm"
+          :preview-t="previewT"
           @select="selectObject"
           @position="goToPosition"
           @transform-start="onTransformStart"
@@ -544,6 +607,14 @@ import {
   LAMP_REACH_MM,
   type Vec3,
 } from '../holo/constants'
+import {
+  cloneMotion,
+  defaultMotion,
+  evaluateMatrixSamples,
+  makePresetMotion,
+  MOTION_PRESET_IDS,
+  type MotionPresetId,
+} from '../holo/motion'
 import { decodeDisplayMesh, type DisplayMeshData } from '../holo/sampleMesh'
 import {
   cloneScene,
@@ -563,6 +634,7 @@ import {
   SCENE_VERSION,
   validateScene,
   type HoloInkStyle,
+  type HoloPositionMode,
   type HoloScene,
   type HoloSceneObject,
 } from '../holo/scene'
@@ -665,7 +737,6 @@ const opts = reactive<{
   distanceMm: number
   chromaWeight: number
   exposure: number
-  parallax: number
   grid: number
 }>({
   lampPreset: 'held',
@@ -673,9 +744,13 @@ const opts = reactive<{
   distanceMm: DEFAULT_DISTANCE_MM,
   chromaWeight: 1,
   exposure: 0.6,
-  parallax: 2,
   grid: 256,
 })
+
+// Editor-only preview parameter for transform mode (not saved, not sent to solver).
+const previewT = ref(0.5)
+const motionDraft = ref<string[]>([])
+const motionError = ref('')
 
 // ---- Experimental legacy tools state (collapsed inside Advanced) ----
 const expViews = ref<ExpView[]>([])
@@ -721,6 +796,23 @@ const lightModeOptions = computed<UiSelectOption[]>(() => [
   { value: 'flash', label: t('holo.lightModeFlash') },
   { value: 'far', label: t('holo.lightModeFar') },
 ])
+const calcModeOptions = computed<UiSelectOption[]>(() => [
+  { value: 'real', label: t('holo.calcModeReal') },
+  { value: 'transform', label: t('holo.calcModeTransform') },
+])
+const motionPresetLabels: Record<MotionPresetId, string> = {
+  none: 'holo.motionNone',
+  spinY90: 'holo.motionSpinY90',
+  spinY180: 'holo.motionSpinY180',
+  spinY360: 'holo.motionSpinY360',
+  tiltX90: 'holo.motionTiltX90',
+  slideX: 'holo.motionSlideX',
+  grow: 'holo.motionGrow',
+  custom: 'holo.motionCustom',
+}
+const motionPresetOptions = computed<UiSelectOption[]>(() =>
+  MOTION_PRESET_IDS.map((id) => ({ value: id, label: t(motionPresetLabels[id]) })),
+)
 
 const deg = (x: number) => `${x.toFixed(1)}°`
 const degInt = (x: number) => `${Math.round(x)}°`
@@ -803,6 +895,7 @@ async function addModelPath(path: string, displayName?: string) {
       visible: true,
       positionId: position.value.id,
       style: defaultInkStyle(),
+      motion: defaultMotion(),
       ...place,
     }
     scene.value.objects.push(obj)
@@ -862,6 +955,59 @@ function setCrop(deg: number) {
   position.value.cropDeg = Math.min(90, Math.max(5, Math.round(deg)))
 }
 
+function setMode(mode: HoloPositionMode) {
+  if (position.value.mode === mode) return
+  pushHistory()
+  position.value.mode = mode
+}
+
+function setParallax(v: number) {
+  position.value.parallax = Math.min(6, Math.max(1, round1(v)))
+}
+
+function setMotionPreset(preset: MotionPresetId) {
+  const obj = selectedObj.value
+  if (!obj || obj.motion.preset === preset) return
+  pushHistory()
+  motionError.value = ''
+  if (preset === 'custom') {
+    obj.motion.preset = 'custom'
+  } else {
+    obj.motion = makePresetMotion(preset)
+  }
+}
+
+function onMotionCellInput(idx: number, e: Event) {
+  motionDraft.value[idx] = (e.target as HTMLInputElement).value
+}
+
+function commitMotionMatrix() {
+  const obj = selectedObj.value
+  if (!obj || obj.motion.preset !== 'custom') return
+  const next = motionDraft.value.map((s) => s.trim())
+  const res = evaluateMatrixSamples(next)
+  if (!res.ok) {
+    const row = Math.floor(res.cell / 4) + 1
+    const col = (res.cell % 4) + 1
+    motionError.value = t('holo.motionError', { row, col, error: res.error })
+    return
+  }
+  motionError.value = ''
+  motionDraft.value = next
+  if (next.every((v, i) => v === obj.motion.matrix[i])) return
+  pushHistory()
+  obj.motion = { preset: 'custom', matrix: next, samples: res.samples }
+}
+
+watch(
+  () => (selectedObj.value ? `${selectedObj.value.id}|${selectedObj.value.motion.preset}|${selectedObj.value.motion.matrix.join('\0')}` : ''),
+  () => {
+    motionDraft.value = selectedObj.value ? [...selectedObj.value.motion.matrix] : []
+    motionError.value = ''
+  },
+  { immediate: true },
+)
+
 const cropWords = (deg: number) => (deg >= 90 ? t('holo.cropNone') : t('holo.cropRange', { n: Math.round(deg) }))
 
 // Undo, open and removal can leave the current position behind.
@@ -896,6 +1042,7 @@ function duplicateSelected() {
     positionMm: [round1(src.positionMm[0] + 6), round1(src.positionMm[1]), round1(src.positionMm[2])],
     rotationDeg: [...src.rotationDeg] as Vec3,
     style: { ...src.style },
+    motion: cloneMotion(src.motion),
   }
   scene.value.objects.push(copy)
   selectedId.value = copy.id
@@ -1178,7 +1325,6 @@ const sceneOptions = () => ({
   chromaWeight: opts.chromaWeight,
   exposure: opts.exposure,
   grid: GRID,
-  parallax: opts.parallax,
 })
 
 function expViewSpec(imagePath: string, angleDeg: number, dirDeg: number, headXMm: number): ViewSpecDto {
@@ -1467,6 +1613,9 @@ onBeforeUnmount(() => {
 .num-field { display: flex; align-items: center; gap: var(--oc-space-2xs); min-width: 0; }
 .num-input { width: 100%; min-width: 0; height: var(--oc-size-md); padding: 0 var(--oc-space-xs); border: 0; border-radius: var(--oc-radius-control); background: var(--oc-bg-input); appearance: textfield; -moz-appearance: textfield; }
 .num-input::-webkit-inner-spin-button, .num-input::-webkit-outer-spin-button { appearance: none; -webkit-appearance: none; margin: 0; }
+.mat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--oc-space-2xs); }
+.mat-input { width: 100%; min-width: 0; height: var(--oc-size-sm); padding: 0 var(--oc-space-2xs); border: 0; border-radius: 4px; background: var(--oc-bg-input); color: var(--oc-fg-default); font-size: var(--oc-text-xs); text-align: center; }
+.mat-input[readonly] { background: var(--oc-bg-base); color: var(--oc-fg-muted); text-overflow: ellipsis; }
 .exp-box { display: flex; flex-direction: column; gap: var(--oc-space-sm); }
 .exp-toggle { align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; height: var(--oc-size-sm); padding: 0 var(--oc-space-xs) 0 0; border: 0; border-radius: var(--oc-radius-control); background: transparent; color: var(--oc-fg-muted); }
 .exp-toggle:hover { color: var(--oc-fg-default); }

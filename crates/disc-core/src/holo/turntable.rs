@@ -44,16 +44,13 @@ pub struct Options {
     pub chroma_weight: f64,
     pub exposure: f64,
     pub grid: usize,
-    /// How much further objects move with the eye than their depth asks for. At 1 the disc is a
-    /// plain window, and a few millimetres of depth move too little to notice.
-    pub parallax: f64,
     /// Weight of keeping a subject even from outside the window, against the window itself.
     pub wide: f64,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { distance_mm: design::DEFAULT_DISTANCE_MM, chroma_weight: 1.0, exposure: 0.6, grid: 512, parallax: 2.0, wide: 0.3 }
+        Options { distance_mm: design::DEFAULT_DISTANCE_MM, chroma_weight: 1.0, exposure: 0.6, grid: 512, wide: 0.3 }
     }
 }
 
@@ -77,16 +74,28 @@ pub fn tilted_eye_and_lamp(opts: &Options, lamp_mm: V3, tilt: f64, angle: f64) -
     (turn(roll([0.0, 0.0, opts.distance_mm]), angle), turn(roll(model3d::scene_to_disc(lamp_mm)), angle))
 }
 
+fn place_normalized_with(norm: &Mesh, obj: &SceneObject, transform: Option<&[f64; 16]>, angle: f64, thickness_mm: f64) -> Mesh {
+    let mut m = model3d::place_normalized_with(norm, obj, transform);
+    let at_z = obj.position_mm[2] + transform.map_or(0.0, |t| t[11]);
+    settle(&mut m, at_z, thickness_mm);
+    let tris = m.tris.into_iter().map(|tri| tri.map(|v| Vertex { pos: turn(v.pos, angle), normal: turn(v.normal, angle), ..v })).collect();
+    Mesh { tris }
+}
+
+/// An object's mesh in the disc frame, with an optional scene-space transform `T` applied about
+/// the object's position before thickness easing (`settle`).
+pub fn place_with(mesh: &Mesh, obj: &SceneObject, transform: Option<&[f64; 16]>, angle: f64, thickness_mm: f64) -> Result<Mesh, String> {
+    let norm = model3d::normalize_mesh(mesh)?;
+    Ok(place_normalized_with(&norm, obj, transform, angle, thickness_mm))
+}
+
 /// An object's mesh in the disc frame, for a position that has `angle` at the top.
 ///
 /// Its depth is eased into `thickness_mm` either side of where the viewer mostly sees it, and
 /// that place is put at the depth the object was given: what is near the disc's own surface is
 /// sharp, and what is far from it smears.
 pub fn place(mesh: &Mesh, obj: &SceneObject, angle: f64, thickness_mm: f64) -> Result<Mesh, String> {
-    let mut m = model3d::place_scene_object(mesh, obj)?;
-    settle(&mut m, obj.position_mm[2], thickness_mm);
-    let tris = m.tris.into_iter().map(|tri| tri.map(|v| Vertex { pos: turn(v.pos, angle), normal: turn(v.normal, angle), ..v })).collect();
-    Ok(Mesh { tris })
+    place_with(mesh, obj, None, angle, thickness_mm)
 }
 
 fn settle(m: &mut Mesh, at_mm: f64, thickness_mm: f64) {
@@ -120,7 +129,17 @@ fn settle(m: &mut Mesh, at_mm: f64, thickness_mm: f64) {
 fn grouped(scene: &Scene) -> Vec<(Position, Vec<&SceneObject>)> {
     let mut out: Vec<(Position, Vec<&SceneObject>)> = scene.positions.iter().map(|p| (p.clone(), vec![])).collect();
     if out.is_empty() {
-        out.push((Position { id: String::new(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0 }, vec![]));
+        out.push((
+            Position {
+                id: String::new(),
+                name: String::new(),
+                phi_deg: 0.0,
+                crop_deg: 30.0,
+                mode: model3d::Mode::Real,
+                parallax: model3d::DEFAULT_PARALLAX,
+            },
+            vec![],
+        ));
     }
     for o in scene.objects.iter().filter(|o| o.visible) {
         let i = out.iter().position(|(p, _)| p.id == o.position_id).unwrap_or(0);
@@ -145,24 +164,59 @@ pub struct Solution {
     pub overlapping: Vec<String>,
 }
 
-fn solve_position(angle: f64, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, resp: &Responses, preset: &DiscGeometryPreset) -> Result<Patch, String> {
-    let mesh = objects
+fn position_targets(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, preset: &DiscGeometryPreset) -> Result<Vec<Vec<f32>>, String> {
+    let angle = pos.phi_deg.to_radians();
+    let n = opts.grid;
+    // Load and normalize each mesh once, even in transform mode where placement varies per view.
+    let normalized: Vec<Mesh> = objects
         .iter()
-        .map(|o| Ok((place(&*model3d::load_mesh_or_builtin(&o.path)?, o, angle, THICKNESS_MM)?, o.style)))
+        .map(|o| model3d::normalize_mesh(&*model3d::load_mesh_or_builtin(&o.path)?))
         .collect::<Result<Vec<_>, String>>()?;
+    match pos.mode {
+        model3d::Mode::Real => {
+            let mesh: Vec<(Mesh, ink::Style)> = objects
+                .iter()
+                .zip(&normalized)
+                .map(|(o, norm)| (place_normalized_with(norm, o, None, angle, THICKNESS_MM), o.style))
+                .collect();
+            let drawn: Vec<V3> = (0..VIEWS)
+                .map(|i| eye_and_lamp(opts, lamp_mm, pos.parallax * HEAD_HALF_SPAN_MM * (2.0 * i as f64 / (VIEWS - 1) as f64 - 1.0), angle).0)
+                .collect();
+            Ok(drawn
+                .par_iter()
+                .map(|e| ink::draw(&mesh, *e, angle, n, preset.inner_radius_mm, preset.outer_radius_mm))
+                .collect())
+        }
+        model3d::Mode::Transform => {
+            let center_eye = eye_and_lamp(opts, lamp_mm, 0.0, angle).0;
+            Ok((0..VIEWS)
+                .into_par_iter()
+                .map(|i| {
+                    let t = i as f64 / (VIEWS - 1) as f64;
+                    let mesh: Vec<(Mesh, ink::Style)> = objects
+                        .iter()
+                        .zip(&normalized)
+                        .map(|(o, norm)| {
+                            let m = o.motion.sample(t);
+                            (place_normalized_with(norm, o, Some(&m), angle, THICKNESS_MM), o.style)
+                        })
+                        .collect();
+                    ink::draw(&mesh, center_eye, angle, n, preset.inner_radius_mm, preset.outer_radius_mm)
+                })
+                .collect())
+        }
+    }
+}
+
+fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, resp: &Responses, preset: &DiscGeometryPreset) -> Result<Patch, String> {
+    let angle = pos.phi_deg.to_radians();
     let n = opts.grid;
     let k = resp.options;
     let plain = k - 1;
     let poses: Vec<(V3, V3)> = (0..VIEWS)
         .map(|i| eye_and_lamp(opts, lamp_mm, HEAD_HALF_SPAN_MM * (2.0 * i as f64 / (VIEWS - 1) as f64 - 1.0), angle))
         .collect();
-    let drawn: Vec<V3> = (0..VIEWS)
-        .map(|i| eye_and_lamp(opts, lamp_mm, opts.parallax * HEAD_HALF_SPAN_MM * (2.0 * i as f64 / (VIEWS - 1) as f64 - 1.0), angle).0)
-        .collect();
-    let sharp: Vec<Vec<f32>> = drawn
-        .par_iter()
-        .map(|e| ink::draw(&mesh, *e, angle, n, preset.inner_radius_mm, preset.outer_radius_mm))
-        .collect();
+    let sharp = position_targets(pos, objects, lamp_mm, opts, preset)?;
     // The disc cannot tell neighbouring views apart: blended, a point far from its surface is
     // one soft image rather than a row of copies.
     const BLEND: [f32; 5] = [0.1, 0.23, 0.34, 0.23, 0.1];
@@ -273,12 +327,12 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
                 (SceneObject { id: String::new(), name: String::new(), position_id: String::new(), ..(*o).clone() }, modified)
             })
             .collect();
-        let key = serde_json::to_string(&(pos.phi_deg, &same, lamp, &opts, preset)).map_err(|e| e.to_string())?;
+        let key = serde_json::to_string(&(pos.phi_deg, pos.mode, pos.parallax, &same, lamp, &opts, preset)).map_err(|e| e.to_string())?;
         let held = CACHE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|c| c.0 == key).map(|c| c.1.clone());
         let patch = match held {
             Some(p) => p,
             None => {
-                let p = Arc::new(solve_position(pos.phi_deg.to_radians(), objects, lamp, &opts, resp, preset)?);
+                let p = Arc::new(solve_position(pos, objects, lamp, &opts, resp, preset)?);
                 let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
                 if cache.len() >= KEEP {
                     cache.remove(0);
@@ -377,11 +431,23 @@ mod tests {
         SceneObject {
             id: format!("{position}{x},{y}"), path: model3d::BUILTIN_SAMPLE_PATH.into(), name: "s".into(), visible: true,
             position_mm: [x, y, 6.0], rotation_deg: [0.0; 3], scale_mm: 22.0, position_id: position.into(), style: ink::Style::default(),
+            motion: model3d::Motion::default(),
+        }
+    }
+
+    fn pos(id: &str, phi_deg: f64, crop_deg: f64) -> Position {
+        Position {
+            id: id.into(),
+            name: String::new(),
+            phi_deg,
+            crop_deg,
+            mode: model3d::Mode::Real,
+            parallax: model3d::DEFAULT_PARALLAX,
         }
     }
 
     fn scene(phis: &[f64], objects: Vec<SceneObject>) -> Scene {
-        let positions = phis.iter().enumerate().map(|(i, &phi_deg)| Position { id: i.to_string(), name: String::new(), phi_deg, crop_deg: 30.0 }).collect();
+        let positions = phis.iter().enumerate().map(|(i, &phi_deg)| pos(&i.to_string(), phi_deg, 30.0)).collect();
         Scene { version: model3d::SCENE_VERSION, objects, lamp_mm: None, positions }
     }
 
@@ -506,13 +572,13 @@ mod tests {
                 version: model3d::SCENE_VERSION,
                 objects: vec![obj.clone()],
                 lamp_mm: None,
-                positions: vec![Position { id: "0".into(), name: String::new(), phi_deg, crop_deg }],
+                positions: vec![pos("0", phi_deg, crop_deg)],
             };
             let sol30 = solve(&make(30.0), &opts, &shared.0, &shared.1, &preset).unwrap();
             let sol90 = solve(&make(90.0), &opts, &shared.0, &shared.1, &preset).unwrap();
 
             // 90° equals the raw uncropped patch written over background.
-            let raw = solve_position(phi_deg.to_radians(), &[&obj], LAMP_MM, &opts, &shared.1, &preset).unwrap();
+            let raw = solve_position(&pos("0", phi_deg, 90.0), &[&obj], LAMP_MM, &opts, &shared.1, &preset).unwrap();
             let mut uncropped = vec![0.0f32; grid * grid * k];
             for cell in uncropped.chunks_exact_mut(k) {
                 cell[bg] = 1.0;
@@ -555,12 +621,65 @@ mod tests {
             ],
             lamp_mm: None,
             positions: vec![
-                Position { id: "0".into(), name: String::new(), phi_deg: 0.0, crop_deg },
-                Position { id: "1".into(), name: String::new(), phi_deg: 90.0, crop_deg },
+                pos("0", 0.0, crop_deg),
+                pos("1", 90.0, crop_deg),
             ],
         };
         assert_eq!(solve(&both(90.0), &opts, &shared.0, &shared.1, &preset).unwrap().overlapping, ["0", "1"]);
         assert!(solve(&both(30.0), &opts, &shared.0, &shared.1, &preset).unwrap().overlapping.is_empty());
+    }
+
+    #[test]
+    fn transform_mode_identity_motion_gives_constant_targets_and_matches_zero_parallax() {
+        let preset = reference_preset();
+        let opts = Options { grid: 96, ..Default::default() };
+        let obj = star("0", 0.0, 41.0);
+        let p_transform = Position { mode: model3d::Mode::Transform, ..pos("0", 0.0, 30.0) };
+        let p_real_zero = Position { mode: model3d::Mode::Real, parallax: 0.0, ..pos("0", 0.0, 30.0) };
+        let t_targets = position_targets(&p_transform, &[&obj], LAMP_MM, &opts, &preset).unwrap();
+        let r_targets = position_targets(&p_real_zero, &[&obj], LAMP_MM, &opts, &preset).unwrap();
+        assert_eq!(t_targets.len(), VIEWS);
+        for v in 0..VIEWS {
+            assert_eq!(t_targets[v], t_targets[0], "view {v} should match view 0 for identity motion");
+            assert_eq!(t_targets[v], r_targets[v], "view {v} should match real mode with parallax 0");
+        }
+
+        // Non-identity motion must shift targets between t=0 and t=1.
+        let mut moved = obj.clone();
+        moved.motion = model3d::Motion {
+            preset: "slideX".into(),
+            matrix: vec![],
+            samples: vec![
+                [1.0, 0.0, 0.0, -10.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0, 10.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        let anim_targets = position_targets(&p_transform, &[&moved], LAMP_MM, &opts, &preset).unwrap();
+        assert_ne!(anim_targets[0], anim_targets[VIEWS - 1], "sliding motion should change target across views");
+    }
+
+    #[test]
+    fn scene_json_without_mode_motion_parallax_deserializes_with_defaults() {
+        let json = r#"{
+            "version": 1,
+            "positions": [{"id": "p0", "name": "", "phiDeg": 15.0}],
+            "objects": [{
+                "id": "o0",
+                "path": "builtin:star",
+                "name": "star",
+                "positionMm": [0, 41, 6],
+                "rotationDeg": [0, 0, 0],
+                "scaleMm": 22,
+                "positionId": "p0"
+            }]
+        }"#;
+        let s: Scene = serde_json::from_str(json).unwrap();
+        assert_eq!(s.positions.len(), 1);
+        assert_eq!(s.positions[0].mode, model3d::Mode::Real);
+        assert_eq!(s.positions[0].parallax, 2.0);
+        assert_eq!(s.positions[0].crop_deg, 30.0);
+        assert_eq!(s.objects[0].motion.sample(0.5), model3d::IDENTITY_MAT4);
+        assert!(s.objects[0].motion.samples.is_empty());
     }
 
     /// Three positions, the last of two models, as seen turning the disc.
@@ -625,8 +744,10 @@ mod tests {
             let mut line = String::new();
             for z in [-12.0f64, -6.0, 6.0, 12.0] {
                 let o = SceneObject { position_mm: [0.0, 41.0, z], ..star("0", 0.0, 41.0) };
-                let opts = Options { grid: 384, chroma_weight: chroma, parallax: gain, ..Default::default() };
-                let sol = solve(&scene(&[0.0], vec![o.clone()]), &opts, &shared.0, &shared.1, &preset).unwrap();
+                let opts = Options { grid: 384, chroma_weight: chroma, ..Default::default() };
+                let mut sc = scene(&[0.0], vec![o.clone()]);
+                sc.positions[0].parallax = gain;
+                let sol = solve(&sc, &opts, &shared.0, &shared.1, &preset).unwrap();
                 let view = |h: f64| -> Vec<f64> {
                     let (e, l) = eye_and_lamp(&opts, LAMP_MM, h, 0.0);
                     super::super::lightfield::render_float(&sol.solved, &shared.1, &preset, e, l, n, false).iter().map(|p| (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) as f64).collect()
@@ -684,8 +805,10 @@ mod tests {
         let preset = reference_preset();
         let o = star("0", 0.0, 41.0);
         for (parallax, chroma) in [(2.0, 0.0), (2.0, 0.1), (2.0, 0.3), (2.0, 1.0), (2.0, 3.0), (1.0, 1.0)] {
-            let opts = Options { grid: 256, parallax, chroma_weight: chroma, ..Default::default() };
-            let sol = solve(&scene(&[0.0], vec![o.clone()]), &opts, &shared.0, &shared.1, &preset).unwrap();
+            let opts = Options { grid: 256, chroma_weight: chroma, ..Default::default() };
+            let mut sc = scene(&[0.0], vec![o.clone()]);
+            sc.positions[0].parallax = parallax;
+            let sol = solve(&sc, &opts, &shared.0, &shared.1, &preset).unwrap();
             let mut line = String::new();
             for (name, h, lamp) in [("head -30", -30.0, LAMP_MM), ("head 0", 0.0, LAMP_MM), ("head 30", 30.0, LAMP_MM)] {
                 let (e, l) = eye_and_lamp(&opts, lamp, h, 0.0);
@@ -731,11 +854,13 @@ mod tests {
             for (row, (thickness_mm, parallax)) in [(0.0, 2.0), (6.0, 2.0), (3.0, 2.0), (3.0, 3.0), (1.5, 3.0)].into_iter().enumerate() {
                 let style = ink::Style::default();
                 let mesh = [(place(&model3d::load_mesh_or_builtin(path).unwrap(), &o, 0.0, thickness_mm).unwrap(), style)];
-                let opts = Options { parallax, ..Default::default() };
+                let opts = Options::default();
                 let drawn = ink::draw(&mesh, [0.0, 0.0, 350.0], 0.0, n, preset.inner_radius_mm, preset.outer_radius_mm);
                 put(&|i| [enc(drawn[i] as f64); 3], 0, row as u32);
                 let t = std::time::Instant::now();
-                let sol = solve(&scene(&[0.0], vec![o.clone()]), &opts, &shared.0, &shared.1, &preset).unwrap();
+                let mut sc = scene(&[0.0], vec![o.clone()]);
+                sc.positions[0].parallax = parallax;
+                let sol = solve(&sc, &opts, &shared.0, &shared.1, &preset).unwrap();
                 println!("{mi} row {row}: {:?}", t.elapsed());
                 for (col, h) in [0.0, -35.0, 35.0, -90.0, 90.0].into_iter().enumerate() {
                     let (e, l) = eye_and_lamp(&opts, LAMP_MM, h, 0.0);
@@ -766,10 +891,15 @@ mod tests {
         let objects = phis.iter().enumerate().map(|(k, &phi)| SceneObject {
             id: format!("m{k}"), path: path.clone(), name: "m".into(), visible: true,
             position_mm: [0.0, 41.0, 0.0], rotation_deg: [0.0, phi, 0.0], scale_mm: scale, position_id: k.to_string(), style: ink::Style::default(),
+            motion: model3d::Motion::default(),
         }).collect();
-        let opts = Options { grid: 384, parallax, ..Default::default() };
+        let opts = Options { grid: 384, ..Default::default() };
+        let mut sc = scene(&phis, objects);
+        for p in &mut sc.positions {
+            p.parallax = parallax;
+        }
         let t = std::time::Instant::now();
-        let sol = solve(&scene(&phis, objects), &opts, &shared.0, &shared.1, &preset).unwrap();
+        let sol = solve(&sc, &opts, &shared.0, &shared.1, &preset).unwrap();
         println!("solve {:?}, overlapping {:?}", t.elapsed(), sol.overlapping);
         let n = 320usize;
         let sweep: Vec<f64> = (0..12).map(|i| i as f64 * 7.5).collect();

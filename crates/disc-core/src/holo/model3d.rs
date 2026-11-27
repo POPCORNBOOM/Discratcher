@@ -371,6 +371,61 @@ fn default_crop_deg() -> f64 {
     30.0
 }
 
+pub const DEFAULT_PARALLAX: f64 = 2.0;
+
+fn default_parallax() -> f64 {
+    DEFAULT_PARALLAX
+}
+
+pub const IDENTITY_MAT4: [f64; 16] = [
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.0, 0.0, 0.0, 1.0,
+];
+
+/// How a viewing position's target views are generated across the viewing window.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// Real parallax: fixed object geometry viewed from scaled head positions.
+    #[default]
+    Real,
+    /// Transform animation: fixed centre eye, objects transformed by per-object T(t).
+    Transform,
+}
+
+/// Per-object animation transform for transform mode.
+///
+/// Rust never parses `matrix`; it linearly interpolates `samples` (row-major 4x4 matrices at
+/// evenly spaced `t` in `[0, 1]`). Empty `samples` means identity.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Motion {
+    pub preset: String,
+    pub matrix: Vec<String>,
+    pub samples: Vec<[f64; 16]>,
+}
+
+impl Motion {
+    /// Evaluate `T(t)` for `t` in `[0, 1]` by element-wise linear interpolation between samples.
+    pub fn sample(&self, t: f64) -> [f64; 16] {
+        match self.samples.len() {
+            0 => IDENTITY_MAT4,
+            1 => self.samples[0],
+            n => {
+                let tc = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
+                let pos = tc * (n - 1) as f64;
+                let i0 = (pos.floor() as usize).min(n - 2);
+                let frac = pos - i0 as f64;
+                let a = self.samples[i0];
+                let b = self.samples[i0 + 1];
+                std::array::from_fn(|k| a[k] + (b[k] - a[k]) * frac)
+            }
+        }
+    }
+}
+
 /// One placed 3D object in the hologram scene editor (scene space: +x right, +y up, +z toward viewer, mm).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -389,6 +444,9 @@ pub struct SceneObject {
     /// Per-object ink style (lines, shading, texture).
     #[serde(default)]
     pub style: super::ink::Style,
+    /// Per-object transform animation used when the owning position is in `Mode::Transform`.
+    #[serde(default)]
+    pub motion: Motion,
 }
 
 /// One way the disc is turned to be looked at, with its own objects.
@@ -403,6 +461,12 @@ pub struct Position {
     /// Half-angle kept around 12 and 6 o'clock of this position, degrees; 90 or more means no crop.
     #[serde(default = "default_crop_deg")]
     pub crop_deg: f64,
+    /// Target generation mode: real parallax or transform animation.
+    #[serde(default)]
+    pub mode: Mode,
+    /// Parallax boost factor used in `Mode::Real`.
+    #[serde(default = "default_parallax")]
+    pub parallax: f64,
 }
 
 /// Versioned 3D hologram scene contract shared between the editor UI, project files, and renderer.
@@ -639,13 +703,40 @@ pub fn mesh_to_display_bytes(mesh: &Mesh) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// Place a raw mesh according to `obj` in scene space (normalize -> Rz*Ry*Rx -> scale -> translate),
-/// then convert into the disc picture frame via `scene_to_disc`.
-pub fn place_scene_object(mesh: &Mesh, obj: &SceneObject) -> Result<Mesh, String> {
-    let norm = normalize_mesh(mesh)?;
+/// Inverse-transpose of the upper-left 3x3 of a row-major 4x4 matrix, or the upper-left 3x3
+/// itself if singular.
+fn normal_matrix_3x3(m: &[f64; 16]) -> [[f64; 3]; 3] {
+    let c0 = [m[0], m[4], m[8]];
+    let c1 = [m[1], m[5], m[9]];
+    let c2 = [m[2], m[6], m[10]];
+    let u0 = cross3(c1, c2);
+    let u1 = cross3(c2, c0);
+    let u2 = cross3(c0, c1);
+    let det = dot3(c0, u0);
+    if det.abs() > 1e-12 && det.is_finite() {
+        let inv = 1.0 / det;
+        [
+            [u0[0] * inv, u1[0] * inv, u2[0] * inv],
+            [u0[1] * inv, u1[1] * inv, u2[1] * inv],
+            [u0[2] * inv, u1[2] * inv, u2[2] * inv],
+        ]
+    } else {
+        [
+            [m[0], m[1], m[2]],
+            [m[4], m[5], m[6]],
+            [m[8], m[9], m[10]],
+        ]
+    }
+}
+
+/// Place an already-normalized mesh according to `obj` and optional row-major scene-space
+/// transform `transform` applied about `obj.position_mm`:
+/// `scene_p = position_mm + L * (scale * R * p) + tr`, then convert into the disc picture frame.
+pub(crate) fn place_normalized_with(norm: &Mesh, obj: &SceneObject, transform: Option<&[f64; 16]>) -> Mesh {
     let scale = obj.scale_mm.clamp(1.0, 200.0);
     let [rx, ry, rz] = obj.rotation_deg;
     let pos = obj.position_mm;
+    let n_mat = transform.map(normal_matrix_3x3);
     let tris = norm
         .tris
         .iter()
@@ -654,8 +745,21 @@ pub fn place_scene_object(mesh: &Mesh, obj: &SceneObject) -> Result<Mesh, String
             for i in 0..3 {
                 let rot_p = rot_xyz(tri[i].pos, rx, ry, rz);
                 let rot_n = rot_xyz(tri[i].normal, rx, ry, rz);
-                let scene_p = add3(scale3(rot_p, scale), pos);
-                let scene_n = unit3(rot_n).unwrap_or([0.0, 0.0, 1.0]);
+                let scaled = scale3(rot_p, scale);
+                let scene_p = if let Some(m) = transform {
+                    [
+                        pos[0] + m[0] * scaled[0] + m[1] * scaled[1] + m[2] * scaled[2] + m[3],
+                        pos[1] + m[4] * scaled[0] + m[5] * scaled[1] + m[6] * scaled[2] + m[7],
+                        pos[2] + m[8] * scaled[0] + m[9] * scaled[1] + m[10] * scaled[2] + m[11],
+                    ]
+                } else {
+                    add3(scaled, pos)
+                };
+                let scene_n = if let Some(nm) = n_mat {
+                    unit3([dot3(nm[0], rot_n), dot3(nm[1], rot_n), dot3(nm[2], rot_n)]).unwrap_or([0.0, 0.0, 1.0])
+                } else {
+                    unit3(rot_n).unwrap_or([0.0, 0.0, 1.0])
+                };
                 out[i] = Vertex {
                     pos: scene_to_disc(scene_p),
                     normal: scene_to_disc(scene_n),
@@ -665,7 +769,20 @@ pub fn place_scene_object(mesh: &Mesh, obj: &SceneObject) -> Result<Mesh, String
             out
         })
         .collect();
-    Ok(Mesh { tris })
+    Mesh { tris }
+}
+
+/// Place a raw mesh according to `obj` and an optional row-major scene-space 4x4 transform
+/// applied about `obj.position_mm`, then convert into the disc picture frame via `scene_to_disc`.
+pub fn place_scene_object_with(mesh: &Mesh, obj: &SceneObject, transform: Option<&[f64; 16]>) -> Result<Mesh, String> {
+    let norm = normalize_mesh(mesh)?;
+    Ok(place_normalized_with(&norm, obj, transform))
+}
+
+/// Place a raw mesh according to `obj` in scene space (normalize -> Rz*Ry*Rx -> scale -> translate),
+/// then convert into the disc picture frame via `scene_to_disc`.
+pub fn place_scene_object(mesh: &Mesh, obj: &SceneObject) -> Result<Mesh, String> {
+    place_scene_object_with(mesh, obj, None)
 }
 
 /// Software-rasterize a slice of placed meshes (already in disc-frame mm) into one shared
@@ -2024,7 +2141,7 @@ mod tests {
             visible: true,
             position_mm: [0.0, 41.0, 0.0],
             rotation_deg: [0.0, 0.0, 0.0],
-            scale_mm: 20.0, position_id: String::new(), style: Default::default(),
+            scale_mm: 20.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
         };
         let placed = place_scene_object(&letter_f, &obj).unwrap();
         let views = scene_head_motion_views(&SceneViewOptions { views: 3, ..Default::default() });
@@ -2086,7 +2203,7 @@ mod tests {
         let star = load_mesh_or_builtin(BUILTIN_SAMPLE_PATH).unwrap();
         let mk = |pos: [f64; 3], scale_mm: f64| SceneObject {
             id: "o".into(), path: "x".into(), name: "x".into(), visible: true,
-            position_mm: pos, rotation_deg: [0.0; 3], scale_mm, position_id: String::new(), style: Default::default(),
+            position_mm: pos, rotation_deg: [0.0; 3], scale_mm, position_id: String::new(), style: Default::default(), motion: Default::default(),
         };
         let placed = [
             place_scene_object(&star, &mk([0.0, -41.0, 8.0], 24.0)).unwrap(),
@@ -2149,7 +2266,7 @@ mod tests {
         let preset = reference_preset();
         let dir = std::env::temp_dir().join("holo-editor-path");
         let obj = |path: &str, pos: [f64; 3], rot: [f64; 3], scale_mm: f64| SceneObject {
-            id: "o".into(), path: path.into(), name: "x".into(), visible: true, position_mm: pos, rotation_deg: rot, scale_mm, position_id: String::new(), style: Default::default(),
+            id: "o".into(), path: path.into(), name: "x".into(), visible: true, position_mm: pos, rotation_deg: rot, scale_mm, position_id: String::new(), style: Default::default(), motion: Default::default(),
         };
         let scene = Scene { version: SCENE_VERSION, lamp_mm: None, positions: vec![], objects: vec![
             obj(&std::env::var("MODEL").unwrap(), [0.0, 40.0, 0.0], [0.0; 3], 34.0),
@@ -2194,7 +2311,7 @@ mod tests {
             println!("{} tris, {} bytes, {:?}", m.tris.len(), bytes, began.elapsed());
             let placed = place_scene_object(&m, &SceneObject {
                 id: "o".into(), path: "x".into(), name: "x".into(), visible: true,
-                position_mm: [0.0, -41.0, 0.0], rotation_deg: [0.0; 3], scale_mm: 30.0, position_id: String::new(), style: Default::default(),
+                position_mm: [0.0, -41.0, 0.0], rotation_deg: [0.0; 3], scale_mm: 30.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
             }).unwrap();
             let v = &scene_head_motion_views(&SceneViewOptions { views: 3, ..Default::default() })[1];
             let p = reference_preset();
@@ -2229,7 +2346,7 @@ mod tests {
                 visible: true,
                 position_mm: [0.0, -41.0, 10.0],
                 rotation_deg: [0.0, 0.0, 0.0],
-                scale_mm: 16.0, position_id: String::new(), style: Default::default(),
+                scale_mm: 16.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
             },
         )
         .unwrap();
@@ -2242,7 +2359,7 @@ mod tests {
                 visible: true,
                 position_mm: [0.0, -41.0, -10.0],
                 rotation_deg: [0.0, 0.0, 0.0],
-                scale_mm: 24.0, position_id: String::new(), style: Default::default(),
+                scale_mm: 24.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
             },
         )
         .unwrap();
@@ -2264,7 +2381,7 @@ mod tests {
                     visible: true,
                     position_mm: [0.0, -41.0, 8.0],
                     rotation_deg: [0.0, 0.0, 0.0],
-                    scale_mm: 22.0, position_id: String::new(), style: Default::default(),
+                    scale_mm: 22.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
                 },
                 SceneObject {
                     id: "hidden".into(),
@@ -2273,7 +2390,7 @@ mod tests {
                     visible: false,
                     position_mm: [0.0, 41.0, 0.0],
                     rotation_deg: [0.0, 0.0, 0.0],
-                    scale_mm: 20.0, position_id: String::new(), style: Default::default(),
+                    scale_mm: 20.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
                 },
             ],
         };
@@ -2303,6 +2420,72 @@ mod tests {
             let off = 8 + i * 4;
             let f = f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
             assert!(f.is_finite() && f.abs() <= 0.501, "position out of unit cube: {f}");
+        }
+    }
+
+    #[test]
+    fn motion_sample_interpolates_and_handles_edge_cases() {
+        assert_eq!(Motion::default().sample(0.5), IDENTITY_MAT4);
+        let tx10 = [
+            1.0, 0.0, 0.0, 10.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        let single = Motion { samples: vec![tx10], ..Default::default() };
+        assert_eq!(single.sample(0.0), tx10);
+        assert_eq!(single.sample(0.5), tx10);
+
+        let motion = Motion { samples: vec![IDENTITY_MAT4, tx10], ..Default::default() };
+        assert_eq!(motion.sample(0.0)[3], 0.0);
+        assert!((motion.sample(0.5)[3] - 5.0).abs() < 1e-12);
+        assert_eq!(motion.sample(1.0)[3], 10.0);
+        // Clamped outside [0, 1].
+        assert_eq!(motion.sample(-0.5)[3], 0.0);
+        assert_eq!(motion.sample(1.5)[3], 10.0);
+    }
+
+    #[test]
+    fn place_scene_object_with_applies_scene_transform_and_normal_inverse_transpose() {
+        // Unit-size triangle with normal (1, 1, 0)/sqrt(2) before non-uniform scale diag(2, 1, 1).
+        let n = unit3([1.0, 1.0, 0.0]).unwrap();
+        let mesh = Mesh {
+            tris: vec![[
+                Vertex { pos: [-0.5, 0.0, 0.0], normal: n, albedo: 1.0 },
+                Vertex { pos: [0.5, 0.0, 0.0], normal: n, albedo: 1.0 },
+                Vertex { pos: [0.0, 1.0, 0.0], normal: n, albedo: 1.0 },
+            ]],
+        };
+        let obj = SceneObject {
+            id: "t".into(),
+            path: "t.obj".into(),
+            name: "T".into(),
+            visible: true,
+            position_mm: [2.0, 30.0, 4.0],
+            rotation_deg: [0.0; 3],
+            scale_mm: 10.0,
+            position_id: String::new(),
+            style: Default::default(),
+            motion: Default::default(),
+        };
+        let mat = [
+            2.0, 0.0, 0.0, 5.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        let placed = place_scene_object_with(&mesh, &obj, Some(&mat)).unwrap();
+        // Vertex 1 normalized pos is (+0.5, -0.5, 0) -> scaled (5, -5, 0) -> L*(5,-5,0) = (10,-5,0)
+        // -> + pos(2,30,4) + tr(5,0,0) = (17, 25, 4) -> disc frame (17, -25, 4).
+        let v1 = placed.tris[0][1];
+        assert!((v1.pos[0] - 17.0).abs() < 1e-9, "pos={:?}", v1.pos);
+        assert!((v1.pos[1] - (-25.0)).abs() < 1e-9, "pos={:?}", v1.pos);
+        assert!((v1.pos[2] - 4.0).abs() < 1e-9, "pos={:?}", v1.pos);
+        // Inverse-transpose of diag(2, 1, 1) applied to (1, 1, 0) gives proportional to (0.5, 1, 0),
+        // then scene_to_disc negates y -> (0.5, -1, 0) normalized.
+        let expected_n = unit3([0.5, -1.0, 0.0]).unwrap();
+        for c in 0..3 {
+            assert!((v1.normal[c] - expected_n[c]).abs() < 1e-9, "normal={:?}, expected={:?}", v1.normal, expected_n);
         }
     }
 }
