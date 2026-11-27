@@ -22,11 +22,13 @@ use std::sync::{Arc, Mutex};
 pub const VIEWS: usize = 24;
 /// Solved disc-tilt poses across the sweep (transform animation mode).
 pub const TRANSFORM_VIEWS: usize = 40;
-/// One-sided disc tilt sweep for transform animation (Winner A), degrees.
-pub const TRANSFORM_TILT_START_DEG: f64 = 6.5;
-pub const TRANSFORM_TILT_END_DEG: f64 = 22.5;
-/// Lamp next to the eye in the viewer's frame for transform animation, mm.
-pub const TRANSFORM_LAMP_MM: [f64; 3] = [0.0, 0.0, 400.0];
+/// `|g_t|` the codebook answers to under white light; a tilt sweep must stay inside it.
+const GT_LOW: f64 = 0.21;
+const GT_HIGH: f64 = 0.76;
+/// The widest tilt either way looked for, degrees.
+pub const MAX_TILT_DEG: f64 = 30.0;
+/// Tilt either way used when no sweep fits the lamp, degrees.
+const FALLBACK_TILT_DEG: f64 = 3.0;
 /// Fixed target exposure for transform animation (Winner A).
 pub const TRANSFORM_EXPOSURE: f64 = 0.6;
 /// Half the width of the head's sweep, mm.
@@ -91,19 +93,79 @@ pub fn views_for_mode(mode: model3d::Mode) -> usize {
     }
 }
 
-/// Disc tilt angle in degrees for transform animation parameter `t` in `[0, 1]`.
-pub fn transform_tilt_deg(t: f64) -> f64 {
-    TRANSFORM_TILT_START_DEG + (TRANSFORM_TILT_END_DEG - TRANSFORM_TILT_START_DEG) * t
+/// The disc's tilt, degrees, at animation parameter `t` in `[0, 1]`: from `-tilt_deg` to `+tilt_deg`.
+pub fn transform_tilt_at(tilt_deg: f64, t: f64) -> f64 {
+    tilt_deg * (2.0 * t - 1.0)
 }
 
-/// Eye and lamp in the disc frame for a transform-mode position at animation parameter `t` in `[0, 1]`.
-pub fn transform_pose(opts: &Options, t: f64, angle: f64) -> (V3, V3) {
-    tilted_eye_and_lamp(opts, TRANSFORM_LAMP_MM, transform_tilt_deg(t).to_radians(), angle)
+/// Eye and lamp in the disc frame for a transform-mode position at animation parameter `t`.
+pub fn transform_pose(opts: &Options, lamp_mm: V3, tilt_deg: f64, t: f64, angle: f64) -> (V3, V3) {
+    tilted_eye_and_lamp(opts, lamp_mm, transform_tilt_at(tilt_deg, t).to_radians(), angle)
 }
 
-fn transform_poses(opts: &Options, angle: f64) -> Vec<(V3, V3)> {
+fn transform_poses(opts: &Options, lamp_mm: V3, tilt_deg: f64, angle: f64) -> Vec<(V3, V3)> {
     let denom = (TRANSFORM_VIEWS - 1).max(1) as f64;
-    (0..TRANSFORM_VIEWS).map(|i| transform_pose(opts, i as f64 / denom, angle)).collect()
+    (0..TRANSFORM_VIEWS).map(|i| transform_pose(opts, lamp_mm, tilt_deg, i as f64 / denom, angle)).collect()
+}
+
+/// Where a position's objects lie on the disc once it is turned to the top: each centre and the
+/// middles of its sides.
+fn object_points(objects: &[&SceneObject], angle: f64) -> Vec<V3> {
+    objects
+        .iter()
+        .flat_map(|o| {
+            let [x, y, _] = o.position_mm;
+            let h = o.scale_mm * 0.5;
+            [[x, y], [x - h, y], [x + h, y], [x, y - h], [x, y + h]]
+        })
+        .map(|[x, y]| turn(model3d::scene_to_disc([x, y, 0.0]), angle))
+        .collect()
+}
+
+/// Whether, tilted anywhere within `±tilt_deg`, every point keeps one sign of `g_t` and stays
+/// inside the codebook's window, so that no two tilts show the same frame and none goes dark.
+fn sweep_fits(opts: &Options, lamp_mm: V3, tilt_deg: f64, angle: f64, points: &[V3]) -> bool {
+    let mut sign = vec![0.0f64; points.len()];
+    (0..=8).all(|k| {
+        let (eye, lamp) = tilted_eye_and_lamp(opts, lamp_mm, (tilt_deg * (k as f64 / 4.0 - 1.0)).to_radians(), angle);
+        let sc = scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() };
+        points.iter().zip(sign.iter_mut()).all(|(p, s)| {
+            let gt = scene::g_at(&sc, p[0], p[1]).0;
+            if *s == 0.0 {
+                *s = gt.signum();
+            }
+            gt.signum() == *s && (GT_LOW..=GT_HIGH).contains(&gt.abs())
+        })
+    })
+}
+
+/// How a transform position is tilted.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Tilt {
+    pub id: String,
+    /// The tilt either way used, degrees.
+    pub deg: f64,
+    /// The widest that fits the lamp, degrees, or the fallback when none does.
+    pub auto_deg: f64,
+    /// Whether `deg` fits the lamp.
+    pub ok: bool,
+}
+
+/// The widest tilt either way, in half degrees, at which the position's objects stay inside the
+/// codebook's window under `lamp_mm`; the position's own choice when it has one.
+pub fn tilt_for(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options) -> Tilt {
+    let angle = pos.phi_deg.to_radians();
+    let points = object_points(objects, angle);
+    let mut auto = None;
+    let mut x = 0.5;
+    while x <= MAX_TILT_DEG + 1e-9 && sweep_fits(opts, lamp_mm, x, angle, &points) {
+        auto = Some(x);
+        x += 0.5;
+    }
+    let auto_deg = auto.unwrap_or(FALLBACK_TILT_DEG);
+    let deg = if pos.tilt_deg > 0.0 { pos.tilt_deg.min(MAX_TILT_DEG) } else { auto_deg };
+    Tilt { id: pos.id.clone(), deg, auto_deg, ok: sweep_fits(opts, lamp_mm, deg, angle, &points) }
 }
 
 fn transform_options(opts: &Options) -> Options {
@@ -221,6 +283,7 @@ fn grouped(scene: &Scene) -> Vec<(Position, Vec<&SceneObject>)> {
                 crop_deg: 30.0,
                 mode: model3d::Mode::Real,
                 parallax: model3d::DEFAULT_PARALLAX,
+                tilt_deg: 0.0,
             },
             vec![],
         ));
@@ -246,6 +309,8 @@ pub struct Solution {
     pub solved: Arc<Solved>,
     /// Positions that cover some of the same disc as another.
     pub overlapping: Vec<String>,
+    /// How each transform position is tilted.
+    pub tilts: Vec<Tilt>,
 }
 
 fn position_targets(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, preset: &DiscGeometryPreset) -> Result<Vec<Vec<f32>>, String> {
@@ -397,7 +462,7 @@ fn solve_patch(
     Patch { cells: lit, weights }
 }
 
-fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, resp: &Responses, preset: &DiscGeometryPreset) -> Result<Patch, String> {
+fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, tilt_deg: f64, opts: &Options, resp: &Responses, preset: &DiscGeometryPreset) -> Result<Patch, String> {
     let angle = pos.phi_deg.to_radians();
     match pos.mode {
         model3d::Mode::Real => {
@@ -421,8 +486,8 @@ fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &
         }
         model3d::Mode::Transform => {
             let t_opts = transform_options(opts);
-            let poses = transform_poses(&t_opts, angle);
-            let sharp = position_targets(pos, objects, TRANSFORM_LAMP_MM, &t_opts, preset)?;
+            let poses = transform_poses(&t_opts, lamp_mm, tilt_deg, angle);
+            let sharp = position_targets(pos, objects, lamp_mm, &t_opts, preset)?;
             Ok(solve_patch(&poses, &[], &sharp, false, &t_opts, resp, preset))
         }
     }
@@ -442,7 +507,8 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
     let (n, k) = (opts.grid, resp.options);
     let bg = cb.entries.iter().position(|e| e.bytes.iter().all(|&b| b == design::BACKGROUND_BYTE)).ok_or("码本里没有背景序列")?;
     let mut patches = Vec::with_capacity(groups.len());
-    for (pos, objects) in &groups {
+    let tilts: Vec<Tilt> = groups.iter().map(|(pos, objects)| tilt_for(pos, objects, lamp, &opts)).collect();
+    for ((pos, objects), tilt) in groups.iter().zip(&tilts) {
         // Names and ids change nothing that is burned.
         let same: Vec<_> = objects
             .iter()
@@ -453,14 +519,14 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
             .collect();
         let (eff_lamp, eff_opts, eff_parallax) = match pos.mode {
             model3d::Mode::Real => (lamp, opts.clone(), pos.parallax),
-            model3d::Mode::Transform => (TRANSFORM_LAMP_MM, transform_options(&opts), 0.0),
+            model3d::Mode::Transform => (lamp, transform_options(&opts), tilt.deg),
         };
         let key = serde_json::to_string(&(pos.phi_deg, pos.mode, eff_parallax, &same, eff_lamp, &eff_opts, preset)).map_err(|e| e.to_string())?;
         let held = CACHE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|c| c.0 == key).map(|c| c.1.clone());
         let patch = match held {
             Some(p) => p,
             None => {
-                let p = Arc::new(solve_position(pos, objects, lamp, &opts, resp, preset)?);
+                let p = Arc::new(solve_position(pos, objects, lamp, tilt.deg, &opts, resp, preset)?);
                 let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
                 if cache.len() >= KEEP {
                     cache.remove(0);
@@ -511,14 +577,14 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
         }
     }
     // Unlit cells inside a transform position's kept sectors use the darkest option over its tilt
-    // sweep (0xA7 glows at the upper end of 6.5°→22.5°); real positions keep 0xA7.
-    for (pos, _) in &groups {
+    // sweep (0xA7 glows at high g_t); real positions keep 0xA7.
+    for ((pos, _), tilt) in groups.iter().zip(&tilts) {
         if pos.mode != model3d::Mode::Transform {
             continue;
         }
         let phi_rad = pos.phi_deg.to_radians();
         let t_opts = transform_options(&opts);
-        let poses = transform_poses(&t_opts, phi_rad);
+        let poses = transform_poses(&t_opts, lamp, tilt.deg, phi_rad);
         let (t_bg, _) = transform_background(pos, &poses, resp, preset);
         if t_bg == bg {
             continue;
@@ -543,7 +609,8 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
         }
     }
     let overlapping = groups.iter().zip(&clash).filter(|(_, &c)| c).map(|(g, _)| g.0.id.clone()).collect();
-    Ok(Solution { solved: Arc::new(Solved { grid: n, options: k, weights, error: 0.0 }), overlapping })
+    let tilts = groups.iter().zip(tilts).filter(|((p, _), _)| p.mode == model3d::Mode::Transform).map(|(_, t)| t).collect();
+    Ok(Solution { solved: Arc::new(Solved { grid: n, options: k, weights, error: 0.0 }), overlapping, tilts })
 }
 
 /// The solved weights for drawing on the graphics card: `[grid u32][options u32]`, then
@@ -603,6 +670,7 @@ mod tests {
             crop_deg,
             mode: model3d::Mode::Real,
             parallax: model3d::DEFAULT_PARALLAX,
+            tilt_deg: 0.0,
         }
     }
 
@@ -738,7 +806,7 @@ mod tests {
             let sol90 = solve(&make(90.0), &opts, &shared.0, &shared.1, &preset).unwrap();
 
             // 90° equals the raw uncropped patch written over background.
-            let raw = solve_position(&pos("0", phi_deg, 90.0), &[&obj], LAMP_MM, &opts, &shared.1, &preset).unwrap();
+            let raw = solve_position(&pos("0", phi_deg, 90.0), &[&obj], LAMP_MM, 0.0, &opts, &shared.1, &preset).unwrap();
             let mut uncropped = vec![0.0f32; grid * grid * k];
             for cell in uncropped.chunks_exact_mut(k) {
                 cell[bg] = 1.0;
@@ -820,6 +888,26 @@ mod tests {
     }
 
     #[test]
+    fn the_tilt_fits_a_lamp_to_the_side_and_not_one_beside_the_eye() {
+        let star = SceneObject { position_mm: [0.0, 41.0, 0.0], scale_mm: 30.0, ..star("0", 0.0, 41.0) };
+        let p = Position { mode: model3d::Mode::Transform, ..pos("0", 0.0, 30.0) };
+        let opts = Options::default();
+        let side = tilt_for(&p, &[&star], [225.0, 0.0, 400.0], &opts);
+        println!("side lamp: {side:?}");
+        assert!(side.ok && (5.0..=12.0).contains(&side.deg), "{side:?}");
+        let beside = tilt_for(&p, &[&star], [0.0, 0.0, 400.0], &opts);
+        println!("lamp beside the eye: {beside:?}");
+        assert!(!beside.ok, "{beside:?}");
+        let chosen = tilt_for(&Position { tilt_deg: 25.0, ..p.clone() }, &[&star], [225.0, 0.0, 400.0], &opts);
+        assert_eq!(chosen.deg, 25.0);
+        assert_eq!(chosen.auto_deg, side.deg);
+        assert!(!chosen.ok, "{chosen:?}");
+        for lamp in [LAMP_MM, [250.0, 0.0, 400.0]] {
+            println!("{lamp:?}: {:?}", tilt_for(&p, &[&star], lamp, &opts));
+        }
+    }
+
+    #[test]
     fn transform_mode_spinning_star_separates_start_and_end_frames() {
         let shared = design::shared_codebook(0.1333);
         let (cb, resp) = (&shared.0, &shared.1);
@@ -827,9 +915,11 @@ mod tests {
         let grid = 192usize;
         let samples: Vec<[f64; 16]> = (0..=64)
             .map(|i| {
-                let rad = (i as f64 / 64.0 * 180.0).to_radians();
-                let (s, c) = rad.sin_cos();
-                [c, 0.0, s, 0.0, 0.0, 1.0, 0.0, 0.0, -s, 0.0, c, 0.0, 0.0, 0.0, 0.0, 1.0]
+                // A half turn looks much the same at both ends, so the star also slides across.
+                let t = i as f64 / 64.0;
+                let (s, c) = (t * 180.0).to_radians().sin_cos();
+                let x = 16.0 * (2.0 * t - 1.0);
+                [c, 0.0, s, x, 0.0, 1.0, 0.0, 0.0, -s, 0.0, c, 0.0, 0.0, 0.0, 0.0, 1.0]
             })
             .collect();
         let obj = SceneObject {
@@ -845,17 +935,20 @@ mod tests {
             motion: model3d::Motion { preset: "spinY180".into(), matrix: vec![], samples },
         };
         let p0 = Position { mode: model3d::Mode::Transform, ..pos("0", 0.0, 30.0) };
+        let lamp = [225.0, 0.0, 400.0];
         let sc = Scene {
             version: model3d::SCENE_VERSION,
             objects: vec![obj.clone()],
-            // Deliberately non-default lamp to confirm transform mode ignores scene.lamp_mm.
-            lamp_mm: Some([280.0, 90.0, 500.0]),
+            lamp_mm: Some(lamp),
             positions: vec![p0.clone()],
         };
         let opts = Options { grid, chroma_weight: 1.0, exposure: 1.0, wide: 0.3, ..Default::default() };
         let sol = solve(&sc, &opts, cb, resp, &preset).unwrap();
+        assert_eq!(sol.tilts.len(), 1);
+        assert!(sol.tilts[0].ok, "{:?}", sol.tilts[0]);
+        let tilt = sol.tilts[0].deg;
 
-        let targets = position_targets(&p0, &[&obj], TRANSFORM_LAMP_MM, &opts, &preset).unwrap();
+        let targets = position_targets(&p0, &[&obj], lamp, &opts, &preset).unwrap();
         let region: Vec<usize> = (0..grid * grid).filter(|&c| targets.iter().any(|t| t[c] > LIT)).collect();
         let pearson = |a: &[f64], b: &[f32]| -> f64 {
             let n = region.len() as f64;
@@ -868,7 +961,7 @@ mod tests {
             if d < 1e-12 { 0.0 } else { (sab - sa * sb / n) / d }
         };
         let render_at = |t: f64| -> Vec<f64> {
-            let (e, l) = transform_pose(&opts, t, 0.0);
+            let (e, l) = transform_pose(&opts, lamp, tilt, t, 0.0);
             super::super::lightfield::render_float(&sol.solved, resp, &preset, e, l, grid, true)
                 .into_iter()
                 .map(super::super::lightfield::luma)
@@ -884,7 +977,7 @@ mod tests {
 
         // Unlit cell inside the kept sector uses the darkest transform background, darker than 0xA7.
         let bg_a7 = cb.entries.iter().position(|e| e.bytes.iter().all(|&b| b == design::BACKGROUND_BYTE)).unwrap();
-        let poses = transform_poses(&opts, 0.0);
+        let poses = transform_poses(&opts, lamp, tilt, 0.0);
         let (t_bg, t_bg_max) = transform_background(&p0, &poses, resp, &preset);
         let mut a7_max = 0.0f64;
         let ro = preset.outer_radius_mm;
@@ -1386,6 +1479,7 @@ mod frames_study {
             crop_deg: 90.0,
             mode: model3d::Mode::Transform,
             parallax: model3d::DEFAULT_PARALLAX,
+            tilt_deg: 0.0,
         };
         let opts = Options { grid, ..Default::default() };
         position_targets_n(&pos, &[&obj], LAMP_MM, &opts, preset, views).unwrap()

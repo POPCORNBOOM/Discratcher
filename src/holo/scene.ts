@@ -62,6 +62,8 @@ export interface HoloPosition {
   mode: HoloPositionMode
   /** Parallax boost factor used in real mode. */
   parallax: number
+  /** How far the disc tilts either way in transform mode, degrees; 0 picks it from the lamp. */
+  tiltDeg: number
 }
 
 export interface HoloScene {
@@ -149,7 +151,7 @@ export function makePosition(
   mode: HoloPositionMode = DEFAULT_POSITION_MODE,
   parallax = DEFAULT_PARALLAX,
 ): HoloPosition {
-  return { id: makeObjectId(), name: '', phiDeg, cropDeg, mode, parallax }
+  return { id: makeObjectId(), name: '', phiDeg, cropDeg, mode, parallax, tiltDeg: 0 }
 }
 
 export const wrapDeg = (d: number) => ((Math.round(d * 10) / 10) % 360 + 360) % 360
@@ -282,6 +284,7 @@ export function validateScene(raw: unknown): HoloScene {
         cropDeg,
         mode,
         parallax,
+        tiltDeg: typeof q.tiltDeg === 'number' && Number.isFinite(q.tiltDeg) ? Math.min(30, Math.max(0, q.tiltDeg)) : 0,
       })
     }
   }

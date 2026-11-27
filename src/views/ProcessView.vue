@@ -4,7 +4,7 @@
       <h1>{{ r.title }}</h1>
       <p class="lede">{{ r.note }}</p>
 
-      <HoloViewingGuide v-if="r.viewingGuide" :mode="r.viewingGuide === 'transform' ? 'transform' : 'real'" />
+      <HoloViewingGuide v-if="r.viewingGuide" :mode="r.viewingGuide === 'transform' ? 'transform' : 'real'" :tilt-deg="r.viewingTiltDeg" />
 
       <template v-if="p.status === 'confirm'">
         <DrivePicker />

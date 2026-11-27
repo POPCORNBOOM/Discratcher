@@ -85,15 +85,18 @@
               @pointerdown="beginControlEdit"
               @update:model-value="setParallax"
             />
-            <UiSlider
-              v-else
-              v-model="previewT"
-              :label="t('holo.previewT')"
-              :min="0"
-              :max="1"
-              :step="0.01"
-              :format="(x) => x.toFixed(2)"
-            />
+            <template v-else>
+              <div class="title row">
+                <span class="grow small muted">{{ t('holo.tiltRange') }}</span>
+                <a v-if="position.tiltDeg > 0" class="action-link" role="button" tabindex="0" @click="setTilt(0)" @keydown.enter="setTilt(0)">{{ t('holo.tiltAuto', { n: tiltNow.autoDeg }) }}</a>
+              </div>
+              <UiSlider :model-value="tiltNow.deg" :label="t('holo.tiltRange')" :min="1" :max="MAX_TRANSFORM_TILT_DEG" :step="0.5" :format="(x) => t('holo.tiltRangeWords', { n: x })" @pointerdown="beginControlEdit" @update:model-value="setTilt" />
+              <div v-if="!tiltNow.ok" class="notice warn">
+                <UiIcon :path="mdiAlertOutline" />
+                <div class="grow">{{ position.tiltDeg > 0 ? t('holo.tiltTooWide', { n: tiltNow.autoDeg }) : t('holo.tiltBadLamp') }}</div>
+              </div>
+              <UiSlider :model-value="transformTiltDeg(tiltNow.deg, previewT)" :label="t('holo.previewTilt')" :min="-tiltNow.deg" :max="tiltNow.deg" :step="0.1" :format="signedDeg" @update:model-value="(x) => (previewT = transformTAt(tiltNow.deg, x))" />
+            </template>
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
@@ -204,7 +207,7 @@
             </template>
           </section>
 
-          <section v-if="position.mode === 'real'" class="section">
+          <section class="section">
             <div class="title row">
               <span class="grow">{{ t('holo.lamp') }}</span>
               <a v-if="selectedId === LAMP_ID" class="action-link" role="button" tabindex="0" @click="setLampPreset('held')" @keydown.enter="setLampPreset('held')">{{ t('holo.reset') }}</a>
@@ -542,7 +545,7 @@
 
       <!-- Preview: drag round the disc to turn it, move across it to tilt it -->
       <div v-show="tab === 'preview'" class="stage-body">
-        <HoloPreview v-if="previewVisited" v-show="!expViews.length" v-model:turn="lookTurn" v-model:preview-t="previewT" :mode="position.mode" :active="tab === 'preview' && !expViews.length && hasPreviewSource" :weights="weights" :tables="tables" :inner-radius-mm="radii.inner" :outer-radius-mm="radii.outer" :lamp-mm="opts.lampMm" :distance-mm="opts.distanceMm" />
+        <HoloPreview v-if="previewVisited" v-show="!expViews.length" v-model:turn="lookTurn" v-model:preview-t="previewT" :mode="position.mode" :active="tab === 'preview' && !expViews.length && hasPreviewSource" :weights="weights" :tables="tables" :inner-radius-mm="radii.inner" :outer-radius-mm="radii.outer" :lamp-mm="opts.lampMm" :distance-mm="opts.distanceMm" :tilt-deg="tiltNow.deg" />
         <div v-if="expViews.length" class="preview-stage" :class="{ dragging: previewDragging }" @pointerdown="onPreviewPointerDown" @pointermove="onPreviewPointerMove" @pointerup="onPreviewPointerUp" @pointercancel="onPreviewPointerUp">
           <canvas ref="previewCanvas" class="preview-disc" />
         </div>
@@ -606,6 +609,9 @@ import {
   LAMP_MIN_UP_MM,
   LAMP_REACH_MM,
   transformTiltDeg,
+  transformTAt,
+  DEFAULT_TRANSFORM_TILT_DEG,
+  MAX_TRANSFORM_TILT_DEG,
   type Vec3,
 } from '../holo/constants'
 import {
@@ -750,6 +756,16 @@ const opts = reactive<{
 
 // Editor-only preview parameter for transform mode (not saved, not sent to solver).
 const previewT = ref(0.5)
+/** How a transform position is tilted, as `turntable::Tilt`. */
+interface Tilt { id: string; deg: number; autoDeg: number; ok: boolean }
+const tilts = ref<Tilt[]>([])
+const tiltNow = computed<Tilt>(() => {
+  const found = tilts.value.find((x) => x.id === position.value.id)
+  const autoDeg = found?.autoDeg ?? DEFAULT_TRANSFORM_TILT_DEG
+  const deg = position.value.tiltDeg > 0 ? position.value.tiltDeg : autoDeg
+  return { id: position.value.id, deg, autoDeg, ok: found && found.deg === deg ? found.ok : true }
+})
+const signedDeg = (x: number) => `${x > 0 ? '+' : ''}${x.toFixed(1)}°`
 const motionDraft = ref<string[]>([])
 const motionError = ref('')
 
@@ -826,7 +842,7 @@ const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path
 const previewReadout = computed(() => {
   if (!expViews.value.length) {
     return position.value.mode === 'transform'
-      ? `${degInt(lookTurn.value)}  ${deg(transformTiltDeg(previewT.value))}`
+      ? `${degInt(lookTurn.value)}  ${deg(transformTiltDeg(tiltNow.value.deg, previewT.value))}`
       : degInt(lookTurn.value)
   }
   return expOpts.lightMode === 'lamp' ? `${signedMm(lookHeadX.value)}  ${deg(lookTilt.value)}` : `${deg(lookTilt.value)}  ${degInt(lookDir.value)}`
@@ -931,7 +947,7 @@ function selectObject(id: string | null) {
 
 function goToPosition(id: string, keepSelection = false) {
   positionId.value = id
-  if ((!keepSelection && selectedId.value !== LAMP_ID) || (position.value.mode === 'transform' && selectedId.value === LAMP_ID)) {
+  if (!keepSelection && selectedId.value !== LAMP_ID) {
     selectedId.value = positionObjects.value[0]?.id ?? null
   }
   lookTurn.value = position.value.phiDeg
@@ -966,9 +982,10 @@ function setMode(mode: HoloPositionMode) {
   if (position.value.mode === mode) return
   pushHistory()
   position.value.mode = mode
-  if (mode === 'transform' && selectedId.value === LAMP_ID) {
-    selectedId.value = positionObjects.value[0]?.id ?? null
-  }
+}
+
+function setTilt(deg: number) {
+  position.value.tiltDeg = deg > 0 ? Math.min(MAX_TRANSFORM_TILT_DEG, Math.max(1, Math.round(deg * 2) / 2)) : 0
 }
 
 function setParallax(v: number) {
@@ -1385,9 +1402,10 @@ async function solveScene() {
       }
       for (const grid of [DRAFT_GRID, GRID]) {
         const options = { ...request.options, grid }
-        const solved = await call<{ overlapping: string[] }>('holo_solve_scene', { ...request, options })
+        const solved = await call<{ overlapping: string[]; tilts?: Tilt[] }>('holo_solve_scene', { ...request, options })
         if (version !== sceneVersion) break
         overlapping.value = solved.overlapping
+        tilts.value = solved.tilts ?? []
         weights.value = await call<ArrayBuffer>('holo_scene_weights', { ...request, options })
         if (grid === GRID) solvedVersion = version
       }
@@ -1497,6 +1515,7 @@ function burnDesign() {
     fileName: 'holo.iso',
     prepareLabel: t('holo.compose'),
     viewingGuide: usingExp ? 'real' : guidePos.mode,
+    viewingTiltDeg: guidePos.tiltDeg > 0 ? guidePos.tiltDeg : (tilts.value.find((x) => x.id === guidePos.id)?.autoDeg ?? DEFAULT_TRANSFORM_TILT_DEG),
     prepare: async (path: string, ctx: StepContext) => {
       if (usingExp) {
         await call('holo_build_design_iso', { preset, input: { views: expSnapshot, chromaWeight, exposure, grid }, outputIsoPath: path })

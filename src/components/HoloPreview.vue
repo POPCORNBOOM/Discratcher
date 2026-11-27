@@ -11,13 +11,13 @@
       />
       <UiSlider
         class="play-slider"
-        :model-value="previewT"
+        :model-value="transformTiltDeg(tiltDeg, previewT)"
         :label="t('holo.playSlider')"
-        :min="0"
-        :max="1"
-        :step="0.01"
-        :format="formatT"
-        @update:model-value="scrubT"
+        :min="-tiltDeg"
+        :max="tiltDeg"
+        :step="0.1"
+        :format="formatDeg"
+        @update:model-value="scrubDeg"
       />
     </div>
     <div v-if="error" class="notice warn fallback">{{ error }}</div>
@@ -30,7 +30,7 @@
 import { mdiPause, mdiPlay } from '@mdi/js'
 import { Camera, DataArrayTexture, DataTexture, DataUtils, GLSL3, Group, HalfFloatType, LinearFilter, Mesh, NearestFilter, PerspectiveCamera, RawShaderMaterial, RGBAFormat, RingGeometry, Scene, Vector3, WebGLRenderer } from 'three'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { TRANSFORM_LAMP_MM, transformTiltDeg, type Vec3 } from '../holo/constants'
+import { DEFAULT_TRANSFORM_TILT_DEG, transformTAt, transformTiltDeg, type Vec3 } from '../holo/constants'
 import type { HoloPositionMode } from '../holo/scene'
 import { t } from '../i18n'
 import UiButton from './UiButton.vue'
@@ -45,12 +45,15 @@ const props = withDefaults(defineProps<{
   lampMm: Vec3
   distanceMm: number
   mode?: HoloPositionMode
+  /** How far the disc tilts either way in transform mode, degrees. */
+  tiltDeg?: number
 }>(), {
   mode: 'real',
+  tiltDeg: DEFAULT_TRANSFORM_TILT_DEG,
 })
 /** The angle of the disc at the top, degrees. */
 const turn = defineModel<number>('turn', { required: true })
-/** Shared animation parameter t in [0, 1] for transform mode (maps to 6.5°→22.5° tilt). */
+/** Shared animation parameter t in [0, 1] for transform mode: the tilt from -tiltDeg to +tiltDeg. */
 const previewT = defineModel<number>('previewT', { default: 0.5 })
 
 const MAX_TILT = 5
@@ -78,7 +81,7 @@ let playDir = 1
 let shownTurn = turn.value
 let dirty = true
 
-const formatT = (v: number) => `${v.toFixed(2)} · ${transformTiltDeg(v).toFixed(1)}°`
+const formatDeg = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(1)}°`
 
 function togglePlay() {
   playing.value = !playing.value
@@ -89,9 +92,9 @@ function togglePlay() {
   }
 }
 
-function scrubT(v: number) {
+function scrubDeg(v: number) {
   playing.value = false
-  previewT.value = Math.max(0, Math.min(1, v))
+  previewT.value = transformTAt(props.tiltDeg, v)
   dirty = true
 }
 
@@ -220,7 +223,7 @@ function tick(now: number) {
       previewT.value = Math.max(0, Math.min(1, next))
       dirty = true
     }
-    const targetTilt = transformTiltDeg(previewT.value)
+    const targetTilt = transformTiltDeg(props.tiltDeg, previewT.value)
     if (playing.value) {
       if (tilt !== targetTilt) {
         tilt = targetTilt
@@ -254,7 +257,7 @@ function tick(now: number) {
   disc.rotation.set(0, (tilt * Math.PI) / 180, (shownTurn * Math.PI) / 180, 'YXZ')
   disc.updateMatrixWorld()
   disc.worldToLocal((material.uniforms.eye.value as Vector3).set(0, 0, props.distanceMm))
-  const lamp = isTransform ? TRANSFORM_LAMP_MM : props.lampMm
+  const lamp = props.lampMm
   disc.worldToLocal((material.uniforms.lamp.value as Vector3).set(...lamp))
   renderer.render(scene, camera as Camera)
 }
@@ -346,7 +349,7 @@ onMounted(() => {
   buildDisc()
   loadTables()
   loadWeights()
-  if (props.mode === 'transform') tilt = transformTiltDeg(previewT.value)
+  if (props.mode === 'transform') tilt = transformTiltDeg(props.tiltDeg, previewT.value)
   observer = new ResizeObserver(resize)
   observer.observe(host.value!)
   resize()
@@ -367,7 +370,7 @@ watch(() => props.active, (on) => {
 })
 watch(() => props.mode, (m) => {
   playing.value = false
-  if (m === 'transform') tilt = transformTiltDeg(previewT.value)
+  if (m === 'transform') tilt = transformTiltDeg(props.tiltDeg, previewT.value)
   else wantTilt = 0
   dirty = true
 })

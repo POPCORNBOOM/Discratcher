@@ -64,6 +64,8 @@ export interface ProcessRequest {
   revealStep?: number
   /** Show the hologram phone-light viewing diagram on the burn screen. */
   viewingGuide?: boolean | HoloPositionMode
+  /** How far to tilt the disc either way, for a transform-mode guide, degrees. */
+  viewingTiltDeg?: number
 }
 
 export interface BurnPlan {
@@ -81,6 +83,8 @@ export interface BurnPlan {
   reveal?: boolean
   /** Show the hologram phone-light viewing diagram on the burn screen. */
   viewingGuide?: boolean | HoloPositionMode
+  /** How far to tilt the disc either way, for a transform-mode guide, degrees. */
+  viewingTiltDeg?: number
   /** Work on the burned disc that belongs to the same job, such as measuring it. */
   after?: ProcessStep[]
   doneMessage?: string
@@ -240,6 +244,7 @@ export const useProcess = defineStore('process', () => {
       onBurned: plan.onBurned,
       revealStep: plan.reveal ? steps.indexOf(writeStep) : undefined,
       viewingGuide: plan.viewingGuide,
+      viewingTiltDeg: plan.viewingTiltDeg,
       restep,
       cleanup: () => (path ? call('remove_cached_iso', { path }) : Promise.resolve()),
       steps,

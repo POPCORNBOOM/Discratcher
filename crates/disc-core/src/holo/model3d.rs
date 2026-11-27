@@ -467,6 +467,9 @@ pub struct Position {
     /// Parallax boost factor used in `Mode::Real`.
     #[serde(default = "default_parallax")]
     pub parallax: f64,
+    /// How far the disc is tilted either way in `Mode::Transform`, degrees; 0 picks it from the lamp.
+    #[serde(default)]
+    pub tilt_deg: f64,
 }
 
 /// Versioned 3D hologram scene contract shared between the editor UI, project files, and renderer.

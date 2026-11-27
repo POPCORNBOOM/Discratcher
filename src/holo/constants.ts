@@ -14,14 +14,18 @@ export const LAMP_UP_MM = LAMP_UP_CM * 10
 export const LAMP_HELD_MM: Vec3 = [LAMP_RIGHT_MM, 0, LAMP_UP_MM]
 export const LAMP_CEILING_MM: Vec3 = [0, 200, 1200]
 
-/** Transform animation viewing geometry (Winner A): lamp next to the eye, one-sided left-right disc tilt. */
-export const TRANSFORM_TILT_START_DEG = 6.5
-export const TRANSFORM_TILT_END_DEG = 22.5
-export const TRANSFORM_LAMP_UP_CM = 40
-export const TRANSFORM_LAMP_MM: Vec3 = [0, 0, TRANSFORM_LAMP_UP_CM * 10]
+/** Transform animation: the disc tilts left and right, from -tilt to +tilt as t runs 0 to 1. */
+export const DEFAULT_TRANSFORM_TILT_DEG = 7
+export const MAX_TRANSFORM_TILT_DEG = 30
 
-export function transformTiltDeg(t: number): number {
-  return TRANSFORM_TILT_START_DEG + (TRANSFORM_TILT_END_DEG - TRANSFORM_TILT_START_DEG) * t
+/** The disc's tilt, degrees, at animation parameter `t` in [0, 1] (`turntable::transform_tilt_at`). */
+export function transformTiltDeg(tiltDeg: number, t: number): number {
+  return tiltDeg * (2 * t - 1)
+}
+
+/** Animation parameter for a tilt, degrees. */
+export function transformTAt(tiltDeg: number, deg: number): number {
+  return tiltDeg > 0 ? Math.max(0, Math.min(1, (deg / tiltDeg + 1) / 2)) : 0.5
 }
 
 export const DEFAULT_DISTANCE_MM = 350
