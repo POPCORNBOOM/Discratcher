@@ -82,10 +82,10 @@ export interface HoloPosition {
 }
 
 /**
- * A picture carved flat, placed as on the carve page but in its position's own frame: upright
- * with the position at the top (`disc_core::holo::model3d::SceneImage`).
+ * A picture placed as on the carve page in its position's own frame: upright with the position at
+ * the top (`disc_core::holo::model3d::SceneImage`).
  */
-export type HoloImage = Layer & { positionId: string }
+export type HoloImage = Layer & { positionId: string; colour: boolean }
 
 export interface HoloScene {
   version: typeof SCENE_VERSION
@@ -355,8 +355,15 @@ export function validateScene(raw: unknown): HoloScene {
   const images: HoloImage[] = []
   for (const item of Array.isArray(rec.images) ? rec.images : []) {
     const l = readLayer(item)
-    const positionId = (item as Record<string, unknown>).positionId
-    if (l) images.push({ ...l, positionId: positions.some((q) => q.id === positionId) ? (positionId as string) : positions[0].id })
+    const rawImg = item as Record<string, unknown>
+    const positionId = rawImg.positionId
+    if (l) {
+      images.push({
+        ...l,
+        positionId: positions.some((q) => q.id === positionId) ? (positionId as string) : positions[0].id,
+        colour: !!rawImg.colour,
+      })
+    }
   }
   const scene: HoloScene = { version: SCENE_VERSION, positions, objects, images }
   normalizeOrder(scene)

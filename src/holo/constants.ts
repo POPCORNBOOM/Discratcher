@@ -12,7 +12,8 @@ export const LAMP_RIGHT_MM = LAMP_RIGHT_CM * 10
 export const LAMP_UP_MM = LAMP_UP_CM * 10
 
 export const LAMP_HELD_MM: Vec3 = [LAMP_RIGHT_MM, 0, LAMP_UP_MM]
-export const LAMP_CEILING_MM: Vec3 = [0, 200, 1200]
+export const LAMP_FAR_MM: Vec3 = [0, 150, 400]
+export const LAMP_FAR_RIGHT_MM: Vec3 = [150, 150, 400]
 
 /** Transform animation: the disc tilts left and right, from -tilt to +tilt as t runs 0 to 1. */
 export const DEFAULT_TRANSFORM_TILT_DEG = 3.5

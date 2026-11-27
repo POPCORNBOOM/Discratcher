@@ -542,6 +542,9 @@ pub struct SceneImage {
     /// The viewing position it belongs to.
     #[serde(default)]
     pub position_id: String,
+    /// Solve as a colour diffraction picture instead of grey carving.
+    #[serde(default)]
+    pub colour: bool,
     #[serde(flatten)]
     pub layer: crate::artwork::Layer,
 }

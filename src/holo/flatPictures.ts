@@ -31,18 +31,18 @@ void main() {
 `
 const FRAGMENT = `
 uniform sampler2D map;
-uniform float gain, shift, invert, crop, side, axis, inner, outer, opacity;
+uniform float gain, shift, invert, colour, crop, side, axis, inner, outer, opacity;
 varying vec2 vUv;
 varying vec2 vAt;
 ${CROP_GLSL}
 void main() {
   vec4 t = texture2D(map, vUv);
-  float luma = dot(t.rgb, vec3(0.299, 0.587, 0.114)) * 255.0;
-  float v = clamp((luma - 128.0) * gain + 128.0 + shift, 0.0, 255.0);
+  vec3 base = colour > 0.5 ? t.rgb * 255.0 : vec3(dot(t.rgb, vec3(0.299, 0.587, 0.114)) * 255.0);
+  vec3 v = clamp((base - 128.0) * gain + 128.0 + shift, 0.0, 255.0);
   if (invert > 0.5) v = 255.0 - v;
   float r = length(vAt);
   bool kept = r >= inner && r <= outer && inCrop(vAt, crop, side, axis);
-  gl_FragColor = vec4(vec3(v / 255.0), t.a * opacity * (kept ? 0.95 : 0.2));
+  gl_FragColor = vec4(v / 255.0, t.a * opacity * (kept ? 0.95 : 0.2));
 }
 `
 
@@ -109,7 +109,7 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
           depthWrite: false,
           uniforms: {
             map: { value: null }, toGroup: { value: new Matrix4() },
-            gain: { value: 1 }, shift: { value: 0 }, invert: { value: 0 },
+            gain: { value: 1 }, shift: { value: 0 }, invert: { value: 0 }, colour: { value: 0 },
             crop: { value: Math.PI / 2 }, side: { value: 0 }, axis: { value: 0 }, inner: { value: 0 }, outer: { value: 0 }, opacity: { value: 1 },
           },
         })
@@ -150,6 +150,7 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
       u.gain.value = contrastGain(img.contrast)
       u.shift.value = Math.min(100, Math.max(-100, img.brightness)) * 2.55
       u.invert.value = img.invert ? 1 : 0
+      u.colour.value = img.colour ? 1 : 0
       const c = cropUniforms(pos)
       u.crop.value = c.crop
       u.side.value = c.side

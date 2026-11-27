@@ -185,7 +185,12 @@
             </div>
 
             <template v-if="selectedImage">
-              <div v-if="pictures[selectedImage.path]?.suggestInvert && !selectedImage.invert" class="notice warn">
+              <UiSegmented
+                :model-value="selectedImage.colour ? 'colour' : 'mono'"
+                :options="pictureColourOptions"
+                @update:model-value="setSelectedImageColour($event === 'colour')"
+              />
+              <div v-if="!selectedImage.colour && pictures[selectedImage.path]?.suggestInvert && !selectedImage.invert" class="notice warn">
                 <UiIcon :path="mdiAlertOutline" />
                 <div class="grow">
                   {{ t('carve.darkWarn') }}
@@ -439,7 +444,7 @@
             </div>
             <UiSlider :model-value="opts.lampMm[0]" :label="t('holo.lampSide')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampSideWords" @update:model-value="(v) => setLampAxis(0, v)" />
             <UiSlider :model-value="opts.lampMm[1]" :label="t('holo.lampAway')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampAwayWords" @update:model-value="(v) => setLampAxis(1, v)" />
-            <UiSlider v-if="opts.lampPreset !== 'ceiling'" :model-value="opts.lampMm[2]" :label="t('holo.lampUp')" :min="LAMP_MIN_UP_MM" :max="LAMP_MAX_UP_MM" :step="5" :format="cm" @update:model-value="(v) => setLampAxis(2, v)" />
+            <UiSlider :model-value="opts.lampMm[2]" :label="t('holo.lampUp')" :min="LAMP_MIN_UP_MM" :max="LAMP_MAX_UP_MM" :step="5" :format="cm" @update:model-value="(v) => setLampAxis(2, v)" />
             <UiSlider
               :model-value="opts.distanceMm"
               :label="t('holo.distance')"
@@ -845,7 +850,8 @@ import {
   DEFAULT_DISTANCE_MM,
   DEFAULT_HEAD_SPAN_MM,
   DEFAULT_TILT_DEG,
-  LAMP_CEILING_MM,
+  LAMP_FAR_MM,
+  LAMP_FAR_RIGHT_MM,
   LAMP_HELD_MM,
   LAMP_ID,
   LAMP_MAX_UP_MM,
@@ -1093,9 +1099,14 @@ const tabOptions = computed(() => [
 ])
 const lampPresetOptions = computed<UiSelectOption[]>(() => [
   { value: 'held', label: t('holo.lampHeld') },
-  { value: 'ceiling', label: t('holo.lampCeiling') },
+  { value: 'far', label: t('holo.lampFar') },
+  { value: 'farRight', label: t('holo.lampFarRight') },
   ...userLampPresets.value.map((p) => ({ value: p.id, label: p.name })),
   ...(opts.lampPreset === 'custom' ? [{ value: 'custom', label: t('holo.lampCustom') }] : []),
+])
+const pictureColourOptions = computed(() => [
+  { value: 'mono', label: t('holo.pictureMono') },
+  { value: 'colour', label: t('holo.pictureColour') },
 ])
 const lightModeOptions = computed<UiSelectOption[]>(() => [
   { value: 'lamp', label: t('holo.lightModeLamp') },
@@ -1381,7 +1392,7 @@ async function addImage() {
     pictures.value[file] = a
     pushHistory()
     const l = makeLayer(file, a, positionImages.value.length === 0)
-    scene.value.images.push({ ...l, positionId: position.value.id })
+    scene.value.images.push({ ...l, positionId: position.value.id, colour: false })
     putOnTop(l.id)
     choosePicture(l.id)
     openGroup.value = 'models'
@@ -1423,6 +1434,13 @@ function invertSelectedImage() {
   if (!selectedImage.value) return
   pushHistory()
   selectedImage.value.invert = true
+}
+
+function setSelectedImageColour(colour: boolean) {
+  const img = selectedImage.value
+  if (!img || img.colour === colour) return
+  pushHistory()
+  img.colour = colour
 }
 
 /** The position's neutral colour, or the default for its models: real parallax's when it has any. */
@@ -1697,7 +1715,7 @@ function loadUserLampPresets(): UserLampPreset[] {
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    const seen = new Set<string>(['held', 'ceiling', 'custom'])
+    const seen = new Set<string>(['held', 'far', 'farRight', 'custom'])
     const out: UserLampPreset[] = []
     for (const item of parsed) {
       if (!item || typeof item !== 'object') return []
@@ -1741,8 +1759,11 @@ const lampNameInput = ref<HTMLInputElement | null>(null)
 const sameVec3 = (a: Vec3, b: Vec3) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
 
 function matchLampPreset(lampMm: Vec3, distanceMm: number): string {
-  if (sameVec3(lampMm, LAMP_HELD_MM) && distanceMm === DEFAULT_DISTANCE_MM) return 'held'
-  if (sameVec3(lampMm, LAMP_CEILING_MM) && distanceMm === DEFAULT_DISTANCE_MM) return 'ceiling'
+  if (distanceMm === DEFAULT_DISTANCE_MM) {
+    if (sameVec3(lampMm, LAMP_HELD_MM)) return 'held'
+    if (sameVec3(lampMm, LAMP_FAR_MM)) return 'far'
+    if (sameVec3(lampMm, LAMP_FAR_RIGHT_MM)) return 'farRight'
+  }
   const hit = userLampPresets.value.find((p) => sameVec3(p.lampMm, lampMm) && p.distanceMm === distanceMm)
   return hit ? hit.id : 'custom'
 }
@@ -1752,9 +1773,13 @@ function setLampPreset(preset: string) {
     opts.lampPreset = 'held'
     opts.lampMm = [...LAMP_HELD_MM]
     opts.distanceMm = DEFAULT_DISTANCE_MM
-  } else if (preset === 'ceiling') {
-    opts.lampPreset = 'ceiling'
-    opts.lampMm = [...LAMP_CEILING_MM]
+  } else if (preset === 'far') {
+    opts.lampPreset = 'far'
+    opts.lampMm = [...LAMP_FAR_MM]
+    opts.distanceMm = DEFAULT_DISTANCE_MM
+  } else if (preset === 'farRight') {
+    opts.lampPreset = 'farRight'
+    opts.lampMm = [...LAMP_FAR_RIGHT_MM]
     opts.distanceMm = DEFAULT_DISTANCE_MM
   } else {
     const found = userLampPresets.value.find((p) => p.id === preset)
@@ -2229,7 +2254,7 @@ function spreadExpViews() {
 async function addExpView() {
   const path = await pickImage()
   if (!path) return
-  const tilt = expOpts.lightMode === 'lamp' ? (opts.lampPreset === 'ceiling' ? 30 : DEFAULT_TILT_DEG) : 0
+  const tilt = expOpts.lightMode === 'lamp' ? DEFAULT_TILT_DEG : 0
   expViews.value.push({ id: nextExpId++, imagePath: path, angleDeg: tilt, dirDeg: DEFAULT_DIR_DEG, headXMm: 0 })
   spreadExpViews()
   tab.value = 'preview'

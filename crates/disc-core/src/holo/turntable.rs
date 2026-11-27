@@ -31,6 +31,10 @@ pub const DEFAULT_TRANSFORM_TILT_DEG: f64 = 3.5;
 pub const TRANSFORM_EXPOSURE: f64 = 0.6;
 /// Half the width of the head's sweep, mm.
 pub const HEAD_HALF_SPAN_MM: f64 = 40.0;
+/// Half the distance between the two eyes, mm.
+pub const EYE_HALF_MM: f64 = 32.0;
+/// Colour weight for colour pictures, matching the study default.
+const PICTURE_CHROMA: f64 = 1.0;
 /// The lamp, in the viewer's frame: right, up, towards the viewer.
 pub const LAMP_MM: [f64; 3] = [150.0, 0.0, 400.0];
 /// Heads outside the window that are asked for evenness only, mm.
@@ -524,6 +528,65 @@ fn solve_position(pos: &Position, mode: model3d::Mode, shape: f64, objects: &[&S
     }
 }
 
+#[inline]
+fn srgb_to_linear(v: f32) -> f64 {
+    let c = (v as f64 / 255.0).clamp(0.0, 1.0);
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// Solve one disc cell's codebook weights for a colour picture across the viewing poses.
+fn solve_colour_cell(x: f64, y: f64, rgb: [f32; 3], poses: &[(V3, V3)], opts: &Options, resp: &Responses) -> Vec<f32> {
+    let k = resp.options;
+    let plain = k - 1;
+    let luma = |p: [f32; 3]| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
+    let target_lin = [srgb_to_linear(rgb[0]), srgb_to_linear(rgb[1]), srgb_to_linear(rgb[2])];
+    let target_luma = 0.2126 * target_lin[0] + 0.7152 * target_lin[1] + 0.0722 * target_lin[2];
+    let t = target_luma * opts.exposure;
+    let colour = PICTURE_CHROMA.max(0.0).sqrt();
+
+    let (mut g, mut h) = (vec![0.0f64; k * k], vec![0.0f64; k]);
+    let mut row = vec![0.0f64; k];
+    let mut add = |row: &[f64], b: f64| {
+        for p in 0..k {
+            h[p] += row[p] * b;
+            let (a, g) = (row[p], &mut g[p * k + p..(p + 1) * k]);
+            for (g, r) in g.iter_mut().zip(&row[p..]) {
+                *g += a * r;
+            }
+        }
+    };
+
+    for &(eye, lamp) in poses {
+        let (gt, gr) = scene::g_at(&scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() }, x, y);
+        let cols: Vec<[f32; 3]> = (0..k).map(|j| resp.at(j, gt, gr)).collect();
+        let plain_y = luma(cols[plain]);
+        for j in 0..k {
+            row[j] = (1.0 - PLAIN_LEAK) * luma(cols[j]);
+        }
+        add(&row, (t - PLAIN_LEAK * plain_y).max(0.0));
+        if colour > 0.0 && t > 1e-6 {
+            for ch in 0..3 {
+                for j in 0..k {
+                    row[j] = colour * (1.0 - PLAIN_LEAK) * (cols[j][ch] as f64 - luma(cols[j]));
+                }
+                let target_chroma = (target_lin[ch] - target_luma) * opts.exposure;
+                add(&row, colour * (target_chroma - PLAIN_LEAK * (cols[plain][ch] as f64 - plain_y)));
+            }
+        }
+    }
+
+    for p in 0..k {
+        for q in 0..p {
+            g[p * k + q] = g[q * k + p];
+        }
+    }
+    design::solve_simplex_qp(&g, &h, k).into_iter().map(|w| w as f32).collect()
+}
+
 /// Solve every position and lay the patches out on the disc. Groups already solved, and not
 /// changed since, are taken from the last few.
 ///
@@ -591,7 +654,8 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
     claims.extend(pictures.iter().enumerate().map(|(i, p)| (p.at, p.rank, Claim::Picture(i))));
     claims.sort_by_key(|c| (c.0, c.1));
     let mut owner = vec![usize::MAX; n * n];
-    let mut flat_owner = vec![0u8; if pictures.is_empty() { 0 } else { n * n }];
+    let has_flat = pictures.iter().any(|p| !p.colour);
+    let mut flat_owner = vec![0u8; if has_flat { n * n } else { 0 }];
     let mut clash = vec![false; positions.len()];
     let mut take = |at: usize, c: usize| -> bool {
         if owner[c] == usize::MAX {
@@ -620,10 +684,37 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
             }
             Claim::Picture(pi) => {
                 let pic = &pictures[pi];
-                for c in 0..n * n {
-                    let (x, y) = at_mm(c);
-                    if flat::on_ring(x, y, preset) && kept(pic.at, x, y) && pic.covered(x / across, y / across).is_some() && take(pic.at, c) {
-                        flat_owner[c] = pi as u8 + 1;
+                if pic.colour {
+                    let mut cells: Vec<(usize, f64, f64, [f32; 3])> = Vec::new();
+                    for c in 0..n * n {
+                        let (x, y) = at_mm(c);
+                        if !flat::on_ring(x, y, preset) || !kept(pic.at, x, y) {
+                            continue;
+                        }
+                        if let Some(rgb) = pic.colour_covered(x / across, y / across) {
+                            if take(pic.at, c) {
+                                cells.push((c, x, y, rgb));
+                            }
+                        }
+                    }
+                    let angle = positions[pic.at].phi_deg.to_radians();
+                    let poses = [
+                        eye_and_lamp(&opts, lamp, -EYE_HALF_MM, angle),
+                        eye_and_lamp(&opts, lamp, EYE_HALF_MM, angle),
+                    ];
+                    let solved_cells: Vec<(usize, Vec<f32>)> = cells
+                        .par_iter()
+                        .map(|&(c, x, y, rgb)| (c, solve_colour_cell(x, y, rgb, &poses, &opts, resp)))
+                        .collect();
+                    for (c, w) in solved_cells {
+                        weights[c * k..(c + 1) * k].copy_from_slice(&w);
+                    }
+                } else {
+                    for c in 0..n * n {
+                        let (x, y) = at_mm(c);
+                        if flat::on_ring(x, y, preset) && kept(pic.at, x, y) && pic.covered(x / across, y / across).is_some() && take(pic.at, c) {
+                            flat_owner[c] = pi as u8 + 1;
+                        }
                     }
                 }
             }
@@ -650,7 +741,8 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
         }
     }
     let overlapping = positions.iter().zip(&clash).filter(|(_, &c)| c).map(|(p, _)| p.id.clone()).collect();
-    let flat = Arc::new(flat::FlatOwners { grid: n, owner: flat_owner, pictures: pictures.iter().map(|p| (p.id.clone(), p.phi_rad)).collect() });
+    let flat_pictures = if has_flat { pictures.iter().map(|p| (p.id.clone(), p.phi_rad)).collect() } else { vec![] };
+    let flat = Arc::new(flat::FlatOwners { grid: n, owner: flat_owner, pictures: flat_pictures });
     Ok(Solution { solved: Arc::new(Solved { grid: n, options: k, weights, error: 0.0 }), overlapping, flat })
 }
 
@@ -764,7 +856,7 @@ mod tests {
         let across = 2.0 * preset.outer_radius_mm;
         let model = star("0", 0.0, 41.0);
         let picture = SceneImage {
-            id: "pic".into(), name: "p".into(), width: 16, height: 16, position_id: "0".into(),
+            id: "pic".into(), name: "p".into(), width: 16, height: 16, position_id: "0".into(), colour: false,
             layer: crate::artwork::Layer { path: path.to_string_lossy().into(), y: -41.0 / across, size: 30.0 / across, ..crate::artwork::Layer::plain() },
         };
         let shared = design::shared_codebook(0.1333);
@@ -779,6 +871,78 @@ mod tests {
         };
         assert_eq!(owner_at_star(vec!["pic".into(), model.id.clone()]), Some(0), "picture on top");
         assert_eq!(owner_at_star(vec![model.id.clone(), "pic".into()]), None, "model on top");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn colour_picture_solves_weights_into_matching_hues_without_flat_owner() {
+        let dir = std::env::temp_dir().join(format!("holo-colour-pic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rb.png");
+        let img = image::RgbImage::from_fn(16, 16, |x, _| {
+            if x < 8 { image::Rgb([255, 0, 0]) } else { image::Rgb([0, 0, 255]) }
+        });
+        img.save(&path).unwrap();
+        let preset = reference_preset();
+        let across = 2.0 * preset.outer_radius_mm;
+        let make_pic = |colour: bool| SceneImage {
+            id: "pic".into(),
+            name: "rb".into(),
+            width: 16,
+            height: 16,
+            position_id: "0".into(),
+            colour,
+            layer: crate::artwork::Layer {
+                path: path.to_string_lossy().into(),
+                y: -41.0 / across,
+                size: 30.0 / across,
+                ..crate::artwork::Layer::plain()
+            },
+        };
+        let shared = design::shared_codebook(0.1333);
+        let (cb, resp) = (&shared.0, &shared.1);
+        let opts = Options { grid: 128, ..Default::default() };
+
+        // (a) Colour picture: no flat owner cells; left-eye render is red-dominant on the red
+        // half and blue-dominant on the blue half.
+        let mut sc_colour = scene(&[0.0], vec![]);
+        sc_colour.images = vec![make_pic(true)];
+        let sol_colour = solve(&sc_colour, &opts, cb, resp, &preset).unwrap();
+        assert!(sol_colour.flat.owner.iter().all(|&o| o == 0), "colour picture must not claim flat_owner");
+
+        let (eye, lamp) = eye_and_lamp(&opts, LAMP_MM, -EYE_HALF_MM, 0.0);
+        let view = scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() };
+        let k = sol_colour.solved.options;
+        let render_at = |x: f64, y: f64| -> [f64; 3] {
+            let w = sol_colour.solved.cell(x / across + 0.5, y / across + 0.5).unwrap();
+            let (gt, gr) = scene::g_at(&view, x, y);
+            let mut rgb = [0.0f64; 3];
+            for j in 0..k {
+                let c = resp.at(j, gt, gr);
+                for ch in 0..3 {
+                    rgb[ch] += w[j] as f64 * c[ch] as f64;
+                }
+            }
+            rgb
+        };
+        let red = render_at(-8.0, -41.0);
+        let blue = render_at(8.0, -41.0);
+        assert!(red[0] > red[1] && red[0] > red[2], "red half should be red-dominant: {red:?}");
+        assert!(blue[2] > blue[0] && blue[2] > blue[1], "blue half should be blue-dominant: {blue:?}");
+
+        // (b) Mono picture: flat owner set, weights untouched (background everywhere).
+        let mut sc_mono = scene(&[0.0], vec![]);
+        sc_mono.images = vec![make_pic(false)];
+        let sol_mono = solve(&sc_mono, &opts, cb, resp, &preset).unwrap();
+        assert_eq!(sol_mono.flat.at(-8.0 / across, -41.0 / across), Some(0));
+        assert_eq!(sol_mono.flat.at(8.0 / across, -41.0 / across), Some(0));
+        let bg = cb.entries.iter().position(|e| e.bytes.iter().all(|&b| b == design::BACKGROUND_BYTE)).unwrap();
+        for cell in sol_mono.solved.weights.chunks_exact(k) {
+            for (j, &w) in cell.iter().enumerate() {
+                let want = if j == bg { 1.0 } else { 0.0 };
+                assert_eq!(w, want, "mono picture must leave weights as background");
+            }
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -84,12 +84,13 @@ impl Layer {
     }
 }
 
-/// A decoded picture: luma and coverage per pixel, rows top first.
+/// A decoded picture: luma, RGB and coverage per pixel, rows top first.
 #[derive(Clone, Debug)]
 pub struct Picture {
     pub width: usize,
     pub height: usize,
     pub luma: Vec<u8>,
+    pub rgb: Vec<[u8; 3]>,
     pub alpha: Vec<u8>,
 }
 
@@ -111,20 +112,23 @@ impl Picture {
     fn from_rgba(rgba: &image::RgbaImage) -> Self {
         let (w, h) = (rgba.width() as usize, rgba.height() as usize);
         let mut luma = Vec::with_capacity(w * h);
+        let mut rgb = Vec::with_capacity(w * h);
         let mut alpha = Vec::with_capacity(w * h);
         for p in rgba.pixels() {
             let [r, g, b, a] = p.0;
             // A fully clear pixel has no colour of its own; light keeps its edge from darkening.
             luma.push(if a == 0 { 255 } else { (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round() as u8 });
+            rgb.push(if a == 0 { [255, 255, 255] } else { [r, g, b] });
             alpha.push(a);
         }
-        Self { width: w, height: h, luma, alpha }
+        Self { width: w, height: h, luma, rgb, alpha }
     }
 
     /// An opaque picture from grey values, for tests and tools.
     pub fn from_luma(width: usize, height: usize, luma: Vec<u8>) -> Self {
         assert_eq!(luma.len(), width * height);
-        Self { width, height, alpha: vec![255; luma.len()], luma }
+        let rgb = luma.iter().map(|&y| [y, y, y]).collect();
+        Self { width, height, rgb, alpha: vec![255; luma.len()], luma }
     }
 
     /// The pixel `u`, `v` falls in, unblended.
@@ -152,6 +156,36 @@ impl Picture {
             top + (c + (e - c) * fx - top) * fy
         };
         (lerp(&self.luma), lerp(&self.alpha))
+    }
+
+    /// RGB and coverage of the pixel `u`, `v` falls in, unblended.
+    #[inline]
+    fn nearest_rgb(&self, u: f64, v: f64) -> ([f32; 3], f32) {
+        let x = ((u * self.width as f64) as usize).min(self.width - 1);
+        let y = ((v * self.height as f64) as usize).min(self.height - 1);
+        let i = y * self.width + x;
+        let [r, g, b] = self.rgb[i];
+        ([r as f32, g as f32, b as f32], self.alpha[i] as f32)
+    }
+
+    /// RGB and coverage, all 0 ..= 255, at `u`, `v` in [0, 1]. Edges clamp, as the GPU does.
+    #[inline]
+    fn bilinear_rgb(&self, u: f64, v: f64) -> ([f32; 3], f32) {
+        let (w, h) = (self.width, self.height);
+        let x = (u * w as f64 - 0.5).clamp(0.0, (w - 1) as f64);
+        let y = (v * h as f64 - 0.5).clamp(0.0, (h - 1) as f64);
+        let (ix, iy) = ((x as usize).min(w.saturating_sub(2)), (y as usize).min(h.saturating_sub(2)));
+        let (fx, fy) = ((x - ix as f64) as f32, (y - iy as f64) as f32);
+        let (dx, dy) = (usize::from(w > 1), if h > 1 { w } else { 0 });
+        let i = iy * w + ix;
+        let lerp_u8 = |a: u8, b: u8, c: u8, e: u8| {
+            let top = a as f32 + (b as f32 - a as f32) * fx;
+            top + (c as f32 + (e as f32 - c as f32) * fx - top) * fy
+        };
+        let (pa, pb, pc, pe) = (self.rgb[i], self.rgb[i + dx], self.rgb[i + dy], self.rgb[i + dy + dx]);
+        let rgb = [0, 1, 2].map(|ch| lerp_u8(pa[ch], pb[ch], pc[ch], pe[ch]));
+        let alpha = lerp_u8(self.alpha[i], self.alpha[i + dx], self.alpha[i + dy], self.alpha[i + dy + dx]);
+        (rgb, alpha)
     }
 }
 
@@ -269,6 +303,33 @@ impl Composition {
     pub fn sample_covered(&self, x: f64, y: f64) -> Option<f32> {
         let (grey, cover) = self.sample_with_cover(x, y);
         (cover >= 0.5).then_some(grey)
+    }
+
+    /// RGB, each channel 0 ..= 255, where pictures cover at least half of the spot, and none
+    /// where they leave it bare.
+    #[inline]
+    pub fn sample_rgb_covered(&self, x: f64, y: f64) -> Option<[f32; 3]> {
+        let mut rgb = [255.0f32; 3];
+        let mut cover = 0.0f32;
+        for l in &self.layers {
+            let (dx, dy) = (x - l.cx, y - l.cy);
+            let (dx, dy) = l.grid.as_ref().map_or((dx, dy), |g| g.tile_offset(dx, dy));
+            // Undo the clockwise turn.
+            let u = (l.cos * dx + l.sin * dy) / l.w + 0.5;
+            let v = (-l.sin * dx + l.cos * dy) / l.h + 0.5;
+            if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+                continue;
+            }
+            let (raw, alpha) = if l.pixelated { l.picture.nearest_rgb(u, v) } else { l.picture.bilinear_rgb(u, v) };
+            let a = alpha / 255.0;
+            for ch in 0..3 {
+                let t = ((raw[ch] - 128.0) * l.gain + 128.0 + l.shift).clamp(0.0, 255.0);
+                let t = if l.invert { 255.0 - t } else { t };
+                rgb[ch] += (t - rgb[ch]) * a;
+            }
+            cover += (1.0 - cover) * a;
+        }
+        (cover >= 0.5).then_some(rgb)
     }
 
     /// Grey as `sample` gives it, and how much of the spot pictures cover, 0 ..= 1.
@@ -513,5 +574,22 @@ pub(crate) mod tests {
     fn layer_json_is_what_the_front_end_sends() {
         let l: Layer = serde_json::from_str(r#"{"id":"a","path":"/a.png","x":0.1,"y":-0.2,"size":0.8,"rotationDeg":15,"invert":true,"contrast":10,"brightness":-20,"width":10,"height":20}"#).unwrap();
         assert_eq!(l, Layer { path: "/a.png".into(), x: 0.1, y: -0.2, size: 0.8, rotation_deg: 15.0, invert: true, contrast: 10.0, brightness: -20.0, ..Layer::plain() });
+    }
+
+    #[test]
+    fn sample_rgb_covered_keeps_colour_and_effects() {
+        let d = tmp("rgb");
+        let p = write_png(&d, "rb.png", 8, 8, |x, _| if x < 4 { [255, 0, 0, 255] } else { [0, 0, 255, 255] });
+        let mut l = layer(0.0, 0.0, 0.5, 0.0);
+        l.path = p.to_string_lossy().into();
+        let comp = Composition::load(std::slice::from_ref(&l), None).unwrap();
+        assert_eq!(comp.sample_rgb_covered(-0.15, 0.0), Some([255.0, 0.0, 0.0]));
+        assert_eq!(comp.sample_rgb_covered(0.15, 0.0), Some([0.0, 0.0, 255.0]));
+        assert_eq!(comp.sample_rgb_covered(0.4, 0.0), None);
+        l.invert = true;
+        let inv = Composition::load(std::slice::from_ref(&l), None).unwrap();
+        assert_eq!(inv.sample_rgb_covered(-0.15, 0.0), Some([0.0, 255.0, 255.0]));
+        assert_eq!(inv.sample_rgb_covered(0.15, 0.0), Some([255.0, 255.0, 0.0]));
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }
