@@ -20,7 +20,6 @@ import {
 
 /** 2: modes moved from positions to models, and positions order their models and pictures. */
 export const SCENE_VERSION = 2 as const
-const LAST_SCENE_STORAGE_KEY = 'discratcher.holo.lastScene.v1'
 
 /** How a model's views are made: real parallax, or transform animation. */
 export type HoloMode = 'real' | 'transform'
@@ -347,22 +346,4 @@ export function validateScene(raw: unknown): HoloScene {
   const scene: HoloScene = { version: SCENE_VERSION, positions, objects, images }
   normalizeOrder(scene)
   return Array.isArray(rec.lampMm) ? { ...scene, lampMm: asVec3(rec.lampMm, LAMP_HELD_MM) } : scene
-}
-
-export function saveLastScene(scene: HoloScene): void {
-  try {
-    localStorage.setItem(LAST_SCENE_STORAGE_KEY, JSON.stringify(scene))
-  } catch {
-    // Storage quota or restricted context; ignore silently.
-  }
-}
-
-export function loadLastScene(): HoloScene | null {
-  try {
-    const raw = localStorage.getItem(LAST_SCENE_STORAGE_KEY)
-    if (!raw) return null
-    return validateScene(JSON.parse(raw))
-  } catch {
-    return null
-  }
 }

@@ -5,7 +5,56 @@
     @dragleave="onDragLeave"
     @drop.prevent="onDrop"
   >
-    <aside class="side">
+    <div v-if="home" class="start page-flow">
+      <div class="flow">
+        <h1>{{ t('holo.title') }}</h1>
+        <section class="group">
+          <div class="small muted">{{ t('holo.newDesign') }}</div>
+          <div class="templates">
+            <button v-for="tpl in DESIGN_TEMPLATES" :key="tpl.id" type="button" class="template" @click="guardUnsaved(() => newDesign(tpl))">
+              <UiIcon :path="tpl.icon" :size="24" />
+              <span class="title">{{ t(tpl.name) }}</span>
+              <span class="small muted">{{ t(tpl.description) }}</span>
+            </button>
+          </div>
+          <div class="row">
+            <UiButton variant="soft" :icon="mdiFolderOpenOutline" @click="guardUnsaved(openDesign)">{{ t('holo.openFolder') }}</UiButton>
+            <UiButton v-if="designStarted" variant="ghost" :icon="mdiArrowLeft" @click="home = false">{{ t('holo.backToDesign', { name: designName }) }}</UiButton>
+          </div>
+        </section>
+        <section class="group">
+          <div class="small muted">{{ t('holo.recent') }}</div>
+          <div v-if="recentDesigns.length" class="list">
+            <div
+              v-for="r in recentDesigns"
+              :key="r.dir"
+              class="item"
+              :class="{ missing: !r.found }"
+              :role="r.found ? 'button' : undefined"
+              :tabindex="r.found ? 0 : undefined"
+              @click="r.found && openRecent(r)"
+              @keydown.enter="r.found && openRecent(r)"
+            >
+              <UiIcon class="mark" :path="r.found ? mdiFolderOutline : mdiFolderAlertOutline" />
+              <div class="grow text">
+                <div class="ellipsis">{{ fileName(r.dir) }}</div>
+                <div class="small muted ellipsis selectable" :data-tooltip="r.dir" data-tooltip-overflow>{{ r.dir }}</div>
+              </div>
+              <template v-if="r.found">
+                <UiButton icon-only variant="ghost" :icon="mdiFolderSearchOutline" :aria-label="t(mac ? 'holo.revealMac' : 'holo.reveal')" :data-tooltip="t(mac ? 'holo.revealMac' : 'holo.reveal')" @click.stop="revealRecent(r)" />
+              </template>
+              <template v-else>
+                <span class="badge warn">{{ t('holo.notFound') }}</span>
+                <UiButton variant="soft" @click.stop="relocateRecent(r)">{{ t('holo.relocate') }}</UiButton>
+              </template>
+              <UiButton icon-only variant="ghost" :icon="mdiClose" :aria-label="t('holo.forgetRecent')" :data-tooltip="t('holo.forgetRecent')" @click.stop="forgetRecent(r)" />
+            </div>
+          </div>
+          <p v-else class="small muted">{{ t('holo.noRecent') }}</p>
+        </section>
+      </div>
+    </div>
+    <aside v-show="!home" class="side">
       <div class="flow fields">
         <div class="design-title">
           <h1>{{ t('holo.title') }}</h1>
@@ -407,6 +456,7 @@
           <div class="exp-actions">
             <UiButton :icon="mdiFire" :disabled="!ready" @click="burnSwatch">{{ t('holo.swatchBurn') }}</UiButton>
             <UiButton :icon="mdiCubeOutline" :disabled="loadingTest3d || !!s.job" @click="loadTest3d">{{ t('holo.test3dLoad') }}</UiButton>
+            <UiButton variant="ghost" :icon="mdiFileImportOutline" :disabled="!!s.job" @click="guardUnsaved(importLegacyScene)">{{ t('holo.importLegacy') }}</UiButton>
           </div>
 
           <section class="section">
@@ -460,12 +510,12 @@
     </aside>
 
     <!-- Centre stage: Edit | Preview -->
-    <div class="stage">
+    <div v-show="!home" class="stage">
       <header class="stage-bar">
-        <UiSegmented v-model="tab" class="mode-seg" :options="tabOptions" />
+        <UiSegmented v-model="tab" class="mode-seg" :options="tabOptions" :data-tooltip="t('holo.toggleViewKey')" />
         <span class="grow" />
         <div class="toolbar">
-          <UiButton icon-only variant="ghost" :icon="mdiFilePlusOutline" :aria-label="t('holo.newDesign')" :data-tooltip="t('holo.newDesign')" @click="guardUnsaved(() => (templatePicker = true))" />
+          <UiButton icon-only variant="ghost" :icon="mdiViewListOutline" :aria-label="t('holo.designList')" :data-tooltip="t('holo.designList')" @click="showHome" />
           <UiButton icon-only variant="ghost" :icon="mdiFolderOpenOutline" :aria-label="t('holo.openDesign')" :data-tooltip="`${t('holo.openDesign')} (${modKey}O)`" @click="guardUnsaved(openDesign)" />
           <UiButton icon-only variant="ghost" :icon="mdiContentSaveOutline" :aria-label="t('holo.saveDesign')" :data-tooltip="`${t('holo.saveDesign')} (${modKey}S)`" @click="saveDesign()" />
         </div>
@@ -619,7 +669,6 @@
           @position="goToPosition"
           @transform-start="onTransformStart"
           @transform-change="onTransformChange"
-          @transform-end="onTransformEnd"
         />
         <div v-if="dropHover" class="drop-scrim">
           <UiIcon :path="mdiCubeOutline" :size="28" />
@@ -659,15 +708,6 @@
       </div>
       </Transition>
     </div>
-    <UiDialog v-if="templatePicker" :title="t('holo.chooseTemplate')" @close="templatePicker = false">
-      <div class="templates">
-        <button v-for="tpl in DESIGN_TEMPLATES" :key="tpl.id" type="button" class="template" @click="newDesign(tpl)">
-          <UiIcon :path="tpl.icon" :size="24" />
-          <span class="title">{{ t(tpl.name) }}</span>
-          <span class="small muted">{{ t(tpl.description) }}</span>
-        </button>
-      </div>
-    </UiDialog>
     <UiDialog v-if="pendingDiscard" :title="t('holo.discardTitle')" @close="pendingDiscard = null">
       <p>{{ t('holo.discardBody') }}</p>
       <template #actions>
@@ -692,6 +732,45 @@
         <UiButton variant="solid" :disabled="!lampPresetName.trim()" @click="confirmSaveLampPreset">{{ t('holo.save') }}</UiButton>
       </template>
     </UiDialog>
+    <UiDialog v-if="saveDesignDialog && !pendingOverwrite" :title="saveDesignAsNew ? t('holo.saveDesignAs') : t('holo.saveDesign')" @close="closeSaveDesignDialog">
+      <label class="field">
+        <span class="small muted">{{ t('holo.designName') }}</span>
+        <input
+          ref="saveNameInput"
+          v-model="saveDesignName"
+          class="text-input"
+          autocomplete="off"
+          @keydown.enter.prevent="submitSaveDesign"
+          @keydown.escape="closeSaveDesignDialog"
+        />
+        <span v-if="saveDesignNameError" class="small field-error">{{ saveDesignNameError }}</span>
+      </label>
+      <div class="field">
+        <span class="small muted">{{ t('holo.designLocation') }}</span>
+        <div class="location-row">
+          <span class="grow small muted ellipsis" :data-tooltip="saveDesignLocation || undefined">{{ saveDesignLocation }}</span>
+          <UiButton variant="ghost" :disabled="saveDesignBusy" @click="chooseSaveLocation">{{ t('holo.chooseLocation') }}</UiButton>
+        </div>
+      </div>
+      <div v-if="saveDesignTargetPath" class="small muted ellipsis" :data-tooltip="saveDesignTargetPath" data-tooltip-overflow>
+        {{ t('holo.willCreate', { path: saveDesignTargetPath }) }}
+      </div>
+      <div v-if="saveDesignError" class="notice danger">
+        <UiIcon :path="mdiAlertOctagonOutline" />
+        <div class="grow">{{ saveDesignError }}</div>
+      </div>
+      <template #actions>
+        <UiButton variant="ghost" :disabled="saveDesignBusy" @click="closeSaveDesignDialog">{{ t('common.cancel') }}</UiButton>
+        <UiButton variant="solid" :disabled="!canSubmitSaveDesign" @click="submitSaveDesign">{{ t('holo.save') }}</UiButton>
+      </template>
+    </UiDialog>
+    <UiDialog v-if="pendingOverwrite" :title="t('holo.overwriteTitle')" @close="pendingOverwrite = null">
+      <p>{{ t('holo.overwriteBody', { name: pendingOverwrite.name }) }}</p>
+      <template #actions>
+        <UiButton variant="ghost" :disabled="saveDesignBusy" @click="pendingOverwrite = null">{{ t('common.cancel') }}</UiButton>
+        <UiButton variant="danger" :disabled="saveDesignBusy" @click="confirmOverwriteDesign">{{ t('holo.overwrite') }}</UiButton>
+      </template>
+    </UiDialog>
   </div>
 </template>
 
@@ -700,6 +779,7 @@ import {
   mdiAlertOctagonOutline,
   mdiAlertOutline,
   mdiArrowDown,
+  mdiArrowLeft,
   mdiArrowUp,
   mdiAxisArrow,
   mdiClose,
@@ -712,10 +792,13 @@ import {
   mdiCursorMove,
   mdiEyeOffOutline,
   mdiEyeOutline,
-  mdiFilePlusOutline,
+  mdiFileImportOutline,
   mdiFire,
   mdiFlaskOutline,
+  mdiFolderAlertOutline,
   mdiFolderOpenOutline,
+  mdiFolderOutline,
+  mdiFolderSearchOutline,
   mdiGrid,
   mdiImageFilterCenterFocus,
   mdiImageOutline,
@@ -735,9 +818,10 @@ import {
   mdiStarFourPointsOutline,
   mdiTrashCanOutline,
   mdiUndo,
+  mdiViewListOutline,
 } from '@mdi/js'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, shallowRef, watch } from 'vue'
-import { call, pickDesign, pickDesignFolder, pickImage, pickModel } from '../api'
+import { call, defaultDesignLocation, pickDesign, pickFolder, pickImage, pickLegacyScene, pickModel, revealPath, type RecentDesign } from '../api'
 import { DESIGN_TEMPLATES, type DesignTemplate } from '../holo/templates'
 import HoloPreview from '../components/HoloPreview.vue'
 import HoloViewport3D, { type GizmoMode } from '../components/HoloViewport3D.vue'
@@ -791,13 +875,11 @@ import {
   emptyScene,
   fileBaseName,
   formatDepthWords,
-  loadLastScene,
   freePhi,
   makeObjectId,
   makePosition,
   wrapDeg,
   round1,
-  saveLastScene,
   SCENE_VERSION,
   validateScene,
   type HoloInkStyle,
@@ -1589,9 +1671,6 @@ function onImageTransform(p: { id: string; x: number; y: number; size: number; s
   if (img) Object.assign(img, { x: p.x, y: p.y, size: p.size, stretchX: p.stretchX, stretchY: p.stretchY, rotationDeg: p.rotationDeg })
 }
 
-function onTransformEnd(_id: string) {
-  saveLastScene(scene.value)
-}
 
 // ---- Lamp & optical controls ----
 const LAMP_PRESETS_KEY = 'discratcher.holo.lampPresets'
@@ -1739,21 +1818,63 @@ const designDir = ref<string | null>(null)
 /** The scene as last saved, opened or started, to tell unsaved changes. */
 const savedScene = ref('')
 const markSaved = () => (savedScene.value = JSON.stringify(scene.value))
-/** The design's folder and its last saved state, kept for the next start with the scene itself. */
-const LAST_DESIGN_KEY = 'discratcher.holo.lastDesign'
-watch([designDir, savedScene], () => {
-  try {
-    localStorage.setItem(LAST_DESIGN_KEY, JSON.stringify({ dir: designDir.value, saved: savedScene.value }))
-  } catch {
-    // Storage unavailable: the next start just forgets the folder.
-  }
-})
 /** A design never saved counts as changed once it holds anything. */
 const dirty = computed(() =>
   designDir.value ? JSON.stringify(scene.value) !== savedScene.value : scene.value.objects.length + scene.value.images.length > 0 && JSON.stringify(scene.value) !== savedScene.value,
 )
 const designName = computed(() => (designDir.value ? fileName(designDir.value) : t('holo.untitled')))
-const templatePicker = ref(false)
+
+// ---- The start list: new from a template, open a folder, or one opened or saved before ----
+/** The list shows instead of the editor: on first coming to the designer, and from the toolbar. */
+const home = ref(true)
+/** A design has been started, opened or saved this session, so the list can lead back to it. */
+const designStarted = ref(false)
+const recentDesigns = ref<RecentDesign[]>([])
+async function loadRecents() {
+  try {
+    recentDesigns.value = await call<RecentDesign[]>('design_recents')
+  } catch {
+    recentDesigns.value = []
+  }
+}
+function showHome() {
+  home.value = true
+  void loadRecents()
+}
+/** The editor, once a design is in it. */
+function enterDesign() {
+  designStarted.value = true
+  home.value = false
+}
+function openRecent(r: RecentDesign) {
+  guardUnsaved(() => void openDesignAt(r.dir))
+}
+async function revealRecent(r: RecentDesign) {
+  try {
+    await revealPath(r.dir)
+  } catch (e) {
+    notifyError(String(e))
+  }
+}
+async function forgetRecent(r: RecentDesign) {
+  try {
+    recentDesigns.value = await call<RecentDesign[]>('design_forget_recent', { dir: r.dir })
+  } catch (e) {
+    notifyError(String(e))
+  }
+}
+/** Point a moved design at its new folder, then open it there. */
+async function relocateRecent(r: RecentDesign) {
+  const dir = await pickDesign()
+  if (!dir) return
+  try {
+    recentDesigns.value = await call<RecentDesign[]>('design_relocate_recent', { old: r.dir, dir })
+  } catch (e) {
+    notifyError(String(e))
+    return
+  }
+  guardUnsaved(() => void openDesignAt(dir))
+}
 
 /** Something that would replace the design, waiting for the user to let unsaved changes go. */
 const pendingDiscard = ref<null | (() => void)>(null)
@@ -1767,11 +1888,98 @@ function discardAndGo() {
   then?.()
 }
 
-/** Save into the design's folder, or a new one when there is none yet or `asNew`. */
-async function saveDesign(asNew = false) {
-  let dir = asNew ? null : designDir.value
-  if (!dir) dir = await pickDesignFolder(t('holo.untitled'))
-  if (!dir) return
+const DESIGN_LOCATION_KEY = 'discratcher.holo.designLocation'
+const INVALID_DESIGN_NAME_RE = /[\/\\:*?"<>|]/
+const MAX_DESIGN_NAME_LEN = 100
+
+type DesignFolderState = 'missing' | 'empty' | 'design' | 'other'
+
+const saveDesignDialog = ref(false)
+const saveDesignAsNew = ref(false)
+const saveDesignName = ref('')
+const saveDesignLocation = ref('')
+const saveDesignError = ref('')
+const saveDesignBusy = ref(false)
+const saveNameInput = ref<HTMLInputElement | null>(null)
+const pendingOverwrite = ref<{ dir: string; name: string; location: string } | null>(null)
+let openingSaveDialog = false
+
+function loadDesignLocation(): string {
+  try {
+    return localStorage.getItem(DESIGN_LOCATION_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function rememberDesignLocation(location: string) {
+  try {
+    localStorage.setItem(DESIGN_LOCATION_KEY, location)
+  } catch {
+    // Storage unavailable; next save falls back to Documents.
+  }
+}
+
+function joinFolderPath(parent: string, name: string): string {
+  const p = parent.trim()
+  if (!p) return name
+  const sep = p.includes('\\') && !p.includes('/') ? '\\' : '/'
+  if (p === '/' || p === '\\') return `${p}${name}`
+  return `${p.replace(/[\\/]+$/, '')}${sep}${name}`
+}
+
+const saveDesignTrimmedName = computed(() => saveDesignName.value.trim())
+const saveDesignNameError = computed(() => {
+  const name = saveDesignTrimmedName.value
+  if (!name) return t('holo.nameEmpty')
+  if (name === '.' || name === '..') return t('holo.nameReserved')
+  if (INVALID_DESIGN_NAME_RE.test(name)) return t('holo.nameInvalidChars')
+  if (name.length > MAX_DESIGN_NAME_LEN) return t('holo.nameTooLong')
+  return ''
+})
+const saveDesignTargetPath = computed(() =>
+  saveDesignLocation.value.trim() && saveDesignTrimmedName.value
+    ? joinFolderPath(saveDesignLocation.value, saveDesignTrimmedName.value)
+    : '',
+)
+const canSubmitSaveDesign = computed(
+  () => !saveDesignBusy.value && !saveDesignNameError.value && !!saveDesignLocation.value.trim(),
+)
+
+watch([saveDesignName, saveDesignLocation], () => {
+  saveDesignError.value = ''
+})
+
+function closeSaveDesignDialog() {
+  if (saveDesignBusy.value) return
+  saveDesignDialog.value = false
+  saveDesignError.value = ''
+}
+
+async function openSaveDesignDialog(asNew: boolean) {
+  if (openingSaveDialog || saveDesignDialog.value || pendingOverwrite.value) return
+  openingSaveDialog = true
+  try {
+    saveDesignAsNew.value = asNew
+    saveDesignName.value = asNew && designDir.value ? fileName(designDir.value) : t('holo.untitled')
+    saveDesignError.value = ''
+    saveDesignLocation.value = loadDesignLocation() || (await defaultDesignLocation())
+    saveDesignDialog.value = true
+    void nextTick(() => {
+      saveNameInput.value?.focus()
+      saveNameInput.value?.select()
+    })
+  } finally {
+    openingSaveDialog = false
+  }
+}
+
+async function chooseSaveLocation() {
+  const picked = await pickFolder(saveDesignLocation.value || undefined)
+  if (picked) saveDesignLocation.value = picked
+}
+
+async function commitSaveDesign(dir: string, rememberLocation?: string): Promise<boolean> {
   try {
     const saved = validateScene(await call<HoloScene>('design_save', { dir, scene: cloneScene(scene.value) }))
     // Only the paths change: they now point at the copies inside the folder.
@@ -1779,21 +1987,91 @@ async function saveDesign(asNew = false) {
     for (const i of scene.value.images) i.path = saved.images.find((x) => x.id === i.id)?.path ?? i.path
     await ensureMeshesLoaded(scene.value.objects)
     designDir.value = dir
+    designStarted.value = true
+    if (rememberLocation) rememberDesignLocation(rememberLocation)
     markSaved()
-    saveLastScene(scene.value)
     notifySuccess(t('holo.saved', { name: fileName(dir) }))
+    return true
   } catch (e) {
     notifyError(String(e))
+    return false
   }
+}
+
+async function submitSaveDesign() {
+  if (!canSubmitSaveDesign.value) return
+  const name = saveDesignTrimmedName.value
+  const location = saveDesignLocation.value.trim()
+  const dir = joinFolderPath(location, name)
+  saveDesignBusy.value = true
+  saveDesignError.value = ''
+  try {
+    const state = await call<DesignFolderState>('design_folder_state', { dir })
+    if (state === 'other') {
+      saveDesignError.value = t('holo.folderOccupied')
+      return
+    }
+    if (state === 'design') {
+      pendingOverwrite.value = { dir, name, location }
+      return
+    }
+    if (await commitSaveDesign(dir, location)) {
+      saveDesignDialog.value = false
+    }
+  } catch (e) {
+    saveDesignError.value = String(e)
+  } finally {
+    saveDesignBusy.value = false
+  }
+}
+
+async function confirmOverwriteDesign() {
+  const target = pendingOverwrite.value
+  if (!target || saveDesignBusy.value) return
+  saveDesignBusy.value = true
+  try {
+    const ok = await commitSaveDesign(target.dir, target.location)
+    pendingOverwrite.value = null
+    if (ok) saveDesignDialog.value = false
+  } finally {
+    saveDesignBusy.value = false
+  }
+}
+
+/** Save into the design's folder, or open the save dialog when there is none yet or `asNew`. */
+async function saveDesign(asNew = false) {
+  if (!asNew && designDir.value) {
+    await commitSaveDesign(designDir.value)
+    return
+  }
+  await openSaveDesignDialog(asNew)
 }
 
 async function openDesign() {
   const path = await pickDesign()
-  if (!path) return
+  if (path) await openDesignAt(path)
+}
+
+async function openDesignAt(path: string) {
   try {
     const opened = await call<{ scene: unknown; dir: string | null }>('design_open', { path })
     await applyLoadedScene(validateScene(opened.scene), opened.dir)
+    enterDesign()
     notifySuccess(t('holo.opened', { name: fileName(opened.dir ?? path) }))
+  } catch (e) {
+    notifyError(String(e))
+    void loadRecents()
+  }
+}
+
+async function importLegacyScene() {
+  const path = await pickLegacyScene()
+  if (!path) return
+  try {
+    const opened = await call<{ scene: unknown; dir: string | null }>('design_open', { path })
+    await applyLoadedScene(validateScene(opened.scene), null)
+    enterDesign()
+    notifySuccess(t('holo.opened', { name: fileName(path) }))
   } catch (e) {
     notifyError(String(e))
   }
@@ -1801,7 +2079,7 @@ async function openDesign() {
 
 /** A new, unsaved design from `tpl`. */
 function newDesign(tpl: DesignTemplate) {
-  templatePicker.value = false
+  enterDesign()
   const fresh = tpl.make()
   scene.value = fresh
   positionId.value = fresh.positions[0].id
@@ -1853,6 +2131,7 @@ function onDragLeave(e: DragEvent) {
 }
 async function onDrop(e: DragEvent) {
   dropHover.value = false
+  if (home.value) return
   const files = Array.from(e.dataTransfer?.files ?? [])
   for (const f of files) {
     const p = (f as File & { path?: string }).path ?? f.name
@@ -1868,7 +2147,7 @@ async function setupTauriFileDrop() {
   try {
     const { getCurrentWebview } = await import('@tauri-apps/api/webview')
     unlistenTauriDrop = await getCurrentWebview().onDragDropEvent((ev) => {
-      if (s.view !== 'holo') return
+      if (s.view !== 'holo' || home.value) return
       if (ev.payload.type === 'enter' || ev.payload.type === 'over') {
         dropHover.value = true
       } else if (ev.payload.type === 'leave') {
@@ -2141,7 +2420,7 @@ function isTypingTarget(el: EventTarget | null): boolean {
 }
 
 function onKeyDown(e: KeyboardEvent) {
-  if (s.view !== 'holo' || isTypingTarget(e.target)) return
+  if (s.view !== 'holo' || home.value || isTypingTarget(e.target)) return
   const mod = e.metaKey || e.ctrlKey
   const key = e.key.toLowerCase()
 
@@ -2173,6 +2452,13 @@ function onKeyDown(e: KeyboardEvent) {
   }
   if (mod || e.altKey) return
 
+  // Like Blender's Tab: back and forth between editing and the preview.
+  if (e.key === 'Tab' && !e.shiftKey && !document.querySelector('[role="dialog"]')) {
+    e.preventDefault()
+    tab.value = tab.value === 'edit' ? 'preview' : 'edit'
+    return
+  }
+
   if (tab.value === 'edit') {
     if (key === 'q') { gizmoMode.value = 'all'; e.preventDefault() }
     else if (key === 'h') { isolate.value = !isolate.value; e.preventDefault() }
@@ -2188,10 +2474,7 @@ function onKeyDown(e: KeyboardEvent) {
 }
 
 // ---- Reactive persistence & preview watchers ----
-watch(scene, (val) => {
-  saveLastScene(val)
-  sceneChanged()
-}, { deep: true })
+watch(scene, sceneChanged, { deep: true })
 
 watch([opts, () => s.preset], sceneChanged, { deep: true })
 // Flat pictures are previewed with the burn safety they will be burned with.
@@ -2233,17 +2516,7 @@ onMounted(async () => {
   window.addEventListener('keydown', onKeyDown)
   void setupTauriFileDrop()
 
-  const restored = loadLastScene()
-  if (restored && (restored.objects.length || restored.images.length)) {
-    let last: { dir?: string | null; saved?: string } = {}
-    try {
-      last = JSON.parse(localStorage.getItem(LAST_DESIGN_KEY) ?? '{}')
-    } catch {
-      // Unreadable: start as unsaved.
-    }
-    await applyLoadedScene(restored, last.dir ?? null)
-    if (typeof last.saved === 'string') savedScene.value = last.saved
-  }
+  void loadRecents()
 })
 
 onBeforeUnmount(() => {
@@ -2267,6 +2540,17 @@ onBeforeUnmount(() => {
 .design-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .design-name { display: flex; align-items: center; gap: var(--oc-space-sm); min-width: 0; }
 .design-name .unsaved { flex: none; color: var(--oc-fg-warning); }
+.start { flex: 1; min-width: 0; }
+.start .group { display: flex; flex-direction: column; gap: var(--oc-space-xs); }
+.start .list { display: flex; flex-direction: column; gap: 2px; }
+.start .item { display: flex; align-items: center; gap: var(--oc-space-sm); padding: var(--oc-space-xs) var(--oc-space-sm); border-radius: var(--oc-radius-control); background: var(--oc-bg-glass); backdrop-filter: blur(18px); }
+.start .item[role='button'] { cursor: pointer; }
+.start .item[role='button']:hover { background-image: linear-gradient(var(--oc-bg-hover), var(--oc-bg-hover)); }
+.start .item .mark { flex: none; color: var(--oc-fg-muted); }
+.start .item.missing .mark { color: var(--oc-fg-warning); }
+.start .item .text { min-width: 0; }
+.start .badge { height: 18px; display: inline-flex; align-items: center; padding: 0 var(--oc-space-xs); border-radius: 9px; font-size: var(--oc-text-xs); white-space: nowrap; }
+.start .badge.warn { background: var(--oc-bg-warning-subtle); color: var(--oc-fg-warning); }
 .templates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--oc-space-sm); }
 .template { display: flex; flex-direction: column; align-items: flex-start; gap: var(--oc-space-2xs); padding: var(--oc-space-md); border: 1px solid var(--oc-border-muted); border-radius: var(--oc-radius-control); background: var(--oc-bg-base); color: var(--oc-fg-default); text-align: left; }
 .template:hover { border-color: var(--oc-accent); }
@@ -2290,6 +2574,9 @@ img.thumb { object-fit: cover; }
 .field { display: flex; flex-direction: column; gap: var(--oc-space-2xs); }
 .lamp-row { display: flex; align-items: center; gap: var(--oc-space-2xs); }
 .lamp-row > :not(.grow) { flex: none; }
+.location-row { display: flex; align-items: center; gap: var(--oc-space-sm); min-width: 0; }
+.location-row > :not(.grow) { flex: none; }
+.field-error { color: var(--oc-fg-danger); }
 .text-input { width: 100%; min-width: 0; height: var(--oc-size-md); padding: 0 var(--oc-space-sm); border: 0; border-radius: var(--oc-radius-control); background: var(--oc-bg-input); color: var(--oc-fg-default); }
 .num-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--oc-space-xs); }
 .num-field { display: flex; align-items: center; gap: var(--oc-space-2xs); min-width: 0; }

@@ -5,11 +5,42 @@
 //! resolves them, saving copies anything from outside into `assets/` and writes them relative.
 
 use super::model3d::{Scene, BUILTIN_SAMPLE_PATH, SCENE_VERSION};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 pub const DESIGN_FILE: &str = "design.json";
 pub const ASSETS_DIR: &str = "assets";
+
+/// What sits at a candidate path before saving a design there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FolderState {
+    Missing,
+    Empty,
+    Design,
+    Other,
+}
+
+/// Inspect `dir` so the caller can decide whether to save, confirm overwrite, or refuse.
+pub fn folder_state(dir: &Path) -> Result<FolderState, String> {
+    match std::fs::symlink_metadata(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(FolderState::Missing),
+        Err(e) => return Err(e.to_string()),
+        Ok(_) => {}
+    }
+    if !dir.is_dir() {
+        return Ok(FolderState::Other);
+    }
+    if dir.join(DESIGN_FILE).is_file() {
+        return Ok(FolderState::Design);
+    }
+    let mut entries = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
+    if entries.next().transpose().map_err(|e| e.to_string())?.is_none() {
+        Ok(FolderState::Empty)
+    } else {
+        Ok(FolderState::Other)
+    }
+}
 
 /// Save `scene` into the design folder `dir`, making it if need be. Returns the scene as it now
 /// stands, its paths pointing at the copies inside the folder.
@@ -50,6 +81,7 @@ pub fn save(dir: &Path, scene: &Scene) -> Result<Scene, String> {
     let tmp = dir.join(format!("{DESIGN_FILE}.tmp"));
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &file).map_err(|e| e.to_string())?;
+    prune_unused_assets(&dir, &kept);
     Ok(kept)
 }
 
@@ -57,8 +89,15 @@ pub fn save(dir: &Path, scene: &Scene) -> Result<Scene, String> {
 /// folders. Returns the scene as it was written, of whatever version, with its paths made
 /// absolute (the editor brings older versions up to date), and the folder when it is a design.
 pub fn open(path: &Path) -> Result<(serde_json::Value, Option<PathBuf>), String> {
-    let file = if path.is_dir() { path.join(DESIGN_FILE) } else { path.to_path_buf() };
-    let bytes = std::fs::read(&file).map_err(|e| format!("无法读取设计文件：{e}"))?;
+    let is_dir = path.is_dir();
+    let file = if is_dir { path.join(DESIGN_FILE) } else { path.to_path_buf() };
+    let bytes = std::fs::read(&file).map_err(|e| {
+        if is_dir && e.kind() == std::io::ErrorKind::NotFound {
+            "这个文件夹不是设计".into()
+        } else {
+            format!("无法读取设计文件：{e}")
+        }
+    })?;
     let mut scene: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| format!("不是有效的设计文件：{e}"))?;
     match scene.get("version").and_then(|v| v.as_u64()) {
         Some(v) if (1..=SCENE_VERSION as u64).contains(&v) => {}
@@ -181,6 +220,161 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// Remove files under `<dir>/assets/` no longer named by `scene`, and any subfolders left empty.
+/// Only touches real files and directories strictly inside `<dir>/assets`; never follows symlinks.
+fn prune_unused_assets(dir: &Path, scene: &Scene) {
+    let assets_path = dir.join(ASSETS_DIR);
+    let Ok(meta) = std::fs::symlink_metadata(&assets_path) else { return };
+    if meta.file_type().is_symlink() || !meta.file_type().is_dir() {
+        return;
+    }
+    let Ok(assets_root) = assets_path.canonicalize() else { return };
+    if !assets_root.starts_with(dir) || assets_root == dir {
+        return;
+    }
+
+    let mut kept_files = HashSet::new();
+    let mut kept_dirs = HashSet::new();
+    let refs = scene
+        .objects
+        .iter()
+        .map(|o| o.path.as_str())
+        .chain(scene.images.iter().map(|i| i.layer.path.as_str()));
+    for p in refs {
+        if p == BUILTIN_SAMPLE_PATH {
+            continue;
+        }
+        let Ok(canon) = Path::new(p).canonicalize() else { continue };
+        if !canon.starts_with(&assets_root) || canon == assets_root {
+            continue;
+        }
+        kept_files.insert(canon.clone());
+        if canon.extension().is_some_and(|e| e.eq_ignore_ascii_case("gltf")) {
+            if let Some(parent) = canon.parent() {
+                if parent != assets_root && parent.starts_with(&assets_root) {
+                    kept_dirs.insert(parent.to_path_buf());
+                } else if let Ok(parts) = gltf_parts(&canon) {
+                    for part in parts {
+                        if let Ok(part_canon) = parent.join(part).canonicalize() {
+                            if part_canon.starts_with(&assets_root) {
+                                kept_files.insert(part_canon);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    prune_dir(&assets_root, &assets_root, &kept_files, &kept_dirs);
+}
+
+fn prune_dir(
+    assets_root: &Path,
+    current: &Path,
+    kept_files: &HashSet<PathBuf>,
+    kept_dirs: &HashSet<PathBuf>,
+) {
+    let Ok(entries) = std::fs::read_dir(current) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+        let ft = meta.file_type();
+        if ft.is_symlink() {
+            continue;
+        }
+        let Ok(canon) = path.canonicalize() else { continue };
+        if !canon.starts_with(assets_root) || canon == assets_root {
+            continue;
+        }
+        if ft.is_dir() {
+            if kept_dirs.contains(&canon) {
+                continue;
+            }
+            prune_dir(assets_root, &canon, kept_files, kept_dirs);
+            if std::fs::read_dir(&canon).is_ok_and(|mut it| it.next().is_none()) {
+                let _ = std::fs::remove_dir(&canon);
+            }
+        } else if ft.is_file() && !kept_files.contains(&canon) {
+            let _ = std::fs::remove_file(&canon);
+        }
+    }
+}
+
+// ---- Recent designs: the app's own list, kept in one small file ----
+
+/// How many designs the list keeps.
+pub const MAX_RECENTS: usize = 12;
+
+/// A design opened or saved before, newest first.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Recent {
+    pub dir: String,
+    /// Milliseconds since 1970 when it was last opened or saved.
+    #[serde(default)]
+    pub opened_ms: u64,
+    /// Whether the folder still holds a design; worked out on reading, never stored.
+    #[serde(default, skip_deserializing)]
+    pub found: bool,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+fn read_recents(file: &Path) -> Vec<Recent> {
+    std::fs::read(file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn write_recents(file: &Path, list: &[Recent]) -> Result<(), String> {
+    let json = serde_json::to_vec_pretty(list).map_err(|e| e.to_string())?;
+    std::fs::write(file, json).map_err(|e| e.to_string())
+}
+
+/// The list in `file`, each marked found or not.
+pub fn recents(file: &Path) -> Vec<Recent> {
+    let mut list = read_recents(file);
+    for r in &mut list {
+        r.found = folder_state(Path::new(&r.dir)) == Ok(FolderState::Design);
+    }
+    list
+}
+
+/// Put `dir` at the top of the list, as just opened or saved.
+pub fn remember_recent(file: &Path, dir: &Path) -> Result<(), String> {
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()).to_string_lossy().into_owned();
+    let mut list = read_recents(file);
+    list.retain(|r| r.dir != dir);
+    list.insert(0, Recent { dir, opened_ms: now_ms(), found: true });
+    list.truncate(MAX_RECENTS);
+    write_recents(file, &list)
+}
+
+/// Take `dir` off the list; the folder itself is left alone.
+pub fn forget_recent(file: &Path, dir: &str) -> Result<Vec<Recent>, String> {
+    let mut list = read_recents(file);
+    list.retain(|r| r.dir != dir);
+    write_recents(file, &list)?;
+    Ok(recents(file))
+}
+
+/// Point the entry for `old` at `new`, a design folder found elsewhere, keeping its place.
+pub fn relocate_recent(file: &Path, old: &str, new: &Path) -> Result<Vec<Recent>, String> {
+    if folder_state(new)? != FolderState::Design {
+        return Err("这个文件夹不是设计".into());
+    }
+    let new = new.canonicalize().map_err(|e| e.to_string())?.to_string_lossy().into_owned();
+    let mut list = read_recents(file);
+    list.retain(|r| r.dir != new || r.dir == old);
+    match list.iter_mut().find(|r| r.dir == old) {
+        Some(r) => r.dir = new,
+        None => list.insert(0, Recent { dir: new, opened_ms: now_ms(), found: true }),
+    }
+    write_recents(file, &list)?;
+    Ok(recents(file))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,12 +441,14 @@ mod tests {
         assert_eq!(written["images"][0]["path"], "assets/p.png");
         assert!(design.join("assets/g/g.bin").exists() && design.join("assets/g/tex/t x.png").exists());
 
-        // Saving again copies nothing more; a different file of the same name gets its own.
+        // Saving again copies nothing more; a different file of the same name gets its own,
+        // and the replaced copy is cleaned up.
         save(&design, &saved).unwrap();
         std::fs::write(outside.join("m.obj"), "v 1 1 1\n").unwrap();
         let again = save(&design, &s).unwrap();
         assert!(again.objects[0].path.ends_with("assets/m-2.obj"), "{}", again.objects[0].path);
-        assert_eq!(std::fs::read_dir(design.join(ASSETS_DIR)).unwrap().count(), 4);
+        assert!(!design.join("assets/m.obj").exists());
+        assert_eq!(std::fs::read_dir(design.join(ASSETS_DIR)).unwrap().count(), 3);
 
         // Moved elsewhere, it still opens whole.
         let moved = dir("moved").join("d");
@@ -264,5 +460,117 @@ mod tests {
         for d in [outside, moved.parent().unwrap().to_path_buf()] {
             std::fs::remove_dir_all(d).unwrap();
         }
+    }
+
+    #[test]
+    fn unused_assets_are_removed_on_resave() {
+        let outside = dir("prune-outside");
+        std::fs::write(outside.join("p1.png"), [1u8, 2, 3]).unwrap();
+        std::fs::write(outside.join("p2.png"), [4u8, 5, 6]).unwrap();
+        std::fs::write(outside.join("g.bin"), [9u8; 8]).unwrap();
+        std::fs::write(outside.join("g.gltf"), r#"{"buffers":[{"uri":"g.bin"}]}"#).unwrap();
+
+        let mut s = scene(outside.join("g.gltf").to_str().unwrap(), outside.join("p1.png").to_str().unwrap());
+        s.images.push(SceneImage {
+            id: "i2".into(),
+            name: "p2".into(),
+            width: 4,
+            height: 4,
+            position_id: "b".into(),
+            layer: Layer { path: outside.join("p2.png").to_string_lossy().into(), ..Layer::plain() },
+        });
+
+        let design = dir("prune-design");
+        let outside_note = design.join("notes.txt");
+        std::fs::write(&outside_note, "keep me").unwrap();
+
+        let mut saved = save(&design, &s).unwrap();
+        let design = design.canonicalize().unwrap();
+        assert!(design.join("assets/p1.png").exists());
+        assert!(design.join("assets/p2.png").exists());
+        assert!(design.join("assets/g/g.gltf").exists());
+        assert!(design.join("assets/g/g.bin").exists());
+
+        // An extra unused subfolder inside assets should be cleaned up once emptied.
+        std::fs::create_dir_all(design.join("assets/stale")).unwrap();
+        std::fs::write(design.join("assets/stale/old.png"), [0u8]).unwrap();
+
+        // Remove the second picture and save again.
+        saved.images.retain(|img| img.id != "i2");
+        save(&design, &saved).unwrap();
+
+        assert!(!design.join("assets/p2.png").exists());
+        assert!(design.join("assets/p1.png").exists());
+        assert!(design.join("assets/g/g.gltf").exists());
+        assert!(design.join("assets/g/g.bin").exists());
+        assert!(!design.join("assets/stale").exists());
+        assert!(design.join(DESIGN_FILE).exists());
+        assert_eq!(std::fs::read_to_string(design.join("notes.txt")).unwrap(), "keep me");
+
+        for d in [outside, design] {
+            std::fs::remove_dir_all(d).unwrap();
+        }
+    }
+
+    #[test]
+    fn folder_state_and_non_design_folder_error() {
+        let root = dir("state");
+        let missing = root.join("missing");
+        assert_eq!(folder_state(&missing).unwrap(), FolderState::Missing);
+
+        let empty = root.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert_eq!(folder_state(&empty).unwrap(), FolderState::Empty);
+        assert_eq!(open(&empty).unwrap_err(), "这个文件夹不是设计");
+
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("readme.txt"), "hello").unwrap();
+        assert_eq!(folder_state(&other).unwrap(), FolderState::Other);
+        assert_eq!(open(&other).unwrap_err(), "这个文件夹不是设计");
+
+        let regular_file = root.join("plain.txt");
+        std::fs::write(&regular_file, "x").unwrap();
+        assert_eq!(folder_state(&regular_file).unwrap(), FolderState::Other);
+
+        let design_dir = root.join("design");
+        std::fs::create_dir_all(&design_dir).unwrap();
+        std::fs::write(design_dir.join(DESIGN_FILE), "{}").unwrap();
+        assert_eq!(folder_state(&design_dir).unwrap(), FolderState::Design);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recents_keep_the_newest_first_and_can_be_relocated() {
+        let root = dir("recents");
+        let file = root.join("recent.json");
+        let a = root.join("a");
+        let b = root.join("b");
+        for d in [&a, &b] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join(DESIGN_FILE), "{}").unwrap();
+        }
+        remember_recent(&file, &a).unwrap();
+        remember_recent(&file, &b).unwrap();
+        remember_recent(&file, &a).unwrap();
+        let list = recents(&file);
+        let a_str = a.canonicalize().unwrap().to_string_lossy().into_owned();
+        let b_str = b.canonicalize().unwrap().to_string_lossy().into_owned();
+        assert_eq!(list.iter().map(|r| r.dir.as_str()).collect::<Vec<_>>(), [a_str.as_str(), b_str.as_str()]);
+        assert!(list.iter().all(|r| r.found));
+
+        // Moved away: still listed, not found, then pointed at where it went.
+        let moved = root.join("moved");
+        std::fs::rename(&b, &moved).unwrap();
+        assert!(!recents(&file)[1].found);
+        assert!(relocate_recent(&file, &b_str, &root).is_err(), "not a design folder");
+        let list = relocate_recent(&file, &b_str, &moved).unwrap();
+        assert_eq!(list[1].dir, moved.canonicalize().unwrap().to_string_lossy());
+        assert!(list[1].found);
+
+        let list = forget_recent(&file, &a_str).unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(moved.join(DESIGN_FILE).is_file(), "forgetting leaves the folder alone");
     }
 }

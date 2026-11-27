@@ -1,8 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { documentDir } from '@tauri-apps/api/path'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { openUrl } from '@tauri-apps/plugin-opener'
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { t } from './i18n'
 import type { DiscGeometryPreset } from './types'
 import { fetchIndex, fetchPreset, type CatalogEntry } from './catalog'
@@ -77,19 +78,51 @@ export async function pickModel(): Promise<string | null> {
   return typeof r === 'string' ? r : null
 }
 
-let mockDesign = '/Users/demo/My design'
-
-/** A design to open: the `design.json` in its folder, or an older scene file. */
+/** A design folder to open. */
 export async function pickDesign(): Promise<string | null> {
-  if (mock) return `${mockDesign}/design.json`
+  if (mock) return mock.lastDesignDir()
+  const r = await open({ directory: true, multiple: false })
+  return typeof r === 'string' ? r : null
+}
+
+/** A design on the app's list of ones opened or saved before. */
+export interface RecentDesign {
+  dir: string
+  openedMs: number
+  /** The folder still holds a design. */
+  found: boolean
+}
+
+/** Show a file or folder in Finder or the file manager. */
+export async function revealPath(path: string): Promise<void> {
+  if (mock) return
+  await revealItemInDir(path)
+}
+
+/** An older scene JSON file to import as an unsaved design. */
+export async function pickLegacyScene(): Promise<string | null> {
+  if (mock) return '/Users/demo/legacy.holo.json'
   const r = await open({ multiple: false, filters: [{ name: t('dialog.designFilter'), extensions: ['json'] }] })
   return typeof r === 'string' ? r : null
 }
 
-/** Where to make a new design folder, named by the user. */
-export async function pickDesignFolder(defaultName: string): Promise<string | null> {
-  if (mock) return (mockDesign = `/Users/demo/${defaultName}`)
-  return save({ defaultPath: defaultName })
+let mockLocations = 0
+
+/** A parent folder to place a new design folder inside. */
+export async function pickFolder(defaultPath?: string): Promise<string | null> {
+  if (mock) return ['/Users/demo/Documents', '/Users/demo/Desktop'][mockLocations++ % 2]
+  const r = await open({ directory: true, multiple: false, ...(defaultPath ? { defaultPath } : {}) })
+  return typeof r === 'string' ? r : null
+}
+
+/** Default parent folder for saving designs. */
+export async function defaultDesignLocation(): Promise<string> {
+  if (mock) return '/Users/demo/Documents'
+  try {
+    return await documentDir()
+  } catch {
+    return ''
+  }
 }
 
 let mockSaved = '/Users/demo/flowers.discratch'

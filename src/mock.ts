@@ -56,6 +56,17 @@ const log: { id: string }[] = []
 let stop = false
 const compositions = new Map<string, unknown>()
 const holoScenes = new Map<string, string>()
+let lastSavedDesignDir = '/Users/demo/Documents/My design'
+// One that was moved away, to try relocating.
+let recentDesigns: { dir: string; openedMs: number }[] = [{ dir: '/Users/demo/Old/Moved design', openedMs: Date.now() - 86400000 }]
+function rememberRecent(dir: string) {
+  recentDesigns = [{ dir, openedMs: Date.now() }, ...recentDesigns.filter((r) => r.dir !== dir)].slice(0, 12)
+}
+const listRecents = () => recentDesigns.map((r) => ({ ...r, found: holoScenes.has(r.dir) }))
+export function lastDesignDir(): string {
+  return lastSavedDesignDir
+}
+const normalizeDir = (p: string) => p.replace(/[\\/]+$/, '')
 const disc = (size: number, dark: number) => {
   const c = document.createElement('canvas')
   c.width = c.height = size
@@ -241,14 +252,62 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     case 'holo_build_scene_iso':
       await wait(300)
       return { outputIsoPath: a.outputIsoPath, totalSectors: 2295104, usage: [] }
+    case 'design_recents':
+      return listRecents()
+    case 'design_forget_recent':
+      recentDesigns = recentDesigns.filter((r) => r.dir !== a.dir)
+      return listRecents()
+    case 'design_relocate_recent': {
+      const dir = normalizeDir(String(a.dir ?? ''))
+      if (!holoScenes.has(dir)) throw '这个文件夹不是设计'
+      const at = recentDesigns.find((r) => r.dir === a.old)
+      recentDesigns = recentDesigns.filter((r) => r.dir !== dir || r === at)
+      if (at) at.dir = dir
+      else rememberRecent(dir)
+      return listRecents()
+    }
+    case 'design_folder_state': {
+      const dir = normalizeDir(String(a.dir ?? ''))
+      return holoScenes.has(dir) ? 'design' : 'missing'
+    }
     case 'design_save': {
-      holoScenes.set(`${a.dir}/design.json`, JSON.stringify(a.scene))
+      const dir = normalizeDir(String(a.dir ?? ''))
+      holoScenes.set(dir, JSON.stringify(a.scene))
+      lastSavedDesignDir = dir
+      rememberRecent(dir)
       return a.scene
     }
     case 'design_open': {
-      const raw = holoScenes.get(String(a.path))
-      if (!raw) throw '不是有效的设计文件'
-      return { scene: JSON.parse(raw), dir: String(a.path).replace(/\/design\.json$/, '') }
+      const rawPath = String(a.path ?? '')
+      const isDesignJson = /[\\/]design\.json$/i.test(rawPath)
+      const isJsonFile = rawPath.toLowerCase().endsWith('.json')
+      const dir = normalizeDir(isDesignJson ? rawPath.replace(/[\\/]design\.json$/i, '') : rawPath)
+      const raw = holoScenes.get(dir) ?? holoScenes.get(rawPath)
+      if (raw) {
+        if (!isJsonFile || isDesignJson) rememberRecent(dir)
+        return { scene: JSON.parse(raw), dir: isJsonFile && !isDesignJson ? null : dir }
+      }
+      if (isJsonFile && !isDesignJson) {
+        return {
+          scene: {
+            version: 1,
+            positions: [{ id: 'p1', name: '', phiDeg: 0, cropDeg: 30, order: ['o1'] }],
+            objects: [{
+              id: 'o1',
+              path: 'builtin:star',
+              name: 'Legacy star',
+              visible: true,
+              positionMm: [0, 40, 0],
+              rotationDeg: [0, 0, 0],
+              scaleMm: [20, 20, 20],
+              positionId: 'p1',
+            }],
+            images: [],
+          },
+          dir: null,
+        }
+      }
+      throw '这个文件夹不是设计'
     }
     case 'cache_iso_path': return `/cache/${a.name}`
     case 'burn_iso_to_drive':

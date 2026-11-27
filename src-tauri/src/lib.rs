@@ -617,11 +617,49 @@ async fn holo_build_scene_iso(
     .await
 }
 
+/// Inspect a target folder before saving a design into it.
+#[tauri::command]
+async fn design_folder_state(dir: String) -> Result<disc_core::holo::project::FolderState, String> {
+    blocking(move || disc_core::holo::project::folder_state(Path::new(&dir))).await
+}
+
 /// Save a design into its folder, bringing every file it uses inside. Returns the scene with its
 /// paths pointing at those copies.
 #[tauri::command]
-async fn design_save(dir: String, scene: disc_core::holo::model3d::Scene) -> Result<disc_core::holo::model3d::Scene, String> {
-    blocking(move || disc_core::holo::project::save(Path::new(&dir), &scene)).await
+async fn design_save(app: AppHandle, dir: String, scene: disc_core::holo::model3d::Scene) -> Result<disc_core::holo::model3d::Scene, String> {
+    let recents = recents_path(&app)?;
+    blocking(move || {
+        let saved = disc_core::holo::project::save(Path::new(&dir), &scene)?;
+        // The list is a convenience: a failure to update it never fails the save.
+        let _ = disc_core::holo::project::remember_recent(&recents, Path::new(&dir));
+        Ok(saved)
+    })
+    .await
+}
+
+fn recents_path(app: &AppHandle) -> Result<PathBuf, String> {
+    data_file(app, "recent-designs.json")
+}
+
+/// The designs opened or saved before, newest first, each marked found or not.
+#[tauri::command]
+async fn design_recents(app: AppHandle) -> Result<Vec<disc_core::holo::project::Recent>, String> {
+    let file = recents_path(&app)?;
+    blocking(move || Ok(disc_core::holo::project::recents(&file))).await
+}
+
+/// Take a design off the list, leaving its folder alone.
+#[tauri::command]
+async fn design_forget_recent(app: AppHandle, dir: String) -> Result<Vec<disc_core::holo::project::Recent>, String> {
+    let file = recents_path(&app)?;
+    blocking(move || disc_core::holo::project::forget_recent(&file, &dir)).await
+}
+
+/// Point a design on the list that has moved at the folder it is in now.
+#[tauri::command]
+async fn design_relocate_recent(app: AppHandle, old: String, dir: String) -> Result<Vec<disc_core::holo::project::Recent>, String> {
+    let file = recents_path(&app)?;
+    blocking(move || disc_core::holo::project::relocate_recent(&file, &old, Path::new(&dir))).await
 }
 
 #[derive(serde::Serialize)]
@@ -635,9 +673,13 @@ struct OpenedDesign {
 
 /// Open a design folder, its `design.json`, or an older scene file.
 #[tauri::command]
-async fn design_open(path: String) -> Result<OpenedDesign, String> {
+async fn design_open(app: AppHandle, path: String) -> Result<OpenedDesign, String> {
+    let recents = recents_path(&app)?;
     blocking(move || {
         let (scene, dir) = disc_core::holo::project::open(Path::new(&path))?;
+        if let Some(d) = &dir {
+            let _ = disc_core::holo::project::remember_recent(&recents, d);
+        }
         Ok(OpenedDesign { scene, dir: dir.map(|d| d.to_string_lossy().into()) })
     })
     .await
@@ -734,8 +776,12 @@ pub fn run() {
             holo_scene_weights,
             holo_response_tables,
             holo_build_scene_iso,
+            design_folder_state,
             design_save,
             design_open,
+            design_recents,
+            design_forget_recent,
+            design_relocate_recent,
             cache_iso_path,
             remove_cached_iso,
         ])
