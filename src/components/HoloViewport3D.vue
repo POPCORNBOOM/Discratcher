@@ -3,6 +3,7 @@
     ref="host"
     class="vp3d"
     :class="{ grabbing: planeDragging, pointing: !!hoveredMarker }"
+    @pointerdown.capture="routeOrbitButtons"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
@@ -33,6 +34,7 @@ import {
   MathUtils,
   Matrix4,
   Mesh,
+  MOUSE,
   MeshBasicMaterial,
   MeshStandardMaterial,
   PCFShadowMap,
@@ -823,8 +825,16 @@ function pickImageId(e: PointerEvent): string | null {
   return (hits[0]?.object.userData.imageId as string | undefined) ?? null
 }
 
+/**
+ * Before the view's own controls see the press: ⌥ with the left button turns the view, for a
+ * trackpad with no middle button.
+ */
+function routeOrbitButtons(e: PointerEvent) {
+  if (orbit) orbit.mouseButtons.LEFT = e.button === 0 && e.altKey ? MOUSE.ROTATE : null
+}
+
 function onPointerDown(e: PointerEvent) {
-  if (e.button !== 0 || gizmoDragging) return
+  if (e.button !== 0 || e.altKey || gizmoDragging) return
   // If pointer is hovering a TransformControls handle, let the gizmo own this drag.
   if (gizmo?.axis) return
   pointerDownPos = { x: e.clientX, y: e.clientY }
@@ -1019,6 +1029,8 @@ onMounted(() => {
   orbit.minDistance = 65
   orbit.maxDistance = 3600
   orbit.maxPolarAngle = Math.PI * 0.85
+  // Middle drag turns the view and right drag pans it; the left button is for picking and handles.
+  orbit.mouseButtons = { LEFT: null, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
 
   gizmo = new TransformControls(camera, el)
   gizmo.setSize(0.85)
