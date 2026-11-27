@@ -55,12 +55,8 @@
         <!-- Object list + selected object controls -->
         <template v-else-if="scene.objects.length">
           <!-- Where on the disc this position is, and how it is solved. -->
-          <section class="section">
-            <div class="group-title row">
-              <UiIcon :path="mdiCrosshairsGps" :size="16" />
-              <span class="grow">{{ t('holo.positions') }}</span>
-              <a v-if="scene.positions.length > 1" class="action-link" role="button" tabindex="0" @click="removePosition" @keydown.enter="removePosition">{{ t('holo.removePosition') }}</a>
-            </div>
+          <UiSection :icon="mdiCrosshairsGps" :title="t('holo.positions')">
+            <template #actions><a v-if="scene.positions.length > 1" class="action-link" role="button" tabindex="0" @click="removePosition" @keydown.enter="removePosition">{{ t('holo.removePosition') }}</a></template>
             <div class="positions" role="tablist" :aria-label="t('holo.positions')">
               <UiButton v-for="(q, i) in scene.positions" :key="q.id" role="tab" :aria-selected="q.id === positionId" :variant="q.id === positionId ? 'soft' : 'ghost'" :class="{ clash: overlapping.includes(q.id) }" :data-tooltip="overlapping.includes(q.id) ? t('holo.overlap') : undefined" @click="goToPosition(q.id)">{{ i + 1 }}</UiButton>
               <UiButton icon-only variant="ghost" :icon="mdiPlus" :disabled="scene.positions.length >= MAX_POSITIONS" :aria-label="t('holo.addPosition')" :data-tooltip="t('holo.addPosition')" @click="addPosition" />
@@ -97,13 +93,9 @@
                 :format="(x) => `${Math.round(x * 100)}%`"
               />
             </UiAdvanced>
-          </section>
+          </UiSection>
 
-          <section class="section">
-            <div class="group-title row">
-              <UiIcon :path="mdiCubeOutline" :size="16" />
-              <span class="grow">{{ t('holo.models') }}</span>
-            </div>
+          <UiSection :icon="mdiCubeOutline" :title="t('holo.models')">
             <div class="obj-list" role="listbox" :aria-label="t('holo.models')">
               <div
                 v-for="obj in positionObjects"
@@ -140,7 +132,6 @@
               </div>
             </div>
             <UiButton variant="ghost" :icon="mdiPlus" :disabled="loadingMesh || !!s.job" @click="addModelFromPicker">{{ t('holo.addModel') }}</UiButton>
-          </section>
 
           <section v-if="selectedObj" class="section">
             <div class="title row">
@@ -317,14 +308,11 @@
               />
             </UiAdvanced>
           </section>
+          </UiSection>
 
           <!-- The lamp and where you look from, shared by every position. -->
-          <section class="section">
-            <div class="group-title row">
-              <UiIcon :path="mdiLightbulbOutline" :size="16" />
-              <span class="grow">{{ t('holo.lighting') }}</span>
-              <a class="action-link" role="button" tabindex="0" @click="setLampPreset('held')" @keydown.enter="setLampPreset('held')">{{ t('holo.reset') }}</a>
-            </div>
+          <UiSection :icon="mdiLightbulbOutline" :title="t('holo.lighting')">
+            <template #actions><a class="action-link" role="button" tabindex="0" @click="setLampPreset('held')" @keydown.enter="setLampPreset('held')">{{ t('holo.reset') }}</a></template>
             <UiSelect :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset($event as LampPreset)" />
             <UiAdvanced :label="t('holo.exactPlacement')">
               <UiSlider :model-value="opts.lampMm[0]" :label="t('holo.lampSide')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampSideWords" @update:model-value="(v) => setLampAxis(0, v)" />
@@ -339,7 +327,7 @@
                 :format="mm"
               />
             </UiAdvanced>
-          </section>
+          </UiSection>
         </template>
 
         <!-- Experimental tools -->
@@ -605,6 +593,7 @@ import HoloViewport3D, { type GizmoMode } from '../components/HoloViewport3D.vue
 import UiAdvanced from '../components/UiAdvanced.vue'
 import UiButton from '../components/UiButton.vue'
 import UiIcon from '../components/UiIcon.vue'
+import UiSection from '../components/UiSection.vue'
 import UiSegmented from '../components/UiSegmented.vue'
 import UiSelect, { type UiSelectOption } from '../components/UiSelect.vue'
 import UiSlider from '../components/UiSlider.vue'
@@ -1714,8 +1703,6 @@ onBeforeUnmount(() => {
 .num-field { display: flex; align-items: center; gap: var(--oc-space-2xs); min-width: 0; }
 .num-input { width: 100%; min-width: 0; height: var(--oc-size-md); padding: 0 var(--oc-space-xs); border: 0; border-radius: var(--oc-radius-control); background: var(--oc-bg-input); appearance: textfield; -moz-appearance: textfield; }
 .num-input::-webkit-inner-spin-button, .num-input::-webkit-outer-spin-button { appearance: none; -webkit-appearance: none; margin: 0; }
-.group-title { gap: var(--oc-space-xs); font-size: var(--oc-text-lg); font-weight: 600; color: var(--oc-fg-default); }
-.group-title svg { color: var(--oc-fg-accent); }
 .var-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; gap: var(--oc-space-2xs); }
 .var-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--oc-fg-muted); }
 .action-link.end { align-self: flex-end; }
