@@ -448,7 +448,9 @@ pub struct SceneObject {
     pub visible: bool,
     pub position_mm: [f64; 3],
     pub rotation_deg: [f64; 3],
-    pub scale_mm: f64,
+    /// Size along each of its own axes, mm; a single number in older files is the same on all three.
+    #[serde(deserialize_with = "one_or_three")]
+    pub scale_mm: [f64; 3],
     /// The viewing position it belongs to; the first when empty or unknown.
     #[serde(default)]
     pub position_id: String,
@@ -773,11 +775,26 @@ fn normal_matrix_3x3(m: &[f64; 16]) -> [[f64; 3]; 3] {
     }
 }
 
+/// A size that is one number for all three axes, or one for each.
+fn one_or_three<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[f64; 3], D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Size {
+        One(f64),
+        Three([f64; 3]),
+    }
+    Ok(match Size::deserialize(d)? {
+        Size::One(v) => [v; 3],
+        Size::Three(v) => v,
+    })
+}
+
 /// Place an already-normalized mesh according to `obj` and optional row-major scene-space
 /// transform `transform` applied about `obj.position_mm`:
-/// `scene_p = position_mm + L * (scale * R * p) + tr`, then convert into the disc picture frame.
+/// `scene_p = position_mm + L * (R * (S * p)) + tr`, S scaling each of the model's own axes, then
+/// convert into the disc picture frame.
 pub(crate) fn place_normalized_with(norm: &Mesh, obj: &SceneObject, transform: Option<&[f64; 16]>) -> Mesh {
-    let scale = obj.scale_mm.clamp(1.0, 200.0);
+    let scale = obj.scale_mm.map(|v| v.clamp(1.0, 200.0));
     let [rx, ry, rz] = obj.rotation_deg;
     let pos = obj.position_mm;
     let n_mat = transform.map(normal_matrix_3x3);
@@ -787,9 +804,11 @@ pub(crate) fn place_normalized_with(norm: &Mesh, obj: &SceneObject, transform: O
         .map(|tri| {
             let mut out = [Vertex { pos: [0.0; 3], normal: [0.0, 0.0, 1.0], albedo: 1.0 }; 3];
             for i in 0..3 {
-                let rot_p = rot_xyz(tri[i].pos, rx, ry, rz);
-                let rot_n = rot_xyz(tri[i].normal, rx, ry, rz);
-                let scaled = scale3(rot_p, scale);
+                let p = tri[i].pos;
+                let n = tri[i].normal;
+                // Normals take the inverse of a stretch, so they stay square to the faces.
+                let scaled = rot_xyz([p[0] * scale[0], p[1] * scale[1], p[2] * scale[2]], rx, ry, rz);
+                let rot_n = rot_xyz([n[0] / scale[0], n[1] / scale[1], n[2] / scale[2]], rx, ry, rz);
                 let scene_p = if let Some(m) = transform {
                     [
                         pos[0] + m[0] * scaled[0] + m[1] * scaled[1] + m[2] * scaled[2] + m[3],
@@ -1815,6 +1834,27 @@ mod tests {
     use crate::holo::design::{self, DesignInput};
     use crate::preset::reference_preset;
 
+    #[test]
+    fn a_model_stretches_along_its_own_axes_and_old_sizes_still_read() {
+        let norm = normalize_mesh(&load_mesh_or_builtin(BUILTIN_SAMPLE_PATH).unwrap()).unwrap();
+        let extent = |m: &Mesh, axis: usize| {
+            let v = m.tris.iter().flatten().map(|v| v.pos[axis]);
+            v.clone().fold(f64::MIN, f64::max) - v.fold(f64::MAX, f64::min)
+        };
+        let obj: SceneObject = serde_json::from_value(serde_json::json!({
+            "id": "o", "path": BUILTIN_SAMPLE_PATH, "name": "s", "positionMm": [0, 0, 0], "rotationDeg": [0, 0, 0], "scaleMm": 20
+        }))
+        .unwrap();
+        assert_eq!(obj.scale_mm, [20.0; 3], "a single size is the same on all three axes");
+        let even = place_normalized_with(&norm, &obj, None);
+        let wide = place_normalized_with(&norm, &SceneObject { scale_mm: [40.0, 20.0, 20.0], ..obj.clone() }, None);
+        assert!((extent(&wide, 0) / extent(&even, 0) - 2.0).abs() < 1e-9);
+        assert!((extent(&wide, 1) - extent(&even, 1)).abs() < 1e-9);
+        // Turned a quarter about z first, the stretch goes with the model: across the disc it is now tall.
+        let turned = place_normalized_with(&norm, &SceneObject { scale_mm: [40.0, 20.0, 20.0], rotation_deg: [0.0, 0.0, 90.0], ..obj.clone() }, None);
+        assert!((extent(&turned, 1) / extent(&even, 0) - 2.0).abs() < 1e-6, "{} {}", extent(&turned, 1), extent(&even, 0));
+    }
+
     fn unit_cube_obj() -> &'static str {
         "\
         v -1 -1 -1\n\
@@ -2185,7 +2225,7 @@ mod tests {
             visible: true,
             position_mm: [0.0, 41.0, 0.0],
             rotation_deg: [0.0, 0.0, 0.0],
-            scale_mm: 20.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+            scale_mm: [20.0; 3], position_id: String::new(), style: Default::default(), motion: Default::default(),
             mode: Default::default(),
             parallax: 2.0,
             tilt_deg: 0.0,
@@ -2250,7 +2290,7 @@ mod tests {
         let star = load_mesh_or_builtin(BUILTIN_SAMPLE_PATH).unwrap();
         let mk = |pos: [f64; 3], scale_mm: f64| SceneObject {
             id: "o".into(), path: "x".into(), name: "x".into(), visible: true,
-            position_mm: pos, rotation_deg: [0.0; 3], scale_mm, position_id: String::new(), style: Default::default(), motion: Default::default(),
+            position_mm: pos, rotation_deg: [0.0; 3], scale_mm: [scale_mm; 3], position_id: String::new(), style: Default::default(), motion: Default::default(),
             mode: Default::default(),
             parallax: 2.0,
             tilt_deg: 0.0,
@@ -2316,7 +2356,7 @@ mod tests {
         let preset = reference_preset();
         let dir = std::env::temp_dir().join("holo-editor-path");
         let obj = |path: &str, pos: [f64; 3], rot: [f64; 3], scale_mm: f64| SceneObject {
-            id: "o".into(), path: path.into(), name: "x".into(), visible: true, position_mm: pos, rotation_deg: rot, scale_mm, position_id: String::new(), style: Default::default(), motion: Default::default(),
+            id: "o".into(), path: path.into(), name: "x".into(), visible: true, position_mm: pos, rotation_deg: rot, scale_mm: [scale_mm; 3], position_id: String::new(), style: Default::default(), motion: Default::default(),
             mode: Default::default(),
             parallax: 2.0,
             tilt_deg: 0.0,
@@ -2364,7 +2404,7 @@ mod tests {
             println!("{} tris, {} bytes, {:?}", m.tris.len(), bytes, began.elapsed());
             let placed = place_scene_object(&m, &SceneObject {
                 id: "o".into(), path: "x".into(), name: "x".into(), visible: true,
-                position_mm: [0.0, -41.0, 0.0], rotation_deg: [0.0; 3], scale_mm: 30.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+                position_mm: [0.0, -41.0, 0.0], rotation_deg: [0.0; 3], scale_mm: [30.0; 3], position_id: String::new(), style: Default::default(), motion: Default::default(),
                 mode: Default::default(),
                 parallax: 2.0,
                 tilt_deg: 0.0,
@@ -2402,7 +2442,7 @@ mod tests {
                 visible: true,
                 position_mm: [0.0, -41.0, 10.0],
                 rotation_deg: [0.0, 0.0, 0.0],
-                scale_mm: 16.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+                scale_mm: [16.0; 3], position_id: String::new(), style: Default::default(), motion: Default::default(),
                 mode: Default::default(),
                 parallax: 2.0,
                 tilt_deg: 0.0,
@@ -2418,7 +2458,7 @@ mod tests {
                 visible: true,
                 position_mm: [0.0, -41.0, -10.0],
                 rotation_deg: [0.0, 0.0, 0.0],
-                scale_mm: 24.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+                scale_mm: [24.0; 3], position_id: String::new(), style: Default::default(), motion: Default::default(),
                 mode: Default::default(),
                 parallax: 2.0,
                 tilt_deg: 0.0,
@@ -2444,7 +2484,7 @@ mod tests {
                     visible: true,
                     position_mm: [0.0, -41.0, 8.0],
                     rotation_deg: [0.0, 0.0, 0.0],
-                    scale_mm: 22.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+                    scale_mm: [22.0; 3], position_id: String::new(), style: Default::default(), motion: Default::default(),
                     mode: Default::default(),
                     parallax: 2.0,
                     tilt_deg: 0.0,
@@ -2456,7 +2496,7 @@ mod tests {
                     visible: false,
                     position_mm: [0.0, 41.0, 0.0],
                     rotation_deg: [0.0, 0.0, 0.0],
-                    scale_mm: 20.0, position_id: String::new(), style: Default::default(), motion: Default::default(),
+                    scale_mm: [20.0; 3], position_id: String::new(), style: Default::default(), motion: Default::default(),
                     mode: Default::default(),
                     parallax: 2.0,
                     tilt_deg: 0.0,
@@ -2532,7 +2572,7 @@ mod tests {
             visible: true,
             position_mm: [2.0, 30.0, 4.0],
             rotation_deg: [0.0; 3],
-            scale_mm: 10.0,
+            scale_mm: [10.0; 3],
             position_id: String::new(),
             style: Default::default(),
             motion: Default::default(),

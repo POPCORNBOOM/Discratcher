@@ -698,7 +698,7 @@ mod tests {
     fn star(position: &str, x: f64, y: f64) -> SceneObject {
         SceneObject {
             id: format!("{position}{x},{y}"), path: model3d::BUILTIN_SAMPLE_PATH.into(), name: "s".into(), visible: true,
-            position_mm: [x, y, 6.0], rotation_deg: [0.0; 3], scale_mm: 22.0, position_id: position.into(), style: ink::Style::default(),
+            position_mm: [x, y, 6.0], rotation_deg: [0.0; 3], scale_mm: [22.0; 3], position_id: position.into(), style: ink::Style::default(),
             motion: model3d::Motion::default(),
             mode: Default::default(),
             parallax: 2.0,
@@ -850,7 +850,7 @@ mod tests {
 
     #[test]
     fn depth_is_eased_round_where_the_object_is_put() {
-        let o = SceneObject { position_mm: [0.0, 41.0, -2.0], scale_mm: 30.0, ..star("0", 0.0, 41.0) };
+        let o = SceneObject { position_mm: [0.0, 41.0, -2.0], scale_mm: [30.0; 3], ..star("0", 0.0, 41.0) };
         let mesh = model3d::load_mesh_or_builtin(&o.path).unwrap();
         let z = |t: f64| -> Vec<f64> { place(&mesh, &o, 0.0, t).unwrap().tris.iter().flatten().map(|v| v.pos[2]).collect() };
         let (whole, eased) = (z(0.0), z(3.0));
@@ -887,7 +887,7 @@ mod tests {
 
         for phi_deg in [0.0f64, 55.0] {
             // Centred near 33 deg off 12 o'clock so part lies inside ±30° and part outside.
-            let obj = SceneObject { scale_mm: 28.0, ..star("0", 22.0, 34.0) };
+            let obj = SceneObject { scale_mm: [28.0; 3], ..star("0", 22.0, 34.0) };
             let make = |crop_deg: f64| Scene {
                 version: model3d::SCENE_VERSION,
                 images: vec![],
@@ -938,8 +938,8 @@ mod tests {
             version: model3d::SCENE_VERSION,
             images: vec![],
             objects: vec![
-                SceneObject { scale_mm: 24.0, ..star("0", 29.0, 29.0) },
-                SceneObject { scale_mm: 24.0, ..star("1", -29.0, 29.0) },
+                SceneObject { scale_mm: [24.0; 3], ..star("0", 29.0, 29.0) },
+                SceneObject { scale_mm: [24.0; 3], ..star("1", -29.0, 29.0) },
             ],
             lamp_mm: None,
             positions: vec![
@@ -1005,7 +1005,7 @@ mod tests {
             visible: true,
             position_mm: [0.0, 41.0, 0.0],
             rotation_deg: [0.0; 3],
-            scale_mm: 30.0,
+            scale_mm: [30.0; 3],
             position_id: "0".into(),
             style: ink::Style::default(),
             motion: model3d::Motion { preset: "spinY".into(), matrix: vec![], samples, vars: vec![] },
@@ -1114,7 +1114,7 @@ mod tests {
     #[test]
     #[ignore]
     fn look_positions() {
-        let girl = |p: &str, x: f64, y: f64, rot: [f64; 3], size: f64| SceneObject { path: std::env::var("MODEL").unwrap(), rotation_deg: rot, scale_mm: size, position_mm: [x, y, 0.0], ..star(p, x, y) };
+        let girl = |p: &str, x: f64, y: f64, rot: [f64; 3], size: f64| SceneObject { path: std::env::var("MODEL").unwrap(), rotation_deg: rot, scale_mm: [size; 3], position_mm: [x, y, 0.0], ..star(p, x, y) };
         let s = scene(&[0.0, 120.0, 240.0], vec![girl("0", 0.0, 41.0, [0.0; 3], 32.0), star("1", 0.0, 41.0), girl("2", -10.0, 41.0, [0.0, 40.0, 0.0], 28.0), star("2", 10.0, 41.0)]);
         let shared = design::shared_codebook(0.1333);
         let t0 = std::time::Instant::now();
@@ -1143,7 +1143,7 @@ mod tests {
         let path = std::env::var("MODEL").unwrap();
         let _ = model3d::load_mesh_or_builtin(&path).unwrap();
         let shared = design::shared_codebook(0.1333);
-        let girl = |p: &str, size: f64| SceneObject { path: path.clone(), scale_mm: size, position_mm: [0.0, 41.0, 0.0], ..star(p, 0.0, 41.0) };
+        let girl = |p: &str, size: f64| SceneObject { path: path.clone(), scale_mm: [size; 3], position_mm: [0.0, 41.0, 0.0], ..star(p, 0.0, 41.0) };
         for grid in [128usize, 192, 256, 384, 512] {
             for n in [1usize, 3] {
                 let s = scene(&[0.0, 90.0, 225.0][..n], ["0", "1", "2"][..n].iter().map(|p| girl(p, 32.0 + grid as f64 * 1e-4)).collect());
@@ -1268,7 +1268,7 @@ mod tests {
         let out_dir = std::env::var("HOLO_OUT").unwrap();
         let (n, crop) = (900usize, 300u32);
         for (mi, path) in std::env::var("MODELS").unwrap().split(':').enumerate() {
-            let o = SceneObject { path: path.into(), scale_mm: 34.0, position_mm: [0.0, 41.0, 0.0], ..star("0", 0.0, 41.0) };
+            let o = SceneObject { path: path.into(), scale_mm: [34.0; 3], position_mm: [0.0, 41.0, 0.0], ..star("0", 0.0, 41.0) };
             let mut sheet = image::RgbaImage::new(crop * 7, crop * 5);
             let mut put = |px: &dyn Fn(usize) -> [u8; 3], col: u32, row: u32| {
                 for y in 0..crop { for x in 0..crop {
@@ -1318,7 +1318,7 @@ mod tests {
         let phis: Vec<f64> = (0..n_pos).map(|k| k as f64 * 360.0 / n_pos as f64).collect();
         let objects = phis.iter().enumerate().map(|(k, &phi)| SceneObject {
             id: format!("m{k}"), path: path.clone(), name: "m".into(), visible: true,
-            position_mm: [0.0, 41.0, 0.0], rotation_deg: [0.0, phi, 0.0], scale_mm: scale, position_id: k.to_string(), style: ink::Style::default(),
+            position_mm: [0.0, 41.0, 0.0], rotation_deg: [0.0, phi, 0.0], scale_mm: [scale; 3], position_id: k.to_string(), style: ink::Style::default(),
             motion: model3d::Motion::default(),
             mode: Default::default(),
             parallax: 2.0,
@@ -1359,7 +1359,7 @@ mod tests {
         let shared = design::shared_codebook(0.1333);
         let preset = reference_preset();
         let out = std::env::var("HOLO_OUT").unwrap();
-        let o = SceneObject { path: std::env::var("MODEL").unwrap(), scale_mm: 45.0, position_mm: [0.0, 41.0, 0.0], ..star("0", 0.0, 41.0) };
+        let o = SceneObject { path: std::env::var("MODEL").unwrap(), scale_mm: [45.0; 3], position_mm: [0.0, 41.0, 0.0], ..star("0", 0.0, 41.0) };
         let opts = Options::default();
         let sol = solve(&scene(&[0.0], vec![o]), &opts, &shared.0, &shared.1, &preset).unwrap();
         std::fs::write(format!("{out}/weights.bin"), weight_layers(&sol.solved, &[])).unwrap();
@@ -1393,7 +1393,7 @@ mod tests {
         let mut views = Vec::new();
         for k in 0..frames {
             let psi = k as f64 * 360.0 / frames as f64;
-            let o = SceneObject { path: path.clone(), scale_mm: scale, position_mm: [0.0, 36.0, 0.0], rotation_deg: [0.0, k as f64 * span / frames as f64, 0.0], ..star("0", 0.0, 36.0) };
+            let o = SceneObject { path: path.clone(), scale_mm: [scale; 3], position_mm: [0.0, 36.0, 0.0], rotation_deg: [0.0, k as f64 * span / frames as f64, 0.0], ..star("0", 0.0, 36.0) };
             let m = [(place(&mesh, &o, psi.to_radians(), 1.0).unwrap(), ink::Style::default())];
             let (e, l) = eye_and_lamp(&opts, lamp, 0.0, psi.to_radians());
             let drawn = ink::draw(&m, &[], e, psi.to_radians(), grid, preset.inner_radius_mm, preset.outer_radius_mm);
@@ -1546,7 +1546,7 @@ mod frames_study {
             visible: true,
             position_mm: [0.0, OBJ_Y_SCENE, 0.0],
             rotation_deg: [0.0, 0.0, 0.0],
-            scale_mm: 30.0,
+            scale_mm: [30.0; 3],
             position_id: "0".into(),
             style,
             motion: model3d::Motion { preset: "spinY".into(), matrix: vec![], samples, vars: vec![] },

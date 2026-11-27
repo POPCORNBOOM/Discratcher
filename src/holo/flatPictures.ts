@@ -109,7 +109,7 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
           },
         })
         const mesh = new Mesh(plane, material)
-        mesh.raycast = () => {}
+        mesh.userData.imageId = img.id
         const outline = new LineLoop(square, outlineMaterial)
         outline.raycast = () => {}
         outline.renderOrder = 10
@@ -152,6 +152,16 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
     })
   }
 
+  /** The picture's mesh, to hang the move, turn and size handles on. */
+  function meshOf(id: string | null): Mesh | undefined {
+    return id ? entries.get(id)?.mesh : undefined
+  }
+
+  /** The shown position's pictures, to pick with the pointer. */
+  function pickable(positionId: string, images: readonly HoloImage[]): Mesh[] {
+    return images.filter((i) => i.positionId === positionId).flatMap((i) => entries.get(i.id)?.mesh ?? [])
+  }
+
   function dispose() {
     for (const [id, e] of entries) drop(id, e)
     square.dispose()
@@ -159,5 +169,5 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
     outlineMaterial.dispose()
   }
 
-  return { sync, dispose }
+  return { sync, meshOf, pickable, dispose }
 }

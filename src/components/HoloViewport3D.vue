@@ -91,9 +91,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [id: string | null]
+  'select-image': [id: string]
+  /** A picture moved, turned or sized with the handles: its layer's new place (`Layer`). */
+  'image-transform': [payload: { id: string; x: number; y: number; size: number; rotationDeg: number }]
   position: [id: string]
   'transform-start': [id: string]
-  'transform-change': [payload: { id: string; positionMm: Vec3; rotationDeg: Vec3; scaleMm: number }]
+  'transform-change': [payload: { id: string; positionMm: Vec3; rotationDeg: Vec3; scaleMm: Vec3 }]
   'transform-end': [id: string]
 }>()
 
@@ -158,7 +161,6 @@ let dragTargetId: string | null = null
 let dragTargetZ = 0
 let dragStarted = false
 let suppressSync = false
-let scaleDragBase = 24
 
 function makeCirclePoints(radius: number, segments = 128, z = 0.08): Vector3[] {
   const pts: Vector3[] = []
@@ -534,7 +536,7 @@ function syncObjects() {
       MathUtils.degToRad(obj.rotationDeg[2]),
       'ZYX',
     )
-    mesh.scale.setScalar(obj.scaleMm)
+    mesh.scale.set(...obj.scaleMm)
     applyMotionWrapper(entry, obj)
   }
 
@@ -575,6 +577,16 @@ function syncGizmoAttachment() {
   if (!gizmo) return
   // A lamp has a place and nothing else to change.
   gizmo.setMode(props.selectedId === LAMP_ID ? 'translate' : props.mode)
+  // A picture lies on the disc: it moves and sizes across it and turns about its normal.
+  const picture = pictures?.meshOf(props.selectedImageId)
+  if (picture && props.images.some((i) => i.id === props.selectedImageId && i.positionId === props.positionId)) {
+    const turning = props.mode === 'rotate'
+    gizmo.showX = gizmo.showY = !turning
+    gizmo.showZ = turning
+    if (gizmo.object !== picture) gizmo.attach(picture)
+    return
+  }
+  gizmo.showX = gizmo.showY = gizmo.showZ = true
   if (props.selectedId === LAMP_ID && lampMesh) {
     if (gizmo.object !== lampMesh) gizmo.attach(lampMesh)
     return
@@ -700,7 +712,7 @@ function focusSelected() {
   const target = new Vector3(obj.positionMm[0], obj.positionMm[1], obj.positionMm[2])
   const dir = camera.position.clone().sub(orbit.target)
   if (dir.lengthSq() < 1) dir.set(0, -50, 120)
-  const desiredDist = Math.max(85, obj.scaleMm * 4.5)
+  const desiredDist = Math.max(85, Math.max(...obj.scaleMm) * 4.5)
   dir.normalize().multiplyScalar(desiredDist)
   orbit.target.copy(target)
   camera.position.copy(target).add(dir)
@@ -727,6 +739,15 @@ function pickObjectId(e: PointerEvent): string | null {
   return (hits[0]?.object.userData.objectId as string | undefined) ?? null
 }
 
+/** The shown position's picture under the pointer, when no model is: pictures lie under models. */
+function pickImageId(e: PointerEvent): string | null {
+  if (!camera || !pictures) return null
+  updatePointerNdc(e)
+  raycaster.setFromCamera(pointerNdc, camera)
+  const hits = raycaster.intersectObjects(pictures.pickable(props.positionId, props.images), false)
+  return (hits[0]?.object.userData.imageId as string | undefined) ?? null
+}
+
 function onPointerDown(e: PointerEvent) {
   if (e.button !== 0 || gizmoDragging) return
   // If pointer is hovering a TransformControls handle, let the gizmo own this drag.
@@ -739,7 +760,11 @@ function onPointerDown(e: PointerEvent) {
     return
   }
   const hitId = pickObjectId(e)
-  if (!hitId) return
+  if (!hitId) {
+    const imageId = pickImageId(e)
+    if (imageId && imageId !== props.selectedImageId) emit('select-image', imageId)
+    return
+  }
 
   if (hitId !== props.selectedId) {
     emit('select', hitId)
@@ -804,7 +829,7 @@ function onPointerMove(e: PointerEvent) {
     id: dragTargetId,
     positionMm: [nx, ny, round1(dragTargetZ)],
     rotationDeg: [...obj.rotationDeg] as Vec3,
-    scaleMm: obj.scaleMm,
+    scaleMm: [...obj.scaleMm] as Vec3,
   })
   suppressSync = false
 }
@@ -823,7 +848,7 @@ function onPointerUp(e: PointerEvent) {
   if (e.button !== 0 || gizmoDragging) return
   const moved = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y)
   if (moved > 4 || markerAt(e)) return
-  const hitId = pickObjectId(e)
+  const hitId = pickObjectId(e) ?? pickImageId(e)
   if (!hitId && !gizmo?.axis) {
     emit('select', null)
   }
@@ -919,11 +944,9 @@ onMounted(() => {
   gizmo.addEventListener('dragging-changed', (ev) => {
     gizmoDragging = Boolean(ev.value)
     if (orbit) orbit.enabled = !gizmoDragging
-    const id = props.selectedId
+    const id = (gizmo?.object?.userData.imageId as string | undefined) ?? props.selectedId
     if (!id) return
     if (gizmoDragging) {
-      const obj = props.objects.find((o) => o.id === id)
-      scaleDragBase = obj?.scaleMm ?? 24
       emit('transform-start', id)
     } else {
       emit('transform-end', id)
@@ -932,6 +955,10 @@ onMounted(() => {
   })
   gizmo.addEventListener('objectChange', () => {
     const mesh = gizmo?.object
+    if (mesh?.userData.imageId && gizmoDragging) {
+      movePicture(mesh as Mesh)
+      return
+    }
     const id = props.selectedId
     if (!mesh || !id || !gizmoDragging) return
     if (id === LAMP_ID) {
@@ -942,26 +969,20 @@ onMounted(() => {
       ]
       mesh.position.set(...at)
       syncLamp()
-      emit('transform-change', { id, positionMm: at, rotationDeg: [0, 0, 0], scaleMm: 1 })
+      emit('transform-change', { id, positionMm: at, rotationDeg: [0, 0, 0], scaleMm: [1, 1, 1] })
       return
     }
     const obj = props.objects.find((o) => o.id === id)
     if (!obj) return
 
-    // Keep uniform scaleMm when scaling with any axis handle.
-    let nextScale = obj.scaleMm
+    // Each axis on its own; the centre handle moves all three together.
+    let nextScale: Vec3 = [...obj.scaleMm] as Vec3
     if (props.mode === 'scale') {
-      const sx = mesh.scale.x
-      const sy = mesh.scale.y
-      const sz = mesh.scale.z
-      const deltas = [
-        { v: sx, d: Math.abs(sx - scaleDragBase) },
-        { v: sy, d: Math.abs(sy - scaleDragBase) },
-        { v: sz, d: Math.abs(sz - scaleDragBase) },
-      ].sort((a, b) => b.d - a.d)
-      nextScale = MathUtils.clamp(round1(deltas[0].v), 4, 90)
-      if (props.snap) nextScale = Math.max(4, Math.round(nextScale / SNAP_SCALE_MM) * SNAP_SCALE_MM)
-      mesh.scale.setScalar(nextScale)
+      nextScale = [mesh.scale.x, mesh.scale.y, mesh.scale.z].map((v) => {
+        const s = MathUtils.clamp(round1(v), 2, 120)
+        return props.snap ? Math.max(2, Math.round(s / SNAP_SCALE_MM) * SNAP_SCALE_MM) : s
+      }) as Vec3
+      mesh.scale.set(...nextScale)
     }
 
     const pos: Vec3 = [
@@ -1015,7 +1036,10 @@ watch(() => [props.lampMm, props.distanceMm], () => {
   updateZones()
   syncLamp()
 }, { deep: true })
-watch(() => [props.mode, props.snap], () => syncGizmoModeAndSnap())
+watch(() => [props.mode, props.snap], () => {
+  syncGizmoModeAndSnap()
+  syncGizmoAttachment()
+})
 watch(() => props.previewT, () => syncMotionTransforms())
 watch(() => [props.objects, props.meshes, props.selectedId, props.positions, props.positionId], () => syncObjects(), { deep: true })
 
@@ -1023,6 +1047,32 @@ function syncPictures() {
   pictures?.sync({
     images: props.images, positions: props.positions, positionId: props.positionId, thumbnails: props.thumbnails,
     selectedId: props.selectedImageId, innerRadiusMm: props.innerRadiusMm, outerRadiusMm: props.outerRadiusMm,
+  })
+  syncGizmoAttachment()
+}
+
+/**
+ * A picture's mesh after the handles moved it, read back as its layer: kept flat on the disc and
+ * its own shape, the size taken from whichever side was pulled the more.
+ */
+function movePicture(mesh: Mesh) {
+  const id = mesh.userData.imageId as string
+  const img = props.images.find((i) => i.id === id)
+  if (!img) return
+  const across = 2 * props.outerRadiusMm
+  const long = Math.max(img.width, img.height, 1)
+  const [w, h] = [(across * img.width) / long, (across * img.height) / long]
+  const fx = mesh.scale.x / (img.size * w)
+  const fy = mesh.scale.y / (img.size * h)
+  const size = MathUtils.clamp(Math.round(img.size * (Math.abs(fx - 1) >= Math.abs(fy - 1) ? fx : fy) * 1000) / 1000, 0.02, 3)
+  mesh.scale.set(size * w, size * h, 1)
+  mesh.rotation.x = mesh.rotation.y = 0
+  emit('image-transform', {
+    id,
+    x: Math.round((mesh.position.x / across) * 1000) / 1000,
+    y: Math.round((-mesh.position.y / across) * 1000) / 1000,
+    size,
+    rotationDeg: round1(-MathUtils.radToDeg(mesh.rotation.z)),
   })
 }
 watch(() => [props.images, props.thumbnails, props.selectedImageId, props.positions, props.positionId, props.innerRadiusMm, props.outerRadiusMm], syncPictures, { deep: true })

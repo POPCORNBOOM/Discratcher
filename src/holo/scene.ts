@@ -46,7 +46,8 @@ export interface HoloSceneObject {
   visible: boolean
   positionMm: Vec3
   rotationDeg: Vec3
-  scaleMm: number
+  /** Size along each of the model's own axes, mm. */
+  scaleMm: Vec3
   positionId: string
   style: HoloInkStyle
   motion: HoloMotion
@@ -135,7 +136,7 @@ export function defaultObjectPlacement(
   return {
     positionMm: [round1(x), round1(y), DEFAULT_OBJECT_DEPTH_MM],
     rotationDeg: [0, 0, 0],
-    scaleMm: DEFAULT_OBJECT_SCALE_MM,
+    scaleMm: [DEFAULT_OBJECT_SCALE_MM, DEFAULT_OBJECT_SCALE_MM, DEFAULT_OBJECT_SCALE_MM],
   }
 }
 
@@ -148,6 +149,7 @@ export function cloneScene(scene: HoloScene): HoloScene {
       ...o,
       positionMm: [...o.positionMm] as Vec3,
       rotationDeg: [...o.rotationDeg] as Vec3,
+      scaleMm: [...o.scaleMm] as Vec3,
       style: { ...o.style },
       motion: cloneMotion(o.motion),
     })),
@@ -326,10 +328,8 @@ export function validateScene(raw: unknown): HoloScene {
       visible: typeof o.visible === 'boolean' ? o.visible : true,
       positionMm: asVec3(o.positionMm, [0, -41, DEFAULT_OBJECT_DEPTH_MM]),
       rotationDeg: asVec3(o.rotationDeg, [0, 0, 0]),
-      scaleMm:
-        typeof o.scaleMm === 'number' && Number.isFinite(o.scaleMm)
-          ? Math.min(200, Math.max(1, o.scaleMm))
-          : DEFAULT_OBJECT_SCALE_MM,
+      // One size in older files is the same on all three axes.
+      scaleMm: (typeof o.scaleMm === 'number' ? asVec3([o.scaleMm, o.scaleMm, o.scaleMm], [DEFAULT_OBJECT_SCALE_MM, DEFAULT_OBJECT_SCALE_MM, DEFAULT_OBJECT_SCALE_MM]) : asVec3(o.scaleMm, [DEFAULT_OBJECT_SCALE_MM, DEFAULT_OBJECT_SCALE_MM, DEFAULT_OBJECT_SCALE_MM])).map((v) => Math.min(200, Math.max(1, v))) as Vec3,
       positionId: positions.some((q) => q.id === o.positionId) ? (o.positionId as string) : positions[0].id,
       style: asStyle(o.style),
       motion: asMotion(o.motion),

@@ -190,14 +190,16 @@
                 @update:model-value="setSelectedDepth"
               />
               <UiSlider
-                :model-value="selectedObj.scaleMm"
-                :label="t('holo.size')"
-                :min="6"
+                v-for="(axis, idx) in SIZE_AXES"
+                :key="axis"
+                :model-value="selectedObj.scaleMm[idx]"
+                :label="t(axis)"
+                :min="2"
                 :max="60"
                 :step="1"
                 :format="mm"
                 @pointerdown="beginControlEdit"
-                @update:model-value="setSelectedScale"
+                @update:model-value="(v) => setSelectedScale(idx, v)"
               />
             </template>
             <template v-else>
@@ -235,16 +237,21 @@
               </div>
               <div class="field">
                 <span class="small muted">{{ t('holo.size') }} (mm)</span>
-                <input
-                  type="number"
-                  class="num-input mono"
-                  :value="selectedObj.scaleMm"
-                  min="4"
-                  max="120"
-                  step="1"
-                  @focus="beginControlEdit"
-                  @change="setSelectedScaleInput"
-                />
+                <div class="num-grid">
+                  <label v-for="(axis, idx) in ['X', 'Y', 'Z']" :key="axis" class="num-field">
+                    <span class="small muted">{{ axis }}</span>
+                    <input
+                      type="number"
+                      class="num-input mono"
+                      :value="selectedObj.scaleMm[idx]"
+                      min="2"
+                      max="120"
+                      step="1"
+                      @focus="beginControlEdit"
+                      @change="setSelectedScaleInput(idx, $event)"
+                    />
+                  </label>
+                </div>
               </div>
             </template>
             <template v-if="selectedObj.mode === 'transform'">
@@ -505,7 +512,7 @@
             icon-only
             variant="ghost"
             :icon="mdiContentCopy"
-            :disabled="!selectedObj"
+            :disabled="!selectedObj && !selectedImage"
             :aria-label="t('holo.duplicate')"
             :data-tooltip="`${t('holo.duplicate')} (${modKey}D)`"
             @click="duplicateSelected"
@@ -514,10 +521,10 @@
             icon-only
             variant="ghost"
             :icon="mdiTrashCanOutline"
-            :disabled="!selectedObj"
+            :disabled="!selectedObj && !selectedImage"
             :aria-label="t('holo.delete')"
             :data-tooltip="t('holo.delete')"
-            @click="selectedId && deleteObject(selectedId)"
+            @click="deleteSelected"
           />
           <span class="sep" aria-hidden="true" />
           <UiButton
@@ -566,6 +573,8 @@
           :thumbnails="thumbnails"
           :selected-image-id="selectedImageId"
           @select="selectObject"
+          @select-image="choosePicture"
+          @image-transform="onImageTransform"
           @position="goToPosition"
           @transform-start="onTransformStart"
           @transform-change="onTransformChange"
@@ -1061,6 +1070,7 @@ async function addSample() {
 
 function selectObject(id: string | null) {
   chooseModel(id)
+  if (!id) selectedImageId.value = null
   const obj = scene.value.objects.find((o) => o.id === id)
   if (obj && obj.positionId !== positionId.value) goToPosition(obj.positionId)
 }
@@ -1391,7 +1401,14 @@ function deleteObject(id: string) {
   }
 }
 
+/** Whatever is selected, a model or a picture. */
+function deleteSelected() {
+  if (selectedObj.value) deleteObject(selectedObj.value.id)
+  else if (selectedImage.value) removeImage(selectedImage.value.id)
+}
+
 function duplicateSelected() {
+  if (selectedImage.value) return duplicateImage(selectedImage.value.id)
   const src = selectedObj.value
   if (!src) return
   pushHistory()
@@ -1400,6 +1417,7 @@ function duplicateSelected() {
     id: makeObjectId(),
     positionMm: [round1(src.positionMm[0] + 6), round1(src.positionMm[1]), round1(src.positionMm[2])],
     rotationDeg: [...src.rotationDeg] as Vec3,
+    scaleMm: [...src.scaleMm] as Vec3,
     style: { ...src.style },
     motion: cloneMotion(src.motion),
   }
@@ -1415,7 +1433,7 @@ function resetSelected() {
   const place = defaultObjectPlacement(s.preset, 0)
   obj.positionMm = [...place.positionMm] as Vec3
   obj.rotationDeg = [...place.rotationDeg] as Vec3
-  obj.scaleMm = place.scaleMm
+  obj.scaleMm = [...place.scaleMm] as Vec3
 }
 
 let sliderSnapshotTaken = false
@@ -1433,10 +1451,13 @@ function setSelectedDepth(z: number) {
   obj.positionMm[2] = round1(z)
 }
 
-function setSelectedScale(scaleMm: number) {
+/** The model's size along each of its own axes: width, height and thickness. */
+const SIZE_AXES = ['holo.sizeX', 'holo.sizeY', 'holo.sizeZ'] as const
+
+function setSelectedScale(idx: number, v: number) {
   const obj = selectedObj.value
   if (!obj) return
-  obj.scaleMm = round1(scaleMm)
+  obj.scaleMm[idx] = round1(v)
 }
 
 function setSelectedStyle(key: keyof HoloInkStyle, v: number) {
@@ -1461,19 +1482,19 @@ function setSelectedRotAxis(idx: number, e: Event) {
   obj.rotationDeg[idx] = Math.max(-180, Math.min(180, round1(v)))
 }
 
-function setSelectedScaleInput(e: Event) {
+function setSelectedScaleInput(idx: number, e: Event) {
   const obj = selectedObj.value
   if (!obj) return
   const v = Number((e.target as HTMLInputElement).value)
   if (!Number.isFinite(v)) return
-  obj.scaleMm = Math.max(4, Math.min(120, round1(v)))
+  obj.scaleMm[idx] = Math.max(2, Math.min(120, round1(v)))
 }
 
 function onTransformStart(_id: string) {
   pushHistory()
 }
 
-function onTransformChange(payload: { id: string; positionMm: Vec3; rotationDeg: Vec3; scaleMm: number }) {
+function onTransformChange(payload: { id: string; positionMm: Vec3; rotationDeg: Vec3; scaleMm: Vec3 }) {
   if (payload.id === LAMP_ID) {
     opts.lampMm = payload.positionMm
     opts.lampPreset = 'custom'
@@ -1484,6 +1505,12 @@ function onTransformChange(payload: { id: string; positionMm: Vec3; rotationDeg:
   obj.positionMm = payload.positionMm
   obj.rotationDeg = payload.rotationDeg
   obj.scaleMm = payload.scaleMm
+}
+
+/** A picture moved, turned or sized with the handles in the 3D view. */
+function onImageTransform(p: { id: string; x: number; y: number; size: number; rotationDeg: number }) {
+  const img = scene.value.images.find((i) => i.id === p.id)
+  if (img) Object.assign(img, { x: p.x, y: p.y, size: p.size, rotationDeg: p.rotationDeg })
 }
 
 function onTransformEnd(_id: string) {
@@ -1963,8 +1990,8 @@ function onKeyDown(e: KeyboardEvent) {
     else if (key === 'e') { gizmoMode.value = 'rotate'; e.preventDefault() }
     else if (key === 'r') { gizmoMode.value = 'scale'; e.preventDefault() }
     else if (key === 'f' && selectedObj.value) { viewportRef.value?.focusSelected(); e.preventDefault() }
-    else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId.value) {
-      deleteObject(selectedId.value)
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedObj.value || selectedImage.value)) {
+      deleteSelected()
       e.preventDefault()
     }
   }

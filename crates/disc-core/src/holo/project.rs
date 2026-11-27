@@ -202,7 +202,7 @@ mod tests {
             objects: vec![
                 SceneObject {
                     id: "o".into(), path: model.into(), name: "m".into(), visible: true, position_mm: [0.0, 40.0, 0.0], rotation_deg: [0.0; 3],
-                    scale_mm: 20.0, position_id: "a".into(), style: Default::default(), motion: Default::default(),
+                    scale_mm: [20.0; 3], position_id: "a".into(), style: Default::default(), motion: Default::default(),
                     mode: Default::default(),
                     parallax: 2.0,
                     tilt_deg: 0.0,
