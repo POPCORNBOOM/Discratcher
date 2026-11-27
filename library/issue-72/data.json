@@ -1,0 +1,21 @@
+{
+  "driveModel": "Optiarc DVD RW AD-7280S 10D1",
+  "mediaId": "RITEKF1",
+  "stamperCode": "DR5F6O-PW104",
+  "brand": "莱德商务可打印_DVD-R",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.06311520992485,
+  "outerRadiusMm": 58.19808700857117,
+  "pitchLinear": -0.000008537943070260977,
+  "pitchQuadratic": 0.0000259294812392724,
+  "pitchCubic": -0.00002112274617544424,
+  "basePitchUm": 0.7453085737244004,
+  "rmsResidualDeg": 0.2928779793269937,
+  "measuredSpanMm": [
+    25.20308951887276,
+    57.22493970157047
+  ],
+  "createdAt": "2026-11-27T03:59:12.714Z",
+  "id": "issue-72"
+}

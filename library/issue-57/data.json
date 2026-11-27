@@ -1,0 +1,21 @@
+{
+  "driveModel": "Dell DVD+/-RW DW316 A1C0",
+  "mediaId": "CMC MAG. AM3",
+  "stamperCode": "CMDR47G-CFMWM03-0237 M424",
+  "brand": "",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.17332345955956,
+  "outerRadiusMm": 57.878677770946275,
+  "pitchLinear": -0.00007629697545295154,
+  "pitchQuadratic": 0.0002596393835284471,
+  "pitchCubic": -0.0002314247417435124,
+  "basePitchUm": 0.734064122172535,
+  "rmsResidualDeg": 0.32710062375928184,
+  "measuredSpanMm": [
+    25.291580494401103,
+    56.915094020718186
+  ],
+  "createdAt": "2026-11-22T10:26:00.351Z",
+  "id": "issue-57"
+}

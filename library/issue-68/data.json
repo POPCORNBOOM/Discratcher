@@ -1,0 +1,21 @@
+{
+  "driveModel": "ATAPI iHAS324   F CL8N",
+  "mediaId": "RITEKW04",
+  "stamperCode": "DW47K-00262",
+  "brand": "",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.04871247628633,
+  "outerRadiusMm": 58.07373912065073,
+  "pitchLinear": -5.3259375203712E-7,
+  "pitchQuadratic": -0.000006306087836575053,
+  "pitchCubic": 0.000007500648269858513,
+  "basePitchUm": 0.7416535626829415,
+  "rmsResidualDeg": 0.241426436376863,
+  "measuredSpanMm": [
+    25.183878093774965,
+    57.103269820207515
+  ],
+  "createdAt": "2026-11-24T08:25:39.970Z",
+  "id": "issue-68"
+}

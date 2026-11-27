@@ -1,0 +1,21 @@
+{
+  "driveModel": "hp HLDS DVDRW  GUD1N LD02",
+  "mediaId": "CMC MAG M01",
+  "stamperCode": "CPDR47G-CSMWP03-792 1126",
+  "brand": "TDK",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.105005875553577,
+  "outerRadiusMm": 57.842010793626095,
+  "pitchLinear": 0.0004991292741916154,
+  "pitchQuadratic": -0.001313473573250183,
+  "pitchCubic": 0.0009562442906201606,
+  "basePitchUm": 0.7337655287960576,
+  "rmsResidualDeg": 0.7424554373857665,
+  "measuredSpanMm": [
+    25.225896232895984,
+    56.877760709593126
+  ],
+  "createdAt": "2026-11-22T09:30:11.895Z",
+  "id": "issue-56"
+}

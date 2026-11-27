@@ -1,0 +1,21 @@
+{
+  "driveModel": "TSSTcorp CDDVDW SH-224DB CM00",
+  "mediaId": "",
+  "stamperCode": "CMDR47G-CFMWM03-5001 651BH603",
+  "brand": "Verbatim 63513",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.96629412145213,
+  "outerRadiusMm": 57.925408584522614,
+  "pitchLinear": 0.00008924890108923869,
+  "pitchQuadratic": -0.00022757187008871484,
+  "pitchCubic": 0.0001580206196867007,
+  "basePitchUm": 0.7381313015874468,
+  "rmsResidualDeg": 0.22594398874762953,
+  "measuredSpanMm": [
+    25.09989625505901,
+    56.95705215275993
+  ],
+  "createdAt": "2026-11-09T09:21:51.787Z",
+  "id": "issue-10"
+}

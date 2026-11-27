@@ -1,0 +1,21 @@
+{
+  "driveModel": "HL-DT-ST DVD-RAM GHC0N MA01",
+  "mediaId": "MCC 03RG20",
+  "stamperCode": "111102-S1",
+  "brand": "宏基",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.012423302791124,
+  "outerRadiusMm": 58.045977186245054,
+  "pitchLinear": 0.000005093073960381897,
+  "pitchQuadratic": -0.000007493275839416672,
+  "pitchCubic": 0.0000010929714444840585,
+  "basePitchUm": 0.7412612983375675,
+  "rmsResidualDeg": 0.19915054666950935,
+  "measuredSpanMm": [
+    25.14863078979738,
+    57.075583838376616
+  ],
+  "createdAt": "2026-11-24T12:55:19.616Z",
+  "id": "issue-67"
+}

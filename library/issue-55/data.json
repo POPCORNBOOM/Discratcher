@@ -1,0 +1,21 @@
+{
+  "driveModel": "VBOX CD-ROM 1.0",
+  "mediaId": "",
+  "stamperCode": "DR5F6O-00779",
+  "brand": "Maxell DVD-R",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.05943324559948,
+  "outerRadiusMm": 57.998477528461784,
+  "pitchLinear": 0.0001756917310226802,
+  "pitchQuadratic": -0.00044490906247151294,
+  "pitchCubic": 0.00030611296463528933,
+  "basePitchUm": 0.7391864045613916,
+  "rmsResidualDeg": 0.3022438302422523,
+  "measuredSpanMm": [
+    25.190425274255016,
+    57.02994075546881
+  ],
+  "createdAt": "2026-11-22T00:05:22.855Z",
+  "id": "issue-55"
+}

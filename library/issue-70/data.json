@@ -1,0 +1,21 @@
+{
+  "driveModel": "TSSTcorp DVD+-RW TS-U633F D500",
+  "mediaId": "MCC 03RG20",
+  "stamperCode": "MCC 03RG20",
+  "brand": "",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 23.931348062421964,
+  "outerRadiusMm": 57.95517872833592,
+  "pitchLinear": 0.00007702798610811763,
+  "pitchQuadratic": -0.0002466338088190438,
+  "pitchCubic": 0.00020717777037500032,
+  "basePitchUm": 0.7394906888609217,
+  "rmsResidualDeg": 1.1515009390666209,
+  "measuredSpanMm": [
+    25.068572913828444,
+    56.98546585229468
+  ],
+  "createdAt": "2026-11-25T11:28:37.878Z",
+  "id": "issue-70"
+}

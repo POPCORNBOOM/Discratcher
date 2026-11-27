@@ -1,0 +1,21 @@
+{
+  "driveModel": "ASUS DRW-24D5MT 2.00",
+  "mediaId": "",
+  "stamperCode": "CPDR47G-CSMWP03-1239 V601",
+  "brand": "飞利浦 PHILIPS DVD+R",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.157948631288416,
+  "outerRadiusMm": 57.88113443498966,
+  "pitchLinear": 0.00030847245982787034,
+  "pitchQuadratic": -0.000771083896613237,
+  "pitchCubic": 0.0005266347365570787,
+  "basePitchUm": 0.7343068723612333,
+  "rmsResidualDeg": 0.5624288594502723,
+  "measuredSpanMm": [
+    25.27728161192484,
+    56.91704215903181
+  ],
+  "createdAt": "2026-11-19T15:46:50.913Z",
+  "id": "issue-51"
+}

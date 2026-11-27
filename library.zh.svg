@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="420" height="96" viewBox="0 0 420 96" role="img" aria-label="标定库: 50 份光盘标定, 更新于 2026-11-27">
+  <style>
+    .bg { fill: #ffffff; stroke: #e4e2ec; }
+    .ink { fill: #1d1b24; }
+    .muted { fill: #6e6a7c; }
+    .ring { stroke: #9045f9; }
+    .hub { fill: #9045f9; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #16151b; stroke: #2c2a35; }
+      .ink { fill: #f2f0f7; }
+      .muted { fill: #9a96a8; }
+    }
+  </style>
+  <rect class="bg" x="0.5" y="0.5" width="419" height="95" rx="12"/>
+  <g transform="translate(48 48)" fill="none">
+    <circle class="ring" r="26" stroke-width="2"/>
+    <circle class="ring" r="19" stroke-width="1" opacity="0.45"/>
+    <circle class="ring" r="13" stroke-width="1" opacity="0.25"/>
+    <circle class="hub" r="5" stroke="none"/>
+  </g>
+  <text class="muted" x="92" y="34" font-size="13">标定库</text>
+  <text class="ink" x="92" y="68" font-size="32" font-weight="700">50</text>
+  <text class="ink" x="138" y="67" font-size="14">份光盘标定</text>
+  <text class="muted" x="400" y="67" font-size="13" text-anchor="end">更新于 2026-11-27</text>
+</svg>

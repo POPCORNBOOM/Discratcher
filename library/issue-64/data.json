@@ -1,0 +1,21 @@
+{
+  "driveModel": "ASUS SDRW-08U9M-U TF02",
+  "mediaId": "CMC MAG M01",
+  "stamperCode": "CPDR47G-CSMWP03-6849 49CA0108",
+  "brand": "PHILIPS",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 23.908349145591036,
+  "outerRadiusMm": 57.962601956352266,
+  "pitchLinear": 0.00012324369755063115,
+  "pitchQuadratic": -0.0003322378778488218,
+  "pitchCubic": 0.00024283152006660905,
+  "basePitchUm": 0.7400089074054002,
+  "rmsResidualDeg": 0.43900640849977834,
+  "measuredSpanMm": [
+    25.047403524434415,
+    56.992361643944975
+  ],
+  "createdAt": "2026-11-24T05:06:42.039Z",
+  "id": "issue-64"
+}

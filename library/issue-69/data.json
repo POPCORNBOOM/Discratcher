@@ -1,0 +1,21 @@
+{
+  "driveModel": "ASUS DRW-24D5MT 1.00",
+  "mediaId": "RITEKF1",
+  "stamperCode": "DR5F6O-50012",
+  "brand": "JVC 铼德代工蓝樱 DVD-R",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.015126226021756,
+  "outerRadiusMm": 58.088971976582954,
+  "pitchLinear": 0.000035086818589514494,
+  "pitchQuadratic": -0.00007344367702018108,
+  "pitchCubic": 0.00003866326952955519,
+  "basePitchUm": 0.742550482821688,
+  "rmsResidualDeg": 0.674001463646925,
+  "measuredSpanMm": [
+    25.153144327496427,
+    57.11761042759431
+  ],
+  "createdAt": "2026-11-25T15:49:29.145Z",
+  "id": "issue-69"
+}

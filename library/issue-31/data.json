@@ -1,0 +1,21 @@
+{
+  "driveModel": "Slimtype eBAU108 6 L PL0M",
+  "mediaId": "MCC 03RG20",
+  "stamperCode": "DVD-R 111102-S1",
+  "brand": "宏碁 Acer",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.01242228368759,
+  "outerRadiusMm": 58.04598891132249,
+  "pitchLinear": -3.315381946899882E-8,
+  "pitchQuadratic": 6.633257839139599E-8,
+  "pitchCubic": -4.06901586295057E-8,
+  "basePitchUm": 0.7412618387400497,
+  "rmsResidualDeg": 0.16252677455761913,
+  "measuredSpanMm": [
+    25.698,
+    54.318
+  ],
+  "createdAt": "2026-11-15T01:59:45.466Z",
+  "id": "issue-31"
+}

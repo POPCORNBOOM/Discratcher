@@ -1,0 +1,21 @@
+{
+  "driveModel": "ASUS DRW-24D5MT 1.00",
+  "mediaId": "CMC MAG. AM3",
+  "stamperCode": "CMDR47G-CFMWM05-0083 R315",
+  "brand": "飞利浦",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.174202508646022,
+  "outerRadiusMm": 57.879325497099806,
+  "pitchLinear": 0.000032954840370386475,
+  "pitchQuadratic": -0.00007691835730439684,
+  "pitchCubic": 0.000046785945070888254,
+  "basePitchUm": 0.734062779470588,
+  "rmsResidualDeg": 0.10953337878049828,
+  "measuredSpanMm": [
+    25.29242691636503,
+    56.91561333317979
+  ],
+  "createdAt": "2026-11-23T15:05:12.756Z",
+  "id": "issue-62"
+}

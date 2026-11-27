@@ -1,0 +1,21 @@
+{
+  "driveModel": "ASUS SBW-06D2X-U A102",
+  "mediaId": "CMC MAG M01",
+  "stamperCode": "CPDR47GCSMW03-1239 393T1317",
+  "brand": "THINKPLUS",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.157948699522287,
+  "outerRadiusMm": 57.88117310185063,
+  "pitchLinear": 0.00035335525893373103,
+  "pitchQuadratic": -0.0008907428232039419,
+  "pitchCubic": 0.0006172980418003264,
+  "basePitchUm": 0.7343038828295175,
+  "rmsResidualDeg": 0.5890608093287493,
+  "measuredSpanMm": [
+    25.277205083510975,
+    56.91705463427841
+  ],
+  "createdAt": "2026-11-23T07:17:37.467Z",
+  "id": "issue-61"
+}

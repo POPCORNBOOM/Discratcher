@@ -1,0 +1,21 @@
+{
+  "driveModel": "TSSTcorp DVD+-RW SH-216DB D200",
+  "mediaId": "CMC MAG. AM3",
+  "stamperCode": "cmdr47g-cfmwm03-0",
+  "brand": "",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.09596525818174,
+  "outerRadiusMm": 57.81442497590467,
+  "pitchLinear": 0.000025341426985045743,
+  "pitchQuadratic": -0.00005904485251053531,
+  "pitchCubic": 0.00003567042464038951,
+  "basePitchUm": 0.7330726491818407,
+  "rmsResidualDeg": 0.33217171375908894,
+  "measuredSpanMm": [
+    25.21617419350836,
+    56.85092431127229
+  ],
+  "createdAt": "2026-11-26T15:11:35.442Z",
+  "id": "issue-71"
+}

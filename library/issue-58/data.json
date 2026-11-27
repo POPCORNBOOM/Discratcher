@@ -1,0 +1,21 @@
+{
+  "driveModel": "Optiarc DVD RW AD-7280S 1.02",
+  "mediaId": "",
+  "stamperCode": "OPTODISC-516SP 022 020405",
+  "brand": "",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.9115457776833,
+  "outerRadiusMm": 57.903129757636144,
+  "pitchLinear": -0.00014128361046293443,
+  "pitchQuadratic": 0.0003152526502191104,
+  "pitchCubic": -0.0002096734709001004,
+  "basePitchUm": 0.7381624338707868,
+  "rmsResidualDeg": 0.7864221179841956,
+  "measuredSpanMm": [
+    25.04768539570742,
+    56.934459978376154
+  ],
+  "createdAt": "2026-11-22T15:09:11.104Z",
+  "id": "issue-58"
+}

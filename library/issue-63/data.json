@@ -1,0 +1,21 @@
+{
+  "driveModel": "ASUS DRW-24D5MT 1.00",
+  "mediaId": "RITEKF1",
+  "stamperCode": "DR5F6O-50013",
+  "brand": "铼德打印一号 DVD-R",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.015261594293133,
+  "outerRadiusMm": 58.089042178571255,
+  "pitchLinear": -0.00009834676489943284,
+  "pitchQuadratic": 0.0002091783492602982,
+  "pitchCubic": -0.00013777765578057975,
+  "basePitchUm": 0.7425637565222136,
+  "rmsResidualDeg": 1.12193082585903,
+  "measuredSpanMm": [
+    25.15332045340752,
+    57.1176959482172
+  ],
+  "createdAt": "2026-11-24T04:07:11.992Z",
+  "id": "issue-63"
+}

@@ -1,0 +1,21 @@
+{
+  "driveModel": "TSSTcorp CDDVDW SH-222BB SB01",
+  "mediaId": "",
+  "stamperCode": "CMDR47G-CFMWM03-5003 83EA0309",
+  "brand": "铼德",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 23.967781064835325,
+  "outerRadiusMm": 57.92606050520141,
+  "pitchLinear": 0.00010386990263057516,
+  "pitchQuadratic": -0.00027882890602245363,
+  "pitchCubic": 0.0002065136908715455,
+  "basePitchUm": 0.7381303391896304,
+  "rmsResidualDeg": 0.5362174677189502,
+  "measuredSpanMm": [
+    25.101315238976625,
+    56.95768087457877
+  ],
+  "createdAt": "2026-11-20T22:37:10.858Z",
+  "id": "issue-54"
+}

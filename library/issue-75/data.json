@@ -1,0 +1,21 @@
+{
+  "driveModel": "ASUS SDRW-08U7M-U A112",
+  "mediaId": "RITEKF1",
+  "stamperCode": "RITEKF1",
+  "brand": "Verbatim威宝",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.063107371952466,
+  "outerRadiusMm": 58.1980942964139,
+  "pitchLinear": -0.000002678586655391452,
+  "pitchQuadratic": 0.0000057102308301113656,
+  "pitchCubic": -0.0000032082635345080905,
+  "basePitchUm": 0.7453083098419281,
+  "rmsResidualDeg": 0.2551431360779173,
+  "measuredSpanMm": [
+    25.203080028342207,
+    57.22493797328078
+  ],
+  "createdAt": "2026-11-27T13:54:56.131Z",
+  "id": "issue-75"
+}

@@ -1,0 +1,21 @@
+{
+  "driveModel": "HL-DT-ST DVD-RAM GHC0N MA01",
+  "mediaId": "",
+  "stamperCode": "MCC 03RG20",
+  "brand": "XUYUDA-旭宇达",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 24.01242163413003,
+  "outerRadiusMm": 58.04597462941369,
+  "pitchLinear": 2.2214139635069426E-7,
+  "pitchQuadratic": 0.000005744869916524243,
+  "pitchCubic": -0.000009038061856145766,
+  "basePitchUm": 0.7412616910670499,
+  "rmsResidualDeg": 0.1415388226502322,
+  "measuredSpanMm": [
+    25.1486303576989,
+    57.07558404556
+  ],
+  "createdAt": "2026-11-27T12:29:48.544Z",
+  "id": "issue-74"
+}

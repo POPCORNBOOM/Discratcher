@@ -1,0 +1,21 @@
+{
+  "driveModel": "hp CDDVDW TS-H653T H6D1",
+  "mediaId": "MCC 03RG20",
+  "stamperCode": "MCC 03RG20 88AA0806 ZE5788-DVR-J47F4",
+  "brand": "Verbatim DigitalMovie",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 23.991499497808455,
+  "outerRadiusMm": 57.93583663910488,
+  "pitchLinear": 0.00006573574177166827,
+  "pitchQuadratic": -0.00016400389299679678,
+  "pitchCubic": 0.00011140627342838162,
+  "basePitchUm": 0.738132882000772,
+  "rmsResidualDeg": 0.41397839236844897,
+  "measuredSpanMm": [
+    25.123970584386893,
+    56.9676689776697
+  ],
+  "createdAt": "2026-11-22T17:12:58.235Z",
+  "id": "issue-59"
+}

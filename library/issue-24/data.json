@@ -1,0 +1,21 @@
+{
+  "driveModel": "PIONEER DVD-RW  DVR-221L 1.01",
+  "mediaId": "",
+  "stamperCode": "DR5F6O-PW104",
+  "brand": "JVC铼德蓝樱DVD-R",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.06310378932008,
+  "outerRadiusMm": 58.1980479734864,
+  "pitchLinear": -0.000017868999859837343,
+  "pitchQuadratic": 0.000068920597669368,
+  "pitchCubic": -0.00006471707049318697,
+  "basePitchUm": 0.7453087205256963,
+  "rmsResidualDeg": 0.6145475872539251,
+  "measuredSpanMm": [
+    25.203074223727583,
+    57.22494071035564
+  ],
+  "createdAt": "2026-11-14T05:45:46.150Z",
+  "id": "issue-24"
+}

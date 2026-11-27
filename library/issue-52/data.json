@@ -1,0 +1,21 @@
+{
+  "driveModel": "PLDS DVD-RW DS8A8SH KL31",
+  "mediaId": "",
+  "stamperCode": "DVD+R 4.7G 120min",
+  "brand": "旭宇达 羽毛(拼夕夕买的杂牌）",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.098018820245056,
+  "outerRadiusMm": 58.025584309523246,
+  "pitchLinear": -0.00006368530309405697,
+  "pitchQuadratic": 0.0001637526246807872,
+  "pitchCubic": -0.00011932372773284018,
+  "basePitchUm": 0.7395457832802081,
+  "rmsResidualDeg": 0.6151782635927395,
+  "measuredSpanMm": [
+    25.690904929372003,
+    57.05714190762424
+  ],
+  "createdAt": "2026-11-21T10:31:34.965Z",
+  "id": "issue-52"
+}

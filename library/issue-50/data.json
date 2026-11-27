@@ -1,0 +1,21 @@
+{
+  "driveModel": "ThinkPad Ultraslim DVD PL3M",
+  "mediaId": "",
+  "stamperCode": "VR5F16-01249",
+  "brand": "铼德",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.048192507949288,
+  "outerRadiusMm": 58.02650596319,
+  "pitchLinear": 0.000049665454336012896,
+  "pitchQuadratic": -0.0001333458319296784,
+  "pitchCubic": 0.00009820519855189912,
+  "basePitchUm": 0.7402014034242672,
+  "rmsResidualDeg": 0.1792824107102434,
+  "measuredSpanMm": [
+    26.102028234172295,
+    57.057142323087064
+  ],
+  "createdAt": "2026-11-19T04:48:42.538Z",
+  "id": "issue-50"
+}

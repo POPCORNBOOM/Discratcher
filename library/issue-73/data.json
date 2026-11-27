@@ -1,0 +1,21 @@
+{
+  "driveModel": "Slimtype DVD A  DS8ACSH LC21",
+  "mediaId": "CMC MAG M01",
+  "stamperCode": "CPDR47G-CSMWP03-5001",
+  "brand": "",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.3,
+  "innerRadiusMm": 23.906602417155504,
+  "outerRadiusMm": 57.96076394840382,
+  "pitchLinear": -0.00016377750071022492,
+  "pitchQuadratic": 0.0008073932758347936,
+  "pitchCubic": -0.0008811172805922541,
+  "basePitchUm": 0.7400156997541405,
+  "rmsResidualDeg": 1.3008814544896263,
+  "measuredSpanMm": [
+    25.04572654747612,
+    56.99145443700133
+  ],
+  "createdAt": "2026-11-27T10:16:49.463Z",
+  "id": "issue-73"
+}

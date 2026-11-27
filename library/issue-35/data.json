@@ -1,0 +1,21 @@
+{
+  "driveModel": "MATSHITA DVD+-RW UJ8D1 D.02",
+  "mediaId": "",
+  "stamperCode": "VR5F16-01294",
+  "brand": "thinkplus",
+  "totalSectors": 2295104,
+  "channelBitLengthNm": 133.29999999999998,
+  "innerRadiusMm": 24.048187646057546,
+  "outerRadiusMm": 58.02644722912044,
+  "pitchLinear": -0.00003900951888904638,
+  "pitchQuadratic": 0.0001139464151220244,
+  "pitchCubic": -0.00009018979659465572,
+  "basePitchUm": 0.740206880835671,
+  "rmsResidualDeg": 0.49118863123057094,
+  "measuredSpanMm": [
+    25.18119950341617,
+    57.05714559349832
+  ],
+  "createdAt": "2026-11-16T10:43:52.677Z",
+  "id": "issue-35"
+}
