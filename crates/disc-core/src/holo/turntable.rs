@@ -165,8 +165,13 @@ pub struct Solution {
 }
 
 fn position_targets(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, preset: &DiscGeometryPreset) -> Result<Vec<Vec<f32>>, String> {
+    position_targets_n(pos, objects, lamp_mm, opts, preset, VIEWS)
+}
+
+fn position_targets_n(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, preset: &DiscGeometryPreset, views: usize) -> Result<Vec<Vec<f32>>, String> {
     let angle = pos.phi_deg.to_radians();
     let n = opts.grid;
+    let denom = (views - 1).max(1) as f64;
     // Load and normalize each mesh once, even in transform mode where placement varies per view.
     let normalized: Vec<Mesh> = objects
         .iter()
@@ -179,8 +184,8 @@ fn position_targets(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts:
                 .zip(&normalized)
                 .map(|(o, norm)| (place_normalized_with(norm, o, None, angle, THICKNESS_MM), o.style))
                 .collect();
-            let drawn: Vec<V3> = (0..VIEWS)
-                .map(|i| eye_and_lamp(opts, lamp_mm, pos.parallax * HEAD_HALF_SPAN_MM * (2.0 * i as f64 / (VIEWS - 1) as f64 - 1.0), angle).0)
+            let drawn: Vec<V3> = (0..views)
+                .map(|i| eye_and_lamp(opts, lamp_mm, pos.parallax * HEAD_HALF_SPAN_MM * (2.0 * i as f64 / denom - 1.0), angle).0)
                 .collect();
             Ok(drawn
                 .par_iter()
@@ -189,10 +194,10 @@ fn position_targets(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts:
         }
         model3d::Mode::Transform => {
             let center_eye = eye_and_lamp(opts, lamp_mm, 0.0, angle).0;
-            Ok((0..VIEWS)
+            Ok((0..views)
                 .into_par_iter()
                 .map(|i| {
-                    let t = i as f64 / (VIEWS - 1) as f64;
+                    let t = i as f64 / denom;
                     let mesh: Vec<(Mesh, ink::Style)> = objects
                         .iter()
                         .zip(&normalized)
@@ -208,23 +213,31 @@ fn position_targets(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts:
     }
 }
 
-fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, resp: &Responses, preset: &DiscGeometryPreset) -> Result<Patch, String> {
-    let angle = pos.phi_deg.to_radians();
+fn solve_patch(
+    poses: &[(V3, V3)],
+    wide_poses: &[(V3, V3, usize)],
+    sharp: &[Vec<f32>],
+    blend: bool,
+    opts: &Options,
+    resp: &Responses,
+    preset: &DiscGeometryPreset,
+) -> Patch {
+    let views = poses.len();
+    assert_eq!(sharp.len(), views);
     let n = opts.grid;
     let k = resp.options;
     let plain = k - 1;
-    let poses: Vec<(V3, V3)> = (0..VIEWS)
-        .map(|i| eye_and_lamp(opts, lamp_mm, HEAD_HALF_SPAN_MM * (2.0 * i as f64 / (VIEWS - 1) as f64 - 1.0), angle))
-        .collect();
-    let sharp = position_targets(pos, objects, lamp_mm, opts, preset)?;
     // The disc cannot tell neighbouring views apart: blended, a point far from its surface is
     // one soft image rather than a row of copies.
     const BLEND: [f32; 5] = [0.1, 0.23, 0.34, 0.23, 0.1];
     let target = |v: usize, c: usize| -> f32 {
+        if !blend {
+            return sharp[v][c];
+        }
         let (mut s, mut w) = (0.0, 0.0);
         for (d, wd) in BLEND.iter().enumerate() {
             let i = v as isize + d as isize - 2;
-            if i >= 0 && (i as usize) < VIEWS {
+            if i >= 0 && (i as usize) < views {
                 s += wd * sharp[i as usize][c];
                 w += wd;
             }
@@ -271,10 +284,9 @@ fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &
                     }
                 }
             }
-            if opts.wide > 0.0 {
-                let (first, last) = (target(0, c) as f64 * opts.exposure, target(VIEWS - 1, c) as f64 * opts.exposure);
-                for (head, t) in WIDE_MM.iter().flat_map(|&h| [(-h, first), (h, last)]) {
-                    let (eye, lamp) = eye_and_lamp(opts, lamp_mm, head, angle);
+            if opts.wide > 0.0 && !wide_poses.is_empty() {
+                for &(eye, lamp, ref_v) in wide_poses {
+                    let t = target(ref_v, c) as f64 * opts.exposure;
                     let (gt, gr) = scene::g_at(&scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() }, x, y);
                     let cols: Vec<[f32; 3]> = (0..k).map(|j| resp.at(j, gt, gr)).collect();
                     // Plain data is even from everywhere: be no brighter or dimmer than it.
@@ -301,7 +313,28 @@ fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &
             design::solve_simplex_qp(&g, &h, k).into_iter().map(|w| w as f32)
         })
         .collect();
-    Ok(Patch { cells: lit, weights })
+    Patch { cells: lit, weights }
+}
+
+fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, resp: &Responses, preset: &DiscGeometryPreset) -> Result<Patch, String> {
+    let angle = pos.phi_deg.to_radians();
+    let poses: Vec<(V3, V3)> = (0..VIEWS)
+        .map(|i| eye_and_lamp(opts, lamp_mm, HEAD_HALF_SPAN_MM * (2.0 * i as f64 / (VIEWS - 1) as f64 - 1.0), angle))
+        .collect();
+    let wide_poses: Vec<(V3, V3, usize)> = if opts.wide > 0.0 {
+        WIDE_MM
+            .iter()
+            .flat_map(|&h| [(-h, 0usize), (h, VIEWS - 1)])
+            .map(|(head, rv)| {
+                let (eye, lamp) = eye_and_lamp(opts, lamp_mm, head, angle);
+                (eye, lamp, rv)
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+    let sharp = position_targets(pos, objects, lamp_mm, opts, preset)?;
+    Ok(solve_patch(&poses, &wide_poses, &sharp, true, opts, resp, preset))
 }
 
 /// Solve every position and lay the patches out on the disc. Positions already solved, and not
@@ -991,5 +1024,1120 @@ mod tests {
             } }
         }
         sheet.save(format!("{out}/frames-{frames}-{}.png", std::env::var("LAMP").unwrap_or_default())).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod frames_study {
+    use super::*;
+    use crate::holo::{codebook, design, lightfield, model3d, scene};
+    use crate::preset::reference_preset;
+    use crate::rng::SplitMix64;
+
+    const GRID: usize = 256;
+    const OBJ_Y_SCENE: f64 = 41.0;
+    const OBJ_Y_DISC: f64 = -41.0;
+
+    fn out_dir() -> String {
+        let dir = std::env::var("HOLO_OUT").unwrap_or_else(|_| {
+            "/private/tmp/claude-501/-Users-popcornboom-Github-discratcher/77e4f1be-29b4-409c-b70c-25d765514c8a/scratchpad/frames-study".into()
+        });
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn sway_poses(opts: &Options, lamp_mm: V3, views: usize, half_span_mm: f64) -> Vec<(V3, V3)> {
+        let denom = (views - 1).max(1) as f64;
+        (0..views)
+            .map(|i| eye_and_lamp(opts, lamp_mm, half_span_mm * (2.0 * i as f64 / denom - 1.0), 0.0))
+            .collect()
+    }
+
+    fn sway_wide_poses(opts: &Options, lamp_mm: V3, views: usize) -> Vec<(V3, V3, usize)> {
+        WIDE_MM
+            .iter()
+            .flat_map(|&h| [(-h, 0usize), (h, views - 1)])
+            .map(|(head, rv)| {
+                let (e, l) = eye_and_lamp(opts, lamp_mm, head, 0.0);
+                (e, l, rv)
+            })
+            .collect()
+    }
+
+    fn tilt_poses(opts: &Options, lamp_mm: V3, views: usize, start_deg: f64, end_deg: f64) -> Vec<(V3, V3)> {
+        let denom = (views - 1).max(1) as f64;
+        (0..views)
+            .map(|i| {
+                let deg = start_deg + (end_deg - start_deg) * (i as f64 / denom);
+                tilted_eye_and_lamp(opts, lamp_mm, deg.to_radians(), 0.0)
+            })
+            .collect()
+    }
+
+    fn tilt_wide_poses(opts: &Options, lamp_mm: V3, views: usize, start_deg: f64, end_deg: f64) -> Vec<(V3, V3, usize)> {
+        let step = (end_deg - start_deg).signum();
+        let mut out = Vec::new();
+        for &d in &[3.0f64, 6.0, 10.0, 15.0] {
+            let (e0, l0) = tilted_eye_and_lamp(opts, lamp_mm, (start_deg - step * d).to_radians(), 0.0);
+            let (e1, l1) = tilted_eye_and_lamp(opts, lamp_mm, (end_deg + step * d).to_radians(), 0.0);
+            if e0[2] > 5.0 && l0[2] > 5.0 {
+                out.push((e0, l0, 0));
+            }
+            if e1[2] > 5.0 && l1[2] > 5.0 {
+                out.push((e1, l1, views - 1));
+            }
+        }
+        out
+    }
+
+    fn gt_stats(poses: &[(V3, V3)], x: f64, y: f64) -> (f64, f64, bool, f64) {
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        let mut min_lamp_z = f64::INFINITY;
+        for &(eye, lamp) in poses {
+            let (gt, _) = scene::g_at(&scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() }, x, y);
+            lo = lo.min(gt);
+            hi = hi.max(gt);
+            min_lamp_z = min_lamp_z.min(lamp[2]).min(eye[2]);
+        }
+        let crosses_zero = lo < 0.0 && hi > 0.0;
+        (lo, hi, crosses_zero, min_lamp_z)
+    }
+
+    fn svd_independent_views(poses: &[(V3, V3)], resp: &Responses, x: f64, y: f64) -> (usize, usize, Vec<f64>) {
+        let rows = poses.len();
+        let k = resp.options;
+        let mut a = Vec::with_capacity(rows * k);
+        for &(eye, lamp) in poses {
+            let (gt, gr) = scene::g_at(&scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() }, x, y);
+            let mut row: Vec<f64> = (0..k).map(|j| lightfield::luma(resp.at(j, gt, gr))).collect();
+            let mean = row.iter().sum::<f64>() / k as f64;
+            for v in &mut row {
+                *v = (*v - mean) * (1.0 - PLAIN_LEAK);
+            }
+            a.extend(row);
+        }
+        let sv = lightfield::singular_values(&a, rows, k);
+        let rms: Vec<f64> = sv.iter().map(|s| s / (rows as f64).sqrt()).collect();
+        let top = rms.first().copied().unwrap_or(0.0).max(1e-12);
+        let n5 = rms.iter().filter(|&&s| s >= 0.05 * top).count();
+        let n3 = rms.iter().filter(|&&s| s >= 0.03 * top).count();
+        (n5, n3, rms)
+    }
+
+    /// Correlated target: builtin star at [0, 41, 0], scale 30 mm, spinning 180 deg around Y.
+    fn make_star_targets(views: usize, grid: usize, preset: &DiscGeometryPreset, flat_bw: bool) -> Vec<Vec<f32>> {
+        let samples: Vec<[f64; 16]> = (0..=64)
+            .map(|i| {
+                let rad = (i as f64 / 64.0 * 180.0).to_radians();
+                let (s, c) = rad.sin_cos();
+                [
+                    c, 0.0, s, 0.0,
+                    0.0, 1.0, 0.0, 0.0,
+                    -s, 0.0, c, 0.0,
+                    0.0, 0.0, 0.0, 1.0,
+                ]
+            })
+            .collect();
+        let style = if flat_bw {
+            ink::Style { lines: 0.0, shading: 0.0, texture: 0.0 }
+        } else {
+            ink::Style::default()
+        };
+        let obj = SceneObject {
+            id: "star".into(),
+            path: model3d::BUILTIN_SAMPLE_PATH.into(),
+            name: "star".into(),
+            visible: true,
+            position_mm: [0.0, OBJ_Y_SCENE, 0.0],
+            rotation_deg: [0.0, 0.0, 0.0],
+            scale_mm: 30.0,
+            position_id: "0".into(),
+            style,
+            motion: model3d::Motion { preset: "spinY180".into(), matrix: vec![], samples },
+        };
+        let pos = Position {
+            id: "0".into(),
+            name: String::new(),
+            phi_deg: 0.0,
+            crop_deg: 90.0,
+            mode: model3d::Mode::Transform,
+            parallax: model3d::DEFAULT_PARALLAX,
+        };
+        let opts = Options { grid, ..Default::default() };
+        position_targets_n(&pos, &[&obj], LAMP_MM, &opts, preset, views).unwrap()
+    }
+
+    /// Uncorrelated target A: `views` low-correlation 5x5 binary block glyphs in a 28x28 mm box at (0, -41).
+    /// Every frame lights exactly 6 of 25 tiles; any two frames share <= 2 tiles (pairwise corr <= 0.123).
+    fn make_uncorrelated_glyphs(views: usize, grid: usize, preset: &DiscGeometryPreset) -> Vec<Vec<f32>> {
+        let mut rng = SplitMix64(0x1234_5678_9ABC_DEF0);
+        let mut patterns: Vec<u32> = Vec::with_capacity(views);
+        for max_overlap in [2u32, 3, 4] {
+            let mut tries = 0usize;
+            while patterns.len() < views && tries < 200_000 {
+                tries += 1;
+                let mut mask = 0u32;
+                while mask.count_ones() < 6 {
+                    let bit = (rng.next_u64() % 25) as u32;
+                    mask |= 1u32 << bit;
+                }
+                if patterns.iter().all(|&p| (p & mask).count_ones() <= max_overlap) {
+                    patterns.push(mask);
+                }
+            }
+            if patterns.len() >= views {
+                break;
+            }
+        }
+        let ro = preset.outer_radius_mm;
+        let half = 14.0f64;
+        patterns
+            .iter()
+            .map(|&mask| {
+                let mut img = vec![0.0f32; grid * grid];
+                for cy in 0..grid {
+                    let y = ((cy as f64 + 0.5) / grid as f64 - 0.5) * 2.0 * ro;
+                    let ty = (y - (OBJ_Y_DISC - half)) / (2.0 * half);
+                    if !(0.0..1.0).contains(&ty) {
+                        continue;
+                    }
+                    let gy = (ty * 5.0).floor() as usize;
+                    for cx in 0..grid {
+                        let x = ((cx as f64 + 0.5) / grid as f64 - 0.5) * 2.0 * ro;
+                        let tx = (x + half) / (2.0 * half);
+                        if !(0.0..1.0).contains(&tx) {
+                            continue;
+                        }
+                        let gx = (tx * 5.0).floor() as usize;
+                        let bit = (gy.min(4) * 5 + gx.min(4)) as u32;
+                        if (mask >> bit) & 1 != 0 {
+                            let m = model3d::radial_mask(x, y, preset.inner_radius_mm, ro) as f32;
+                            img[cy * grid + cx] = m;
+                        }
+                    }
+                }
+                img
+            })
+            .collect()
+    }
+
+    /// 24 recognizable bold 7x7 shapes & digits/letters, ordered so neighbours are dissimilar.
+    const SHAPES_7X7: [&[&str; 7]; 24] = [
+        // 0: big '+'
+        &["..###..", "..###..", "#######", "#######", "#######", "..###..", "..###.."],
+        // 1: '0' / hollow box
+        &["#######", "#.....#", "#.....#", "#.....#", "#.....#", "#.....#", "#######"],
+        // 2: '1'
+        &["...##..", "..###..", ".####..", "...##..", "...##..", "...##..", ".######"],
+        // 3: 'X'
+        &["##...##", ".##.##.", "..###..", "...#...", "..###..", ".##.##.", "##...##"],
+        // 4: top-left / bottom-right blocks
+        &["####...", "####...", "####...", ".......", "...####", "...####", "...####"],
+        // 5: '2'
+        &[".#####.", "##...##", ".....##", "..####.", ".##....", "##.....", "#######"],
+        // 6: vertical bars
+        &["##...##", "##...##", "##...##", "##...##", "##...##", "##...##", "##...##"],
+        // 7: '3'
+        &[".#####.", ".....##", ".....##", "..####.", ".....##", ".....##", ".#####."],
+        // 8: up triangle
+        &["...#...", "..###..", "..###..", ".#####.", ".#####.", "#######", "#######"],
+        // 9: '4'
+        &["##...##", "##...##", "##...##", "#######", ".....##", ".....##", ".....##"],
+        // 10: horizontal bars
+        &["#######", "#######", ".......", ".......", ".......", "#######", "#######"],
+        // 11: '7'
+        &["#######", ".....##", "....##.", "...##..", "..##...", "..##...", "..##..."],
+        // 12: diamond
+        &["...#...", "..###..", ".#####.", "#######", ".#####.", "..###..", "...#..."],
+        // 13: 'L'
+        &["##.....", "##.....", "##.....", "##.....", "##.....", "#######", "#######"],
+        // 14: bottom-left / top-right blocks
+        &["...####", "...####", "...####", ".......", "####...", "####...", "####..."],
+        // 15: 'T'
+        &["#######", "#######", "..###..", "..###..", "..###..", "..###..", "..###.."],
+        // 16: down triangle
+        &["#######", "#######", ".#####.", ".#####.", "..###..", "..###..", "...#..."],
+        // 17: 'A'
+        &["..###..", ".##.##.", "##...##", "#######", "##...##", "##...##", "##...##"],
+        // 18: 4 corners
+        &["##...##", "##...##", ".......", ".......", ".......", "##...##", "##...##"],
+        // 19: 'Z'
+        &["#######", "....##.", "...##..", "..##...", ".##....", "##.....", "#######"],
+        // 20: center square
+        &[".......", ".#####.", ".#####.", ".#####.", ".#####.", ".#####.", "......."],
+        // 21: 'U'
+        &["##...##", "##...##", "##...##", "##...##", "##...##", "##...##", ".#####."],
+        // 22: diagonal slash
+        &[".....##", "....###", "...###.", "..###..", ".###...", "###....", "##....."],
+        // 23: 'H'
+        &["##...##", "##...##", "##...##", "#######", "##...##", "##...##", "##...##"],
+    ];
+
+    fn make_shapes_digits(views: usize, grid: usize, preset: &DiscGeometryPreset) -> Vec<Vec<f32>> {
+        let ro = preset.outer_radius_mm;
+        let half = 14.0f64;
+        (0..views)
+            .map(|k| {
+                let pat = SHAPES_7X7[k % SHAPES_7X7.len()];
+                let mut img = vec![0.0f32; grid * grid];
+                for cy in 0..grid {
+                    let y = ((cy as f64 + 0.5) / grid as f64 - 0.5) * 2.0 * ro;
+                    let ty = (y - (OBJ_Y_DISC - half)) / (2.0 * half);
+                    if !(0.0..1.0).contains(&ty) {
+                        continue;
+                    }
+                    let gy = ((ty * 7.0).floor() as usize).min(6);
+                    let row = pat[gy].as_bytes();
+                    for cx in 0..grid {
+                        let x = ((cx as f64 + 0.5) / grid as f64 - 0.5) * 2.0 * ro;
+                        let tx = (x + half) / (2.0 * half);
+                        if !(0.0..1.0).contains(&tx) {
+                            continue;
+                        }
+                        let gx = ((tx * 7.0).floor() as usize).min(6);
+                        if row[gx] == b'#' {
+                            let m = model3d::radial_mask(x, y, preset.inner_radius_mm, ro) as f32;
+                            img[cy * grid + cx] = m;
+                        }
+                    }
+                }
+                img
+            })
+            .collect()
+    }
+
+    fn make_flipbook(keyframes: &[Vec<f32>], views: usize) -> Vec<Vec<f32>> {
+        let m = keyframes.len();
+        (0..views).map(|v| keyframes[(v * m) / views].clone()).collect()
+    }
+
+    fn patch_to_solved(patch: &Patch, grid: usize, cb: &Codebook, resp: &Responses, bg_override: Option<usize>) -> Solved {
+        let k = resp.options;
+        let plain = k - 1;
+        let bg = bg_override
+            .or_else(|| cb.entries.iter().position(|e| e.bytes.iter().all(|&b| b == design::BACKGROUND_BYTE)))
+            .unwrap_or_else(|| {
+                (0..plain)
+                    .min_by(|&a, &b| {
+                        let ea: f64 = resp.rgb[a].iter().map(|&p| lightfield::luma(p).powi(2)).sum();
+                        let eb: f64 = resp.rgb[b].iter().map(|&p| lightfield::luma(p).powi(2)).sum();
+                        ea.total_cmp(&eb)
+                    })
+                    .unwrap_or(0)
+            });
+        let mut weights = vec![0.0f32; grid * grid * k];
+        for cell in weights.chunks_exact_mut(k) {
+            cell[bg] = 1.0;
+        }
+        for (j, &c) in patch.cells.iter().enumerate() {
+            let c = c as usize;
+            weights[c * k..(c + 1) * k].copy_from_slice(&patch.weights[j * k..(j + 1) * k]);
+        }
+        Solved { grid, options: k, weights, error: 0.0 }
+    }
+
+    fn pearson(a: &[f64], b: &[f32], region: &[usize]) -> f64 {
+        let n = region.len() as f64;
+        if n < 2.0 {
+            return 0.0;
+        }
+        let (mut sa, mut sb, mut saa, mut sbb, mut sab) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        for &c in region {
+            let (x, y) = (a[c], b[c] as f64);
+            sa += x;
+            sb += y;
+            saa += x * x;
+            sbb += y * y;
+            sab += x * y;
+        }
+        let va = (saa - sa * sa / n).max(0.0);
+        let vb = (sbb - sb * sb / n).max(0.0);
+        let denom = (va * vb).sqrt();
+        if denom < 1e-12 {
+            0.0
+        } else {
+            (sab - sa * sb / n) / denom
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct Metrics {
+        mean_own: f64,
+        mean_ghost: f64,
+        mean_contrast: f64,
+        distinct: usize,
+        total: usize,
+        gt_lo: f64,
+        gt_hi: f64,
+        crosses_zero: bool,
+        max_bg_luma: f64,
+    }
+
+    fn eval_and_save(
+        name: &str,
+        solved: &Solved,
+        resp: &Responses,
+        preset: &DiscGeometryPreset,
+        poses: &[(V3, V3)],
+        targets: &[Vec<f32>],
+        save_png: Option<&str>,
+    ) -> Metrics {
+        let views = poses.len();
+        let grid = solved.grid;
+        let region: Vec<usize> = (0..grid * grid).filter(|&c| targets.iter().any(|t| t[c] > LIT)).collect();
+        let (gt_lo, gt_hi, crosses_zero, _) = gt_stats(poses, 0.0, OBJ_Y_DISC);
+
+        // Background cell sample just outside the object at (18, -41) mm (never lit).
+        let ro = preset.outer_radius_mm;
+        let bg_cx = (((18.0 / (2.0 * ro) + 0.5) * grid as f64) as usize).min(grid - 1);
+        let bg_cy = (((OBJ_Y_DISC / (2.0 * ro) + 0.5) * grid as f64) as usize).min(grid - 1);
+        let bg_idx = bg_cy * grid + bg_cx;
+
+        let renders: Vec<Vec<[f32; 3]>> = poses
+            .iter()
+            .map(|&(eye, lamp)| lightfield::render_float(solved, resp, preset, eye, lamp, grid, true))
+            .collect();
+
+        let mut own_sum = 0.0;
+        let mut ghost_sum = 0.0;
+        let mut contrast_sum = 0.0;
+        let mut contrast_cnt = 0usize;
+        let mut distinct = 0usize;
+        let mut max_bg_luma = 0.0f64;
+
+        for k in 0..views {
+            let lum: Vec<f64> = renders[k].iter().map(|&p| lightfield::luma(p)).collect();
+            max_bg_luma = max_bg_luma.max(lum[bg_idx]);
+            let own = pearson(&lum, &targets[k], &region);
+            let mut ghost = f64::NEG_INFINITY;
+            for j in 0..views {
+                if j.abs_diff(k) >= 3 {
+                    ghost = ghost.max(pearson(&lum, &targets[j], &region));
+                }
+            }
+            if !ghost.is_finite() {
+                ghost = 0.0;
+            }
+            own_sum += own;
+            ghost_sum += ghost;
+            if own >= ghost + 0.1 {
+                distinct += 1;
+            }
+
+            let (mut lit_s, mut lit_n, mut dark_s, mut dark_n) = (0.0, 0usize, 0.0, 0usize);
+            for &c in &region {
+                if targets[k][c] > 0.1 {
+                    lit_s += lum[c];
+                    lit_n += 1;
+                } else {
+                    dark_s += lum[c];
+                    dark_n += 1;
+                }
+            }
+            if lit_n > 0 && dark_n > 0 {
+                let c_ratio = (lit_s / lit_n as f64) / (dark_s / dark_n as f64).max(1e-6);
+                contrast_sum += c_ratio;
+                contrast_cnt += 1;
+            }
+        }
+
+        if let Some(filename) = save_png {
+            let n_samp = views.min(10);
+            let crop = 96usize;
+            let cx0 = (grid / 2).saturating_sub(crop / 2);
+            let cy_center = ((OBJ_Y_DISC / (2.0 * ro) + 0.5) * grid as f64).round() as usize;
+            let cy0 = cy_center.saturating_sub(crop / 2).min(grid - crop);
+            let gap = 4usize;
+            let mut img = image::RgbImage::from_pixel((n_samp * crop) as u32, (crop * 2 + gap) as u32, image::Rgb([40, 40, 40]));
+            let enc = |v: f64| (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+            for s in 0..n_samp {
+                let k = if n_samp <= 1 { 0 } else { (s * (views - 1) + (n_samp - 1) / 2) / (n_samp - 1) };
+                for y in 0..crop {
+                    for x in 0..crop {
+                        let idx = (cy0 + y) * grid + (cx0 + x);
+                        let tv = enc(targets[k][idx] as f64);
+                        img.put_pixel((s * crop + x) as u32, y as u32, image::Rgb([tv, tv, tv]));
+                        let rv = renders[k][idx];
+                        // Fixed gain 1.5 so brightness & contrast stay comparable across configs.
+                        let rgb = [enc(rv[0] as f64 * 1.5), enc(rv[1] as f64 * 1.5), enc(rv[2] as f64 * 1.5)];
+                        img.put_pixel((s * crop + x) as u32, (crop + gap + y) as u32, image::Rgb(rgb));
+                    }
+                }
+            }
+            let path = format!("{}/{filename}", out_dir());
+            img.save(&path).unwrap();
+            eprintln!("  saved contact sheet: {path}");
+        }
+
+        let m = Metrics {
+            mean_own: own_sum / views as f64,
+            mean_ghost: ghost_sum / views as f64,
+            mean_contrast: if contrast_cnt > 0 { contrast_sum / contrast_cnt as f64 } else { 0.0 },
+            distinct,
+            total: views,
+            gt_lo,
+            gt_hi,
+            crosses_zero,
+            max_bg_luma,
+        };
+        println!(
+            "{name:<48} | gt [{:+.2},{:+.2}]{} | own {:+.3} | ghost {:+.3} | ctr {:5.2}x | distinct {:2}/{:2} | bg_max {:.3}",
+            m.gt_lo,
+            m.gt_hi,
+            if m.crosses_zero { "X" } else { " " },
+            m.mean_own,
+            m.mean_ghost,
+            m.mean_contrast,
+            m.distinct,
+            m.total,
+            m.max_bg_luma,
+        );
+        m
+    }
+
+    fn ideal_metrics(name: &str, targets: &[Vec<f32>]) {
+        let views = targets.len();
+        let grid = (targets[0].len() as f64).sqrt() as usize;
+        let region: Vec<usize> = (0..grid * grid).filter(|&c| targets.iter().any(|t| t[c] > LIT)).collect();
+        let (mut ghost_sum, mut distinct) = (0.0, 0usize);
+        for k in 0..views {
+            let lum: Vec<f64> = targets[k].iter().map(|&v| v as f64).collect();
+            let own = pearson(&lum, &targets[k], &region);
+            let mut ghost = f64::NEG_INFINITY;
+            for j in 0..views {
+                if j.abs_diff(k) >= 3 {
+                    ghost = ghost.max(pearson(&lum, &targets[j], &region));
+                }
+            }
+            ghost_sum += ghost;
+            if own >= ghost + 0.1 {
+                distinct += 1;
+            }
+        }
+        println!("IDEAL TARGET {name:<35} | region {:5} cells | own +1.000 | tgt_ghost {:+.3} | ideal_distinct {:2}/{:2}", region.len(), ghost_sum / views as f64, distinct, views);
+    }
+
+    /// Diagnostic: inspect codebook spectral coverage, g_t sweeps, SVD independent views, and ideal target bounds.
+    #[test]
+    #[ignore]
+    fn exp0_physics_probe() {
+        let shared = design::shared_codebook(0.1333);
+        let preset = reference_preset();
+        let (cb, resp) = (&shared.0, &shared.1);
+        println!("=== Codebook entries ({} + 1 plain = {}) ===", cb.entries.len(), resp.options);
+        for (j, e) in cb.entries.iter().enumerate() {
+            let (mut pk_y, mut pk_gt) = (0.0f64, 0.0f64);
+            let mut ys = Vec::new();
+            for it in 0..200 {
+                let gt = it as f64 / 199.0 * 1.5;
+                let y = lightfield::luma(resp.at(j, gt, 0.0));
+                ys.push((gt, y));
+                if y > pk_y {
+                    pk_y = y;
+                    pk_gt = gt;
+                }
+            }
+            let half = 0.5 * pk_y;
+            let lo = ys.iter().find(|&&(_, y)| y >= half).map(|&(g, _)| g).unwrap_or(0.0);
+            let hi = ys.iter().rev().find(|&&(_, y)| y >= half).map(|&(g, _)| g).unwrap_or(0.0);
+            println!("  opt {:2} | f0={:.3} pur={:.2} | pk_gt={:.3} pk_Y={:.2} | FWHM [{:.3}..{:.3}] (w={:.3})", j, e.f0, e.purity, pk_gt, pk_y, lo, hi, hi - lo);
+        }
+        let plain = resp.options - 1;
+        let pl_025 = lightfield::luma(resp.at(plain, 0.25, 0.0));
+        let pl_050 = lightfield::luma(resp.at(plain, 0.50, 0.0));
+        let pl_075 = lightfield::luma(resp.at(plain, 0.75, 0.0));
+        let pl_100 = lightfield::luma(resp.at(plain, 1.00, 0.0));
+        println!("  plain  | Y(0.25)={pl_025:.3} Y(0.50)={pl_050:.3} Y(0.75)={pl_075:.3} Y(1.00)={pl_100:.3}");
+
+        println!("\n=== Sweep g_t ranges & SVD independent views at (0,-41) [12 o'clock] and (0,+41) [6 o'clock] ===");
+        let opts = Options { grid: GRID, ..Default::default() };
+        let configs: Vec<(&str, Vec<(V3, V3)>)> = vec![
+            ("sway +-40mm lamp [150,0,400]", sway_poses(&opts, LAMP_MM, 40, 40.0)),
+            ("tilt +-5  lamp [150,0,400]", tilt_poses(&opts, LAMP_MM, 40, -5.0, 5.0)),
+            ("tilt +-10 lamp [150,0,400]", tilt_poses(&opts, LAMP_MM, 40, -10.0, 10.0)),
+            ("tilt +-20 lamp [150,0,400]", tilt_poses(&opts, LAMP_MM, 40, -20.0, 20.0)),
+            ("tilt +-30 lamp [150,0,400]", tilt_poses(&opts, LAMP_MM, 40, -30.0, 30.0)),
+            ("tilt +-10 lamp [220,0,400]", tilt_poses(&opts, [220.0, 0.0, 400.0], 40, -10.0, 10.0)),
+            ("tilt +-10 lamp [250,0,400]", tilt_poses(&opts, [250.0, 0.0, 400.0], 40, -10.0, 10.0)),
+            ("tilt +-15 lamp [320,0,400]", tilt_poses(&opts, [320.0, 0.0, 400.0], 40, -15.0, 15.0)),
+            ("tilt +-20 lamp [380,0,380]", tilt_poses(&opts, [380.0, 0.0, 380.0], 40, -20.0, 20.0)),
+            ("tilt +-20 lamp [420,0,350]", tilt_poses(&opts, [420.0, 0.0, 350.0], 40, -20.0, 20.0)),
+            ("tilt +-30 lamp [550,0,350]", tilt_poses(&opts, [550.0, 0.0, 350.0], 40, -30.0, 30.0)),
+            ("tilt 0->30  lamp [0,0,400]", tilt_poses(&opts, [0.0, 0.0, 400.0], 40, 0.0, 30.0)),
+            ("tilt 5->30  lamp [0,0,400]", tilt_poses(&opts, [0.0, 0.0, 400.0], 40, 5.0, 30.0)),
+            ("tilt 6->24  lamp [0,0,400]", tilt_poses(&opts, [0.0, 0.0, 400.0], 40, 6.0, 24.0)),
+            ("tilt 6->35  lamp [0,0,400]", tilt_poses(&opts, [0.0, 0.0, 400.0], 40, 6.0, 35.0)),
+            ("tilt -25->+5 lamp [150,0,400]", tilt_poses(&opts, LAMP_MM, 40, -25.0, 5.0)),
+            ("tilt -30->0  lamp [150,0,400]", tilt_poses(&opts, LAMP_MM, 40, -30.0, 0.0)),
+        ];
+        for (label, poses) in &configs {
+            let (lo12, hi12, x12, minz) = gt_stats(poses, 0.0, -41.0);
+            let (lo6, hi6, x6, _) = gt_stats(poses, 0.0, 41.0);
+            let (n5, n3, _) = svd_independent_views(poses, resp, 0.0, -41.0);
+            println!(
+                "  {label:<32} | 12h [{lo12:+.2},{hi12:+.2}]{} | 6h [{lo6:+.2},{hi6:+.2}]{} | minZ={minz:5.0} | SVD n5={n5:2} n3={n3:2}",
+                if x12 { "X" } else { " " },
+                if x6 { "X" } else { " " },
+            );
+        }
+
+        println!("\n=== Ideal target self-similarity ===");
+        ideal_metrics("star-ink 24v", &make_star_targets(24, GRID, &preset, false));
+        ideal_metrics("star-flat 24v", &make_star_targets(24, GRID, &preset, true));
+        ideal_metrics("star-ink 40v", &make_star_targets(40, GRID, &preset, false));
+        ideal_metrics("star-ink 60v", &make_star_targets(60, GRID, &preset, false));
+        ideal_metrics("glyphs 24v", &make_uncorrelated_glyphs(24, GRID, &preset));
+        ideal_metrics("glyphs 40v", &make_uncorrelated_glyphs(40, GRID, &preset));
+        ideal_metrics("glyphs 60v", &make_uncorrelated_glyphs(60, GRID, &preset));
+        ideal_metrics("shapes/digits 24v", &make_shapes_digits(24, GRID, &preset));
+    }
+
+    /// Experiments 1, 2, 3 (and wide=0 on sway): baseline vs BLEND off vs chroma 0 vs combined on sway.
+    #[test]
+    #[ignore]
+    fn exp1_to_3_ablation() {
+        let shared = design::shared_codebook(0.1333);
+        let preset = reference_preset();
+        let (cb, resp) = (&shared.0, &shared.1);
+        let base_opts = Options { grid: GRID, chroma_weight: 1.0, exposure: 0.6, wide: 0.3, ..Default::default() };
+        let poses = sway_poses(&base_opts, LAMP_MM, 24, HEAD_HALF_SPAN_MM);
+        let wide_p = sway_wide_poses(&base_opts, LAMP_MM, 24);
+
+        let datasets: Vec<(&str, Vec<Vec<f32>>)> = vec![
+            ("star", make_star_targets(24, GRID, &preset, false)),
+            ("glyphs", make_uncorrelated_glyphs(24, GRID, &preset)),
+            ("shapes", make_shapes_digits(24, GRID, &preset)),
+        ];
+
+        println!("=== Experiments 1-3: Single-factor ablation on baseline sway (+-40mm, 24v) ===");
+        for (dname, targets) in &datasets {
+            println!("\n--- Dataset: {dname} ---");
+            let runs: Vec<(&str, bool, f64, f64, Option<String>)> = vec![
+                ("1. baseline (BLEND=on, chr=1, wide=0.3)", true, 1.0, 0.3, Some(format!("exp1_baseline_{dname}.png"))),
+                ("2. BLEND=off (chr=1, wide=0.3)", false, 1.0, 0.3, Some(format!("exp2_noblend_{dname}.png"))),
+                ("3a. chr=0 (BLEND=on, wide=0.3)", true, 0.0, 0.3, None),
+                ("3b. BLEND=off + chr=0 (wide=0.3)", false, 0.0, 0.3, Some(format!("exp3_noblend_chr0_{dname}.png"))),
+                ("3c. BLEND=off + chr=0 + wide=0", false, 0.0, 0.0, None),
+            ];
+            for (label, blend, chroma, wide, png) in runs {
+                let opts = Options { chroma_weight: chroma, wide, ..base_opts.clone() };
+                let wp = if wide > 0.0 { &wide_p[..] } else { &[] };
+                let patch = solve_patch(&poses, wp, targets, blend, &opts, resp, &preset);
+                let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                eval_and_save(label, &solved, resp, &preset, &poses, targets, png.as_deref());
+            }
+        }
+    }
+
+    /// Experiment 4: Viewing motion = disc tilt (symmetric & one-sided) across lamp positions.
+    #[test]
+    #[ignore]
+    fn exp4_tilt_and_lamp() {
+        let shared = design::shared_codebook(0.1333);
+        let preset = reference_preset();
+        let (cb, resp) = (&shared.0, &shared.1);
+        let opts_clean = Options { grid: GRID, chroma_weight: 0.0, exposure: 0.6, wide: 0.0, ..Default::default() };
+        let opts_base = Options { grid: GRID, chroma_weight: 1.0, exposure: 0.6, wide: 0.3, ..Default::default() };
+
+        let datasets: Vec<(&str, Vec<Vec<f32>>)> = vec![
+            ("star", make_star_targets(24, GRID, &preset, false)),
+            ("glyphs", make_uncorrelated_glyphs(24, GRID, &preset)),
+            ("shapes", make_shapes_digits(24, GRID, &preset)),
+        ];
+
+        // (label, start_deg, end_deg, lamp, blend, opts, png_tag)
+        let configs: Vec<(&str, f64, f64, V3, bool, &Options, Option<&str>)> = vec![
+            // Isolated tilt with baseline settings (BLEND=on, chr=1, wide=0.3)
+            ("4a. tilt +-10 base-opts lamp[150,0,400]", -10.0, 10.0, LAMP_MM, true, &opts_base, None),
+            ("4b. tilt +-20 base-opts lamp[420,0,350]", -20.0, 20.0, [420.0, 0.0, 350.0], true, &opts_base, None),
+            // Symmetric tilt with default lamp [150,0,400] (clean: BLEND=off, chr=0, wide=0)
+            ("4c. tilt +-5  lamp[150,0,400]", -5.0, 5.0, LAMP_MM, false, &opts_clean, None),
+            ("4d. tilt +-10 lamp[150,0,400]", -10.0, 10.0, LAMP_MM, false, &opts_clean, Some("exp4_tilt10_lamp150")),
+            ("4e. tilt +-20 lamp[150,0,400] (crosses 0)", -20.0, 20.0, LAMP_MM, false, &opts_clean, Some("exp4_tilt20_lamp150_cross0")),
+            ("4f. tilt +-30 lamp[150,0,400] (crosses 0)", -30.0, 30.0, LAMP_MM, false, &opts_clean, None),
+            // Symmetric tilt with offset lamps keeping g_t > 0
+            ("4g. tilt +-10 lamp[220,0,400]", -10.0, 10.0, [220.0, 0.0, 400.0], false, &opts_clean, Some("exp4_tilt10_lamp220")),
+            ("4h. tilt +-10 lamp[250,0,400]", -10.0, 10.0, [250.0, 0.0, 400.0], false, &opts_clean, None),
+            ("4i. tilt +-15 lamp[320,0,400]", -15.0, 15.0, [320.0, 0.0, 400.0], false, &opts_clean, Some("exp4_tilt15_lamp320")),
+            ("4j. tilt +-20 lamp[380,0,380]", -20.0, 20.0, [380.0, 0.0, 380.0], false, &opts_clean, None),
+            ("4k. tilt +-20 lamp[420,0,350]", -20.0, 20.0, [420.0, 0.0, 350.0], false, &opts_clean, Some("exp4_tilt20_lamp420")),
+            ("4l. tilt +-30 lamp[550,0,350]", -30.0, 30.0, [550.0, 0.0, 350.0], false, &opts_clean, Some("exp4_tilt30_lamp550")),
+            // One-sided sweeps
+            ("4m. tilt 0->30  lamp[0,0,400]", 0.0, 30.0, [0.0, 0.0, 400.0], false, &opts_clean, Some("exp4_tilt0_30_lamp0")),
+            ("4n. tilt 5->30  lamp[0,0,400]", 5.0, 30.0, [0.0, 0.0, 400.0], false, &opts_clean, Some("exp4_tilt5_30_lamp0")),
+            ("4o. tilt 6->24  lamp[0,0,400]", 6.0, 24.0, [0.0, 0.0, 400.0], false, &opts_clean, Some("exp4_tilt6_24_lamp0")),
+            ("4p. tilt 6->35  lamp[0,0,400]", 6.0, 35.0, [0.0, 0.0, 400.0], false, &opts_clean, None),
+            ("4q. tilt -25->+5 lamp[150,0,400]", -25.0, 5.0, LAMP_MM, false, &opts_clean, None),
+            ("4r. tilt -30->0  lamp[150,0,400]", -30.0, 0.0, LAMP_MM, false, &opts_clean, None),
+        ];
+
+        println!("=== Experiment 4: Disc tilt + lamp positions (24 views, grid 256) ===");
+        for (dname, targets) in &datasets {
+            println!("\n--- Dataset: {dname} ---");
+            for &(label, s_deg, e_deg, lamp, blend, opts, png_tag) in &configs {
+                let poses = tilt_poses(opts, lamp, 24, s_deg, e_deg);
+                let wp = if opts.wide > 0.0 { sway_wide_poses(opts, lamp, 24) } else { vec![] };
+                let patch = solve_patch(&poses, &wp, targets, blend, opts, resp, &preset);
+                let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                let png = png_tag.map(|t| format!("{t}_{dname}.png"));
+                eval_and_save(label, &solved, resp, &preset, &poses, targets, png.as_deref());
+            }
+        }
+    }
+
+    /// Experiment 5: Number of views 24 vs 40 vs 60 (continuous star, N-distinct glyphs, and M-keyframe flipbook).
+    #[test]
+    #[ignore]
+    fn exp5_views() {
+        let shared = design::shared_codebook(0.1333);
+        let preset = reference_preset();
+        let (cb, resp) = (&shared.0, &shared.1);
+        let opts = Options { grid: GRID, chroma_weight: 0.0, exposure: 0.6, wide: 0.0, ..Default::default() };
+
+        // Test on two top one-sided & symmetric tilt motions covering the full usable g_t band:
+        // (A) 6°->24° overhead lamp [0,0,400] (g_t ~ [0.21, 0.81])
+        // (B) ±15° lamp [320,0,400] (g_t ~ [0.14, 1.04])
+        // (C) ±20° lamp [420,0,350] (g_t ~ [0.18, 1.24])
+        let motions: Vec<(&str, f64, f64, V3)> = vec![
+            ("tilt6_24_lamp0", 6.0, 24.0, [0.0, 0.0, 400.0]),
+            ("tilt15_lamp320", -15.0, 15.0, [320.0, 0.0, 400.0]),
+            ("tilt20_lamp420", -20.0, 20.0, [420.0, 0.0, 350.0]),
+        ];
+
+        println!("=== Experiment 5: View count 24 vs 40 vs 60 ===");
+        for (mname, s_deg, e_deg, lamp) in &motions {
+            println!("\n--- Motion: {mname} ({s_deg}..{e_deg} deg, lamp {lamp:?}) ---");
+            for &views in &[24usize, 40, 60] {
+                let poses = tilt_poses(&opts, *lamp, views, *s_deg, *e_deg);
+                let star_t = make_star_targets(views, GRID, &preset, false);
+                let patch = solve_patch(&poses, &[], &star_t, false, &opts, resp, &preset);
+                let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                let png = if *mname == "tilt15_lamp320" { Some(format!("exp5_{mname}_{views}v_star.png")) } else { None };
+                eval_and_save(&format!("star   {views:2}v ({mname})"), &solved, resp, &preset, &poses, &star_t, png.as_deref());
+
+                let glyphs_t = make_uncorrelated_glyphs(views, GRID, &preset);
+                let patch = solve_patch(&poses, &[], &glyphs_t, false, &opts, resp, &preset);
+                let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                let png = if *mname == "tilt15_lamp320" { Some(format!("exp5_{mname}_{views}v_glyphs.png")) } else { None };
+                eval_and_save(&format!("glyphs {views:2}v ({mname})"), &solved, resp, &preset, &poses, &glyphs_t, png.as_deref());
+            }
+        }
+
+        // Flipbook capacity test: M distinct bold shapes/glyphs mapped onto views = 24, 40, 60
+        // Evaluate at the M keyframe centers (one pose per keyframe) to see how many discrete frames are cleanly separable!
+        println!("\n--- Flipbook capacity: M discrete keyframes (glyphs) on tilt 6->30 lamp [0,0,400] ---");
+        let keyframes_all = make_uncorrelated_glyphs(24, GRID, &preset);
+        for &m in &[6usize, 8, 10, 12, 16, 20, 24] {
+            let kf = &keyframes_all[..m];
+            for &views in &[m, 40, 60] {
+                if views < m {
+                    continue;
+                }
+                let poses = tilt_poses(&opts, [0.0, 0.0, 400.0], views, 6.0, 30.0);
+                let targets = make_flipbook(kf, views);
+                let patch = solve_patch(&poses, &[], &targets, false, &opts, resp, &preset);
+                let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                // Evaluate at the M keyframe centre poses, with |j-k| >= 1 (adjacent frames must be distinct!).
+                let kf_poses: Vec<(V3, V3)> = (0..m)
+                    .map(|k| {
+                        let deg = 6.0 + (30.0 - 6.0) * ((k as f64 + 0.5) / m as f64);
+                        tilted_eye_and_lamp(&opts, [0.0, 0.0, 400.0], deg.to_radians(), 0.0)
+                    })
+                    .collect();
+                let region: Vec<usize> = (0..GRID * GRID).filter(|&c| kf.iter().any(|t| t[c] > LIT)).collect();
+                let (mut own_s, mut gh_adj_s, mut gh_3_s, mut ctr_s, mut dist_adj, mut dist_3) = (0.0, 0.0, 0.0, 0.0, 0usize, 0usize);
+                for k in 0..m {
+                    let px = lightfield::render_float(&solved, resp, &preset, kf_poses[k].0, kf_poses[k].1, GRID, true);
+                    let lum: Vec<f64> = px.iter().map(|&p| lightfield::luma(p)).collect();
+                    let own = pearson(&lum, &kf[k], &region);
+                    let gh_adj = (0..m).filter(|&j| j != k).map(|j| pearson(&lum, &kf[j], &region)).fold(f64::NEG_INFINITY, f64::max);
+                    let gh_3 = (0..m).filter(|&j| j.abs_diff(k) >= 3).map(|j| pearson(&lum, &kf[j], &region)).fold(f64::NEG_INFINITY, f64::max);
+                    own_s += own;
+                    gh_adj_s += gh_adj;
+                    if gh_3.is_finite() { gh_3_s += gh_3; }
+                    if own >= gh_adj + 0.1 { dist_adj += 1; }
+                    if !gh_3.is_finite() || own >= gh_3 + 0.1 { dist_3 += 1; }
+                    let (mut ls, mut ln, mut ds, mut dn) = (0.0, 0, 0.0, 0);
+                    for &c in &region {
+                        if kf[k][c] > 0.1 { ls += lum[c]; ln += 1; } else { ds += lum[c]; dn += 1; }
+                    }
+                    ctr_s += (ls / ln as f64) / (ds / dn as f64).max(1e-6);
+                }
+                println!(
+                    "  flipbook M={m:2} solved@{views:2}v | own {:+.3} | max_other(j!=k) {:+.3} (dist {:2}/{:2}) | ghost(|j-k|>=3) {:+.3} (dist {:2}/{:2}) | ctr {:4.2}x",
+                    own_s / m as f64,
+                    gh_adj_s / m as f64,
+                    dist_adj,
+                    m,
+                    gh_3_s / m as f64,
+                    dist_3,
+                    m,
+                    ctr_s / m as f64,
+                );
+            }
+        }
+    }
+
+    /// Build a custom codebook and compute its Responses normalized to the EXACT same physical
+    /// luminance peak as `shared_codebook(bit_um)` (by prepending the swatch codebook as reference
+    /// entries, then slicing them off when `keep_swatch` is false).
+    fn build_range_codebook(
+        n: usize,
+        f_low: f64,
+        f_high: f64,
+        bit_um: f64,
+        iters: usize,
+        seed: u64,
+        keep_swatch: bool,
+        with_periodic: bool,
+    ) -> (Codebook, Responses) {
+        let swatch = design::swatch_codebook(bit_um);
+        let n_swatch = swatch.entries.len();
+        let centres: Vec<f64> = (0..n)
+            .map(|k| f_low * (f_high / f_low).powf(k as f64 / (n - 1).max(1) as f64))
+            .collect();
+        let sa_entries: Vec<codebook::Entry> = centres
+            .into_par_iter()
+            .enumerate()
+            .map(|(k, f0)| codebook::search(f0, bit_um, iters, seed ^ (k as u64).wrapping_mul(0x9E37_79B9)))
+            .collect();
+        let mut all_entries = swatch.entries.clone();
+        all_entries.extend(sa_entries);
+        if with_periodic {
+            all_entries.extend(codebook::periodic_entries(bit_um));
+        }
+        let full_cb = Codebook { bit_um, entries: all_entries };
+        let full_resp = design::responses_with_ref_peak(&full_cb, n_swatch, bit_um, design::DEFAULT_SOURCE_BLUR, design::DEFAULT_SIGMA_R);
+        if keep_swatch {
+            return (full_cb, full_resp);
+        }
+        // Strip the reference swatch entries while keeping identical luminance normalization + plain last.
+        let entries = full_cb.entries[n_swatch..].to_vec();
+        let rgb = full_resp.rgb[n_swatch..].to_vec();
+        let options = rgb.len();
+        (
+            Codebook { bit_um, entries },
+            Responses { options, gt_bins: full_resp.gt_bins, gr_bins: full_resp.gr_bins, rgb },
+        )
+    }
+
+    /// Experiment 6: Codebook size & frequency range (all normalized to the identical swatch luminance scale).
+    #[test]
+    #[ignore]
+    fn exp6_codebook() {
+        let shared = design::shared_codebook(0.1333);
+        let preset = reference_preset();
+        let opts = Options { grid: GRID, chroma_weight: 0.0, exposure: 0.6, wide: 0.0, ..Default::default() };
+        let poses = tilt_poses(&opts, [0.0, 0.0, 400.0], 24, 6.5, 22.5);
+        let poses_sym = tilt_poses(&opts, [225.0, 0.0, 400.0], 24, -8.5, 8.5);
+
+        let t0 = std::time::Instant::now();
+        let per_only = build_range_codebook(0, 0.42, 1.25, 0.1333, 0, 0, false, true);
+        let sa24 = build_range_codebook(24, 0.42, 1.25, 0.1333, 15_000, 0x5EED_0024, false, false);
+        let sa24_ext = build_range_codebook(24, 0.42, 1.25, 0.1333, 15_000, 0x5EED_0024, false, true);
+        let sa36 = build_range_codebook(36, 0.42, 1.25, 0.1333, 15_000, 0x5EED_0036, false, false);
+        let sa36_ext = build_range_codebook(36, 0.42, 1.25, 0.1333, 15_000, 0x5EED_0036, false, true);
+        let wide36_ext = build_range_codebook(36, 0.25, 1.60, 0.1333, 15_000, 0x5EED_0099, false, true);
+        println!("Built custom codebooks (15k SA iters, matched scale) in {:?}", t0.elapsed());
+
+        let books: Vec<(&str, &Codebook, &Responses)> = vec![
+            ("shared (12 SA 0.42..1.12 + 15 per = 28)", &shared.0, &shared.1),
+            ("periodic-only (15 per = 16)", &per_only.0, &per_only.1),
+            ("SA-24 (0.42..1.25 = 25)", &sa24.0, &sa24.1),
+            ("SA-24 + 15 per (40)", &sa24_ext.0, &sa24_ext.1),
+            ("SA-36 (0.42..1.25 = 37)", &sa36.0, &sa36.1),
+            ("SA-36 + 15 per (52)", &sa36_ext.0, &sa36_ext.1),
+            ("SA-36 wide (0.25..1.60) + 15 per (52)", &wide36_ext.0, &wide36_ext.1),
+        ];
+
+        for (bname, cb, resp) in &books {
+            let avg_pur = cb.entries.iter().map(|e| e.purity).sum::<f64>() / cb.entries.len() as f64;
+            let (n5, n3, _) = svd_independent_views(&poses, resp, 0.0, OBJ_Y_DISC);
+            println!("  codebook {bname:<42} | avg_purity={avg_pur:.3} | SVD n5={n5:2} n3={n3:2}");
+        }
+
+        let datasets: Vec<(&str, Vec<Vec<f32>>)> = vec![
+            ("star", make_star_targets(24, GRID, &preset, false)),
+            ("glyphs", make_uncorrelated_glyphs(24, GRID, &preset)),
+        ];
+
+        println!("\n=== Experiment 6: Codebook comparison on tilt 6.5->22.5 lamp [0,0,400] (24v, matched scale) ===");
+        for (dname, targets) in &datasets {
+            println!("\n--- Dataset: {dname} ---");
+            for (bname, cb, resp) in &books {
+                let patch = solve_patch(&poses, &[], targets, false, &opts, resp, &preset);
+                let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                let png = if bname.starts_with("SA-36 +") || bname.starts_with("SA-36 wide") {
+                    Some(format!("exp6_{}_{dname}.png", if bname.contains("wide") { "wide36" } else { "sa36ext" }))
+                } else {
+                    None
+                };
+                eval_and_save(bname, &solved, resp, &preset, &poses, targets, png.as_deref());
+            }
+        }
+
+        println!("\n=== Experiment 6b: Codebook comparison on symmetric tilt +-8.5 lamp [225,0,400] (24v, glyphs) ===");
+        let glyphs = &datasets[1].1;
+        for (bname, cb, resp) in &books {
+            let patch = solve_patch(&poses_sym, &[], glyphs, false, &opts, resp, &preset);
+            let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+            eval_and_save(bname, &solved, resp, &preset, &poses_sym, glyphs, None);
+        }
+    }
+
+    /// Experiment 7: wide 0 vs 0.3, exposure 0.4/0.6/0.8/1.0, background entry, and combined winners.
+    #[test]
+    #[ignore]
+    fn exp7_wide_exposure_and_combined() {
+        let shared = design::shared_codebook(0.1333);
+        let preset = reference_preset();
+        let (cb, resp) = (&shared.0, &shared.1);
+        let base_tilt_opts = Options { grid: GRID, chroma_weight: 0.0, exposure: 0.6, wide: 0.0, ..Default::default() };
+
+        let poses_sym = tilt_poses(&base_tilt_opts, [320.0, 0.0, 400.0], 24, -15.0, 15.0);
+        let wide_sway = sway_wide_poses(&base_tilt_opts, [320.0, 0.0, 400.0], 24);
+        let wide_tilt = tilt_wide_poses(&base_tilt_opts, [320.0, 0.0, 400.0], 24, -15.0, 15.0);
+
+        let datasets: Vec<(&str, Vec<Vec<f32>>)> = vec![
+            ("star", make_star_targets(24, GRID, &preset, false)),
+            ("glyphs", make_uncorrelated_glyphs(24, GRID, &preset)),
+            ("shapes", make_shapes_digits(24, GRID, &preset)),
+        ];
+
+        println!("=== Experiment 7: wide & exposure on tilt +-15 lamp [320,0,400] (24v) ===");
+        for (dname, targets) in &datasets {
+            println!("\n--- Dataset: {dname} ---");
+            for (label, wide, use_tilt_wide, exp, png) in [
+                ("7a. wide=0.0, exp=0.6", 0.0, false, 0.6, None),
+                ("7b. wide=0.3 (legacy sway-wide), exp=0.6", 0.3, false, 0.6, None),
+                ("7c. wide=0.3 (tilt-wide), exp=0.6", 0.3, true, 0.6, None),
+                ("7d. wide=0.0, exp=0.4", 0.0, false, 0.4, None),
+                ("7e. wide=0.0, exp=0.8", 0.0, false, 0.8, Some(format!("exp7_exp08_{dname}.png"))),
+                ("7f. wide=0.0, exp=1.0", 0.0, false, 1.0, None),
+            ] {
+                let opts = Options { wide, exposure: exp, ..base_tilt_opts.clone() };
+                let wp: &[(V3, V3, usize)] = if wide == 0.0 {
+                    &[]
+                } else if use_tilt_wide {
+                    &wide_tilt
+                } else {
+                    &wide_sway
+                };
+                let patch = solve_patch(&poses_sym, wp, targets, false, &opts, resp, &preset);
+                let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                eval_and_save(label, &solved, resp, &preset, &poses_sym, targets, png.as_deref());
+            }
+        }
+
+        // Background byte check: 0xA7 vs 0x83 on high-g_t sweep (tilt 10->30, lamp [0,0,400], g_t in [0.35, 1.0])
+        println!("\n=== Background entry check: 0xA7 vs 0x83 on tilt 10->30 lamp [0,0,400] (g_t >= 0.35) ===");
+        let idx_83 = cb.entries.iter().position(|e| e.bytes.iter().all(|&b| b == 0x83));
+        let poses_hi = tilt_poses(&base_tilt_opts, [0.0, 0.0, 400.0], 24, 10.0, 30.0);
+        let star_t = &datasets[0].1;
+        let patch = solve_patch(&poses_hi, &[], star_t, false, &base_tilt_opts, resp, &preset);
+        let sol_a7 = patch_to_solved(&patch, GRID, cb, resp, None);
+        let sol_83 = patch_to_solved(&patch, GRID, cb, resp, idx_83);
+        eval_and_save("bg=0xA7 (current BACKGROUND_BYTE)", &sol_a7, resp, &preset, &poses_hi, star_t, Some("exp7_bg_0xA7_star.png"));
+        eval_and_save("bg=0x83 (dark for |g_t|>=0.35)", &sol_83, resp, &preset, &poses_hi, star_t, Some("exp7_bg_0x83_star.png"));
+    }
+
+    /// Bonus physics diagnostic: how much does illuminant bandwidth (White vs PhoneLed vs narrow-band LED) limit separable frames?
+    #[test]
+    #[ignore]
+    fn exp8_illuminant_bound() {
+        let shared = design::shared_codebook(0.1333);
+        let preset = reference_preset();
+        let cb = &shared.0;
+        let opts = Options { grid: GRID, chroma_weight: 0.0, exposure: 0.6, wide: 0.0, ..Default::default() };
+        let poses = tilt_poses(&opts, [0.0, 0.0, 400.0], 24, 6.0, 30.0);
+        let glyphs = make_uncorrelated_glyphs(24, GRID, &preset);
+        let shapes = make_shapes_digits(24, GRID, &preset);
+
+        println!("=== Experiment 8 (Bonus): Illuminant bandwidth vs separable frames (tilt 6->30, lamp [0,0,400], 24v) ===");
+        for (iname, illum) in [
+            ("White (400-700nm)", lightfield::Illuminant::White),
+            ("PhoneLed", lightfield::Illuminant::PhoneLed),
+            ("Green LED (532nm, 25nm FWHM)", lightfield::Illuminant::Band { center_nm: 532.0, fwhm_nm: 25.0 }),
+            ("Narrow LED/Laser (532nm, 5nm FWHM)", lightfield::Illuminant::Band { center_nm: 532.0, fwhm_nm: 5.0 }),
+        ] {
+            let resp = lightfield::responses_for(cb, 12, illum);
+            let (n5, n3, _) = svd_independent_views(&poses, &resp, 0.0, OBJ_Y_DISC);
+            println!("  [{iname}] SVD n5={n5} n3={n3}");
+            let patch = solve_patch(&poses, &[], &glyphs, false, &opts, &resp, &preset);
+            let solved = patch_to_solved(&patch, GRID, cb, &resp, None);
+            eval_and_save(&format!("  glyphs ({iname})"), &solved, &resp, &preset, &poses, &glyphs, Some(&format!("exp8_{}_glyphs.png", iname.split_whitespace().next().unwrap().to_lowercase())));
+
+            let patch_s = solve_patch(&poses, &[], &shapes, false, &opts, &resp, &preset);
+            let solved_s = patch_to_solved(&patch_s, GRID, cb, &resp, None);
+            eval_and_save(&format!("  shapes ({iname})"), &solved_s, &resp, &preset, &poses, &shapes, Some(&format!("exp8_{}_shapes.png", iname.split_whitespace().next().unwrap().to_lowercase())));
+        }
+    }
+
+    /// Refined sweeps tightly matched to the active codebook g_t band [0.22..0.75],
+    /// chroma_weight curve, wide/exposure on winning sweep, log-g_t spacing, and flipbook contact sheets.
+    #[test]
+    #[ignore]
+    fn exp9_refined_winners() {
+        let shared = design::shared_codebook(0.1333);
+        let preset = reference_preset();
+        let (cb, resp) = (&shared.0, &shared.1);
+        let opts = Options { grid: GRID, chroma_weight: 0.0, exposure: 0.6, wide: 0.0, ..Default::default() };
+
+        let star = make_star_targets(24, GRID, &preset, false);
+        let glyphs = make_uncorrelated_glyphs(24, GRID, &preset);
+        let shapes = make_shapes_digits(24, GRID, &preset);
+
+        // Log-g_t spaced tilt poses for overhead lamp [0,0,400] covering |g_t| in [0.23..0.74]
+        let log_poses_overhead = |views: usize, gt_lo: f64, gt_hi: f64| -> Vec<(V3, V3)> {
+            let denom = (views - 1).max(1) as f64;
+            (0..views)
+                .map(|i| {
+                    let gt_want = gt_lo * (gt_hi / gt_lo).powf(i as f64 / denom);
+                    let deg = (gt_want / 2.0).clamp(-0.99, 0.99).asin().to_degrees();
+                    tilted_eye_and_lamp(&opts, [0.0, 0.0, 400.0], deg.to_radians(), 0.0)
+                })
+                .collect()
+        };
+
+        println!("=== Experiment 9a: Active-band matched tilt sweeps (24v, BLEND=off, chr=0, wide=0, exp=0.6) ===");
+        let sweeps: Vec<(&str, Vec<(V3, V3)>, Option<&str>)> = vec![
+            ("tilt 7->21   lamp[0,0,400] (linear)", tilt_poses(&opts, [0.0, 0.0, 400.0], 24, 7.0, 21.0), Some("exp9_tilt7_21_lamp0")),
+            ("tilt 6.5->22.5 lamp[0,0,400] (linear)", tilt_poses(&opts, [0.0, 0.0, 400.0], 24, 6.5, 22.5), Some("exp9_tilt65_225_lamp0")),
+            ("tilt 6.5->22.5 lamp[0,0,400] (log-gt)", log_poses_overhead(24, 0.23, 0.76), Some("exp9_loggt_lamp0")),
+            ("tilt +-8     lamp[220,0,400] (sym)", tilt_poses(&opts, [220.0, 0.0, 400.0], 24, -8.0, 8.0), None),
+            ("tilt +-8.5   lamp[225,0,400] (sym)", tilt_poses(&opts, [225.0, 0.0, 400.0], 24, -8.5, 8.5), Some("exp9_tilt85_lamp225")),
+            ("tilt +-10    lamp[235,0,400] (sym)", tilt_poses(&opts, [235.0, 0.0, 400.0], 24, -10.0, 10.0), None),
+            ("tilt +-10    lamp[220,0,400] (sym)", tilt_poses(&opts, [220.0, 0.0, 400.0], 24, -10.0, 10.0), None),
+            ("tilt -18->+3 lamp[150,0,400] (cur lamp)", tilt_poses(&opts, LAMP_MM, 24, -18.0, 3.0), Some("exp9_tilt_m18_p3_lamp150")),
+        ];
+        for (dname, targets) in [("star", &star), ("glyphs", &glyphs), ("shapes", &shapes)] {
+            println!("\n--- Dataset: {dname} ---");
+            for (label, poses, png_tag) in &sweeps {
+                let patch = solve_patch(poses, &[], targets, false, &opts, resp, &preset);
+                let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                let png = png_tag.map(|t| format!("{t}_{dname}.png"));
+                eval_and_save(label, &solved, resp, &preset, poses, targets, png.as_deref());
+            }
+        }
+
+        // Chroma weight curve on winning symmetric & one-sided sweeps
+        println!("\n=== Experiment 9b: chroma_weight sweep on tilt 6.5->22.5 lamp[0,0,400] (24v) ===");
+        let win_poses = tilt_poses(&opts, [0.0, 0.0, 400.0], 24, 6.5, 22.5);
+        for (dname, targets) in [("star", &star), ("glyphs", &glyphs), ("shapes", &shapes)] {
+            println!("\n--- Dataset: {dname} ---");
+            for &cw in &[0.0, 0.05, 0.1, 0.3, 1.0] {
+                let o = Options { chroma_weight: cw, ..opts.clone() };
+                let patch = solve_patch(&win_poses, &[], targets, false, &o, resp, &preset);
+                let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                eval_and_save(&format!("chroma_weight = {cw:.2}"), &solved, resp, &preset, &win_poses, targets, None);
+            }
+        }
+
+        // wide & exposure on winning sweep (tilt 6.5->22.5 lamp [0,0,400])
+        println!("\n=== Experiment 9c: wide & exposure on tilt 6.5->22.5 lamp[0,0,400] (24v) ===");
+        let win_wide_tilt = tilt_wide_poses(&opts, [0.0, 0.0, 400.0], 24, 6.5, 22.5);
+        let win_wide_sway = sway_wide_poses(&opts, [0.0, 0.0, 400.0], 24);
+        for (dname, targets) in [("star", &star), ("glyphs", &glyphs), ("shapes", &shapes)] {
+            println!("\n--- Dataset: {dname} ---");
+            for (label, wide, use_tilt_w, exp) in [
+                ("wide=0.0, exp=0.4", 0.0, false, 0.4),
+                ("wide=0.0, exp=0.6", 0.0, false, 0.6),
+                ("wide=0.0, exp=0.8", 0.0, false, 0.8),
+                ("wide=0.0, exp=1.0", 0.0, false, 1.0),
+                ("wide=0.3 (tilt-wide), exp=0.6", 0.3, true, 0.6),
+                ("wide=0.3 (sway-wide), exp=0.6", 0.3, false, 0.6),
+            ] {
+                let o = Options { wide, exposure: exp, ..opts.clone() };
+                let wp: &[(V3, V3, usize)] = if wide == 0.0 { &[] } else if use_tilt_w { &win_wide_tilt } else { &win_wide_sway };
+                let patch = solve_patch(&win_poses, wp, targets, false, &o, resp, &preset);
+                let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                eval_and_save(label, &solved, resp, &preset, &win_poses, targets, None);
+            }
+        }
+
+        // Clean flipbook capacity on active-band tilt 6.5->22.5 (40v oversampled, linear vs log-gt)
+        println!("\n=== Experiment 9d: Flipbook capacity on active-band tilt 6.5->22.5 (40v oversampled) ===");
+        for (dname, all_kf) in [("glyphs", &glyphs), ("shapes", &shapes)] {
+            println!("\n--- Flipbook dataset: {dname} ---");
+            for &m in &[6usize, 8, 10, 12, 16, 20, 24] {
+                let kf = &all_kf[..m];
+                for &(spacing, use_log) in &[("lin", false), ("log", true)] {
+                    let poses = if use_log { log_poses_overhead(40, 0.23, 0.76) } else { tilt_poses(&opts, [0.0, 0.0, 400.0], 40, 6.5, 22.5) };
+                    let targets = make_flipbook(kf, 40);
+                    let patch = solve_patch(&poses, &[], &targets, false, &opts, resp, &preset);
+                    let solved = patch_to_solved(&patch, GRID, cb, resp, None);
+                    let kf_poses: Vec<(V3, V3)> = (0..m)
+                        .map(|k| {
+                            let frac = (k as f64 + 0.5) / m as f64;
+                            let deg = if use_log {
+                                let gt = 0.23 * (0.76 / 0.23f64).powf(frac);
+                                (gt / 2.0).asin().to_degrees()
+                            } else {
+                                6.5 + (22.5 - 6.5) * frac
+                            };
+                            tilted_eye_and_lamp(&opts, [0.0, 0.0, 400.0], deg.to_radians(), 0.0)
+                        })
+                        .collect();
+                    let region: Vec<usize> = (0..GRID * GRID).filter(|&c| kf.iter().any(|t| t[c] > LIT)).collect();
+                    let (mut own_s, mut gh_adj_s, mut gh_3_s, mut ctr_s, mut dist_adj, mut dist_3) = (0.0, 0.0, 0.0, 0.0, 0usize, 0usize);
+                    let mut renders = Vec::with_capacity(m);
+                    for k in 0..m {
+                        let px = lightfield::render_float(&solved, resp, &preset, kf_poses[k].0, kf_poses[k].1, GRID, true);
+                        let lum: Vec<f64> = px.iter().map(|&p| lightfield::luma(p)).collect();
+                        let own = pearson(&lum, &kf[k], &region);
+                        let gh_adj = (0..m).filter(|&j| j != k).map(|j| pearson(&lum, &kf[j], &region)).fold(f64::NEG_INFINITY, f64::max);
+                        let gh_3 = (0..m).filter(|&j| j.abs_diff(k) >= 3).map(|j| pearson(&lum, &kf[j], &region)).fold(f64::NEG_INFINITY, f64::max);
+                        own_s += own;
+                        gh_adj_s += gh_adj;
+                        if gh_3.is_finite() { gh_3_s += gh_3; }
+                        if own >= gh_adj + 0.1 { dist_adj += 1; }
+                        if !gh_3.is_finite() || own >= gh_3 + 0.1 { dist_3 += 1; }
+                        let (mut ls, mut ln, mut ds, mut dn) = (0.0, 0, 0.0, 0);
+                        for &c in &region {
+                            if kf[k][c] > 0.1 { ls += lum[c]; ln += 1; } else { ds += lum[c]; dn += 1; }
+                        }
+                        ctr_s += (ls / ln as f64) / (ds / dn as f64).max(1e-6);
+                        renders.push(px);
+                    }
+                    println!(
+                        "  flipbook {dname:<6} M={m:2} ({spacing}) @40v | own {:+.3} | max_other(j!=k) {:+.3} (dist {:2}/{:2}) | ghost(|j-k|>=3) {:+.3} (dist {:2}/{:2}) | ctr {:4.2}x",
+                        own_s / m as f64,
+                        gh_adj_s / m as f64,
+                        dist_adj,
+                        m,
+                        gh_3_s / m as f64,
+                        dist_3,
+                        m,
+                        ctr_s / m as f64,
+                    );
+                    // Save visual contact sheets for M=8 and M=12 shapes (log spacing)
+                    if dname == "shapes" && use_log && (m == 8 || m == 12) {
+                        let crop = 96usize;
+                        let ro = preset.outer_radius_mm;
+                        let cx0 = (GRID / 2).saturating_sub(crop / 2);
+                        let cy_center = ((OBJ_Y_DISC / (2.0 * ro) + 0.5) * GRID as f64).round() as usize;
+                        let cy0 = cy_center.saturating_sub(crop / 2).min(GRID - crop);
+                        let gap = 4usize;
+                        let mut img = image::RgbImage::from_pixel((m * crop) as u32, (crop * 2 + gap) as u32, image::Rgb([40, 40, 40]));
+                        let enc = |v: f64| (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
+                        for k in 0..m {
+                            for y in 0..crop {
+                                for x in 0..crop {
+                                    let idx = (cy0 + y) * GRID + (cx0 + x);
+                                    let tv = enc(kf[k][idx] as f64);
+                                    img.put_pixel((k * crop + x) as u32, y as u32, image::Rgb([tv, tv, tv]));
+                                    let rv = renders[k][idx];
+                                    let rgb = [enc(rv[0] as f64 * 1.5), enc(rv[1] as f64 * 1.5), enc(rv[2] as f64 * 1.5)];
+                                    img.put_pixel((k * crop + x) as u32, (crop + gap + y) as u32, image::Rgb(rgb));
+                                }
+                            }
+                        }
+                        let path = format!("{}/exp9_flipbook_M{m}_log_shapes.png", out_dir());
+                        img.save(&path).unwrap();
+                        eprintln!("  saved contact sheet: {path}");
+                    }
+                }
+            }
+        }
     }
 }
