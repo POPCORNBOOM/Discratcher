@@ -399,7 +399,6 @@
   "update.title": "Update to {version}",
   "update.version": "Version {version}",
   "holo.guideOneEye": "One eye / phone camera",
-  "holo.previewTilt": "Preview tilt",
   "holo.tiltRange": "Tilt range",
   "holo.tiltRangeWords": "±{n}° either way",
   "holo.tiltAuto": "Auto (±{n}°)",

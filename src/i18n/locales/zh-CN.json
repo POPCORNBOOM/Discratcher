@@ -399,7 +399,6 @@
   "update.title": "更新到 {version}",
   "update.version": "版本 {version}",
   "holo.guideOneEye": "单眼 / 手机镜头",
-  "holo.previewTilt": "预览倾角",
   "holo.tiltRange": "倾斜范围",
   "holo.tiltRangeWords": "左右各 ±{n}°",
   "holo.tiltAuto": "自动（±{n}°）",

@@ -95,7 +95,6 @@
                 <UiIcon :path="mdiAlertOutline" />
                 <div class="grow">{{ position.tiltDeg > 0 ? t('holo.tiltTooWide', { n: tiltNow.autoDeg }) : t('holo.tiltBadLamp') }}</div>
               </div>
-              <UiSlider :model-value="transformTiltDeg(tiltNow.deg, previewT)" :label="t('holo.previewTilt')" :min="-tiltNow.deg" :max="tiltNow.deg" :step="0.1" :format="signedDeg" @update:model-value="(x) => (previewT = transformTAt(tiltNow.deg, x))" />
             </template>
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
@@ -609,7 +608,6 @@ import {
   LAMP_MIN_UP_MM,
   LAMP_REACH_MM,
   transformTiltDeg,
-  transformTAt,
   DEFAULT_TRANSFORM_TILT_DEG,
   MAX_TRANSFORM_TILT_DEG,
   type Vec3,
@@ -765,7 +763,6 @@ const tiltNow = computed<Tilt>(() => {
   const deg = position.value.tiltDeg > 0 ? position.value.tiltDeg : autoDeg
   return { id: position.value.id, deg, autoDeg, ok: found && found.deg === deg ? found.ok : true }
 })
-const signedDeg = (x: number) => `${x > 0 ? '+' : ''}${x.toFixed(1)}°`
 const motionDraft = ref<string[]>([])
 const motionError = ref('')
 
