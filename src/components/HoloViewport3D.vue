@@ -11,8 +11,6 @@
       'resize-ew': !planeDragging && !hoveredMarker && frameCursor === 'ew',
       'resize-ns': !planeDragging && !hoveredMarker && frameCursor === 'ns',
     }"
-    @pointerdown.capture="routeOrbitButtons"
-    @wheel.capture="onTrackpadWheel"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
@@ -1072,48 +1070,6 @@ function pickImageId(e: PointerEvent): string | null {
   return (hits[0]?.object.userData.imageId as string | undefined) ?? null
 }
 
-/**
- * Before the view's own controls see the press: ⌥ with the left button turns the view, for a
- * trackpad with no middle button.
- */
-function routeOrbitButtons(e: PointerEvent) {
-  if (orbit) orbit.mouseButtons.LEFT = e.button === 0 && e.altKey ? MOUSE.ROTATE : null
-}
-
-/** When the last scroll came from fingers rather than a wheel, so a gesture is not split midway. */
-let fingersUntil = 0
-
-/**
- * Whether a scroll comes from a trackpad or a Magic Mouse: only fingers move sideways. A mouse
- * wheel never does (macOS accelerates its steps, so their size tells nothing), so it always zooms;
- * a gesture once seen to be fingers stays so until it pauses. A pinch (ctrlKey) is left to the zoom.
- */
-function fromFingers(e: WheelEvent): boolean {
-  const now = performance.now()
-  if (now < fingersUntil || (e.deltaMode === 0 && e.deltaX !== 0)) {
-    fingersUntil = now + 300
-    return true
-  }
-  return false
-}
-
-/**
- * Two fingers as Blender has them on a Mac: swipe to turn the view, ⇧ and swipe to pan; a pinch
- * zooms and a mouse wheel still zooms, both left to the view's own controls.
- */
-function onTrackpadWheel(e: WheelEvent) {
-  if (!orbit || !camera || e.ctrlKey || !fromFingers(e)) return
-  e.preventDefault()
-  e.stopPropagation()
-  const h = Math.max(1, host.value?.clientHeight ?? 1)
-  if (e.shiftKey) {
-    orbit.pan(-e.deltaX, -e.deltaY)
-  } else {
-    orbit.rotateLeft((2 * Math.PI * e.deltaX) / h)
-    orbit.rotateUp((2 * Math.PI * e.deltaY) / h)
-  }
-}
-
 function wrapRotationDeg(deg: number): number {
   let d = (((deg + 180) % 360) + 360) % 360 - 180
   if (d <= -180) d += 360
@@ -1310,7 +1266,7 @@ function updateFrameHover(e: PointerEvent) {
 }
 
 function onPointerDown(e: PointerEvent) {
-  if (e.button !== 0 || e.altKey || gizmoDragging) return
+  if (e.button !== 0 || gizmoDragging) return
   // If pointer is hovering a TransformControls handle, let the gizmo own this drag.
   if (anyGizmoAxis()) return
   pointerDownPos = { x: e.clientX, y: e.clientY }

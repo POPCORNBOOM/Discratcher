@@ -696,7 +696,6 @@
 import {
   mdiAlertOctagonOutline,
   mdiAlertOutline,
-  mdiAppleKeyboardOption,
   mdiArrowDown,
   mdiArrowUp,
   mdiAxisArrow,
@@ -720,8 +719,7 @@ import {
   mdiImagePlusOutline,
   mdiLayersOutline,
   mdiLightbulbOutline,
-  mdiGesturePinch,
-  mdiGestureSwipe,
+  mdiMouse,
   mdiMouseLeftClickOutline,
   mdiMouseRightClickOutline,
   mdiMouseScrollWheel,
@@ -974,10 +972,9 @@ const previewDragging = ref(false)
 /** What the mouse does in the edit view, as the preview lists its own. */
 const editGestures = computed(() => [
   { icon: mdiMouseLeftClickOutline, text: t('holo.gesturePick') },
-  { icon: mdiGestureSwipe, text: t('holo.gestureOrbit') },
+  { icon: mdiMouse, text: t('holo.gestureOrbit') },
   { icon: mdiMouseRightClickOutline, text: t('holo.gesturePan') },
-  { icon: mdiGesturePinch, text: t('holo.gestureZoom') },
-  { icon: mdiAppleKeyboardOption, text: t('holo.gestureOption') },
+  { icon: mdiMouseScrollWheel, text: t('holo.gestureZoom') },
 ])
 const previewGestures = computed(() =>
   expViews.value.length
