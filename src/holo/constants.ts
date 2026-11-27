@@ -15,7 +15,7 @@ export const LAMP_HELD_MM: Vec3 = [LAMP_RIGHT_MM, 0, LAMP_UP_MM]
 export const LAMP_CEILING_MM: Vec3 = [0, 200, 1200]
 
 /** Transform animation: the disc tilts left and right, from -tilt to +tilt as t runs 0 to 1. */
-export const DEFAULT_TRANSFORM_TILT_DEG = 7
+export const DEFAULT_TRANSFORM_TILT_DEG = 3.5
 export const MAX_TRANSFORM_TILT_DEG = 30
 
 /** The disc's tilt, degrees, at animation parameter `t` in [0, 1] (`turntable::transform_tilt_at`). */

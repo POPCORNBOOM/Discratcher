@@ -26,10 +26,10 @@ pub const TRANSFORM_VIEWS: usize = 40;
 /// `|g_t|` the codebook answers to under white light; a tilt sweep must stay inside it.
 const GT_LOW: f64 = 0.21;
 const GT_HIGH: f64 = 0.76;
-/// The widest tilt either way looked for, degrees.
+/// The widest tilt either way allowed, degrees.
 pub const MAX_TILT_DEG: f64 = 30.0;
-/// Tilt either way used when no sweep fits the lamp, degrees.
-const FALLBACK_TILT_DEG: f64 = 3.0;
+/// Tilt either way used when the position does not choose one, degrees.
+pub const DEFAULT_TRANSFORM_TILT_DEG: f64 = 3.5;
 /// Fixed target exposure for transform animation (Winner A).
 pub const TRANSFORM_EXPOSURE: f64 = 0.6;
 /// Half the width of the head's sweep, mm.
@@ -152,28 +152,17 @@ pub struct Tilt {
     pub id: String,
     /// The tilt either way used, degrees.
     pub deg: f64,
-    /// The widest that fits the lamp, degrees, or the fallback when none does.
-    pub auto_deg: f64,
-    /// Whether any tilt fits the lamp at all.
-    pub auto_ok: bool,
     /// Whether `deg` fits the lamp.
     pub ok: bool,
 }
 
-/// The widest tilt either way, in half degrees, at which the position's objects stay inside the
-/// codebook's window under `lamp_mm`; the position's own choice when it has one.
+/// The position's tilt either way, or the default when it has none, and whether its objects stay
+/// inside the codebook's window under `lamp_mm` across that sweep.
 pub fn tilt_for(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, preset: &DiscGeometryPreset) -> Tilt {
     let angle = pos.phi_deg.to_radians();
     let points = object_points(pos, objects, preset);
-    let mut auto = None;
-    let mut x = 0.5;
-    while x <= MAX_TILT_DEG + 1e-9 && sweep_fits(opts, lamp_mm, x, angle, &points) {
-        auto = Some(x);
-        x += 0.5;
-    }
-    let auto_deg = auto.unwrap_or(FALLBACK_TILT_DEG);
-    let deg = if pos.tilt_deg > 0.0 { pos.tilt_deg.min(MAX_TILT_DEG) } else { auto_deg };
-    Tilt { id: pos.id.clone(), deg, auto_deg, auto_ok: auto.is_some(), ok: sweep_fits(opts, lamp_mm, deg, angle, &points) }
+    let deg = if pos.tilt_deg > 0.0 { pos.tilt_deg.min(MAX_TILT_DEG) } else { DEFAULT_TRANSFORM_TILT_DEG };
+    Tilt { id: pos.id.clone(), deg, ok: sweep_fits(opts, lamp_mm, deg, angle, &points) }
 }
 
 /// How hard a mode holds views white when the position does not say: real parallax as the
@@ -971,13 +960,12 @@ mod tests {
         let opts = Options::default();
         let side = tilt_for(&p, &[&star], [225.0, 0.0, 400.0], &opts, &reference_preset());
         println!("side lamp: {side:?}");
-        assert!(side.ok && (5.0..=12.0).contains(&side.deg), "{side:?}");
+        assert!(side.ok && side.deg == DEFAULT_TRANSFORM_TILT_DEG, "{side:?}");
         let beside = tilt_for(&p, &[&star], [0.0, 0.0, 400.0], &opts, &reference_preset());
         println!("lamp beside the eye: {beside:?}");
-        assert!(!beside.ok && !beside.auto_ok, "{beside:?}");
+        assert!(!beside.ok, "{beside:?}");
         let chosen = tilt_for(&Position { tilt_deg: 25.0, ..p.clone() }, &[&star], [225.0, 0.0, 400.0], &opts, &reference_preset());
         assert_eq!(chosen.deg, 25.0);
-        assert_eq!(chosen.auto_deg, side.deg);
         assert!(!chosen.ok, "{chosen:?}");
         for lamp in [LAMP_MM, [250.0, 0.0, 400.0]] {
             println!("{lamp:?}: {:?}", tilt_for(&p, &[&star], lamp, &opts, &reference_preset()));

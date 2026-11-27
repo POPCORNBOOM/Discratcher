@@ -95,7 +95,6 @@
             />
             <template v-else-if="position.mode === 'transform'">
               <UiSlider :model-value="tiltNow.deg" :disabled="manyPicked" :label="t('holo.tiltRange')" :min="1" :max="MAX_TRANSFORM_TILT_DEG" :step="0.5" :format="(x) => t('holo.tiltRangeWords', { n: x })" :ends="[t('holo.tiltLow'), t('holo.tiltHigh')]" @pointerdown="beginControlEdit" @update:model-value="setTilt" />
-              <a v-if="position.tiltDeg > 0" class="action-link end" role="button" tabindex="0" @click="setTilt(0)" @keydown.enter="setTilt(0)">{{ t('holo.tiltAuto', { n: tiltNow.autoDeg }) }}</a>
             </template>
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
@@ -873,13 +872,12 @@ const modelExact = ref(false)
 /** The transform matrix shown for a preset; a custom one always is. */
 const matrixOpen = ref(false)
 /** How a transform position is tilted, as `turntable::Tilt`. */
-interface Tilt { id: string; deg: number; autoDeg: number; ok: boolean }
+interface Tilt { id: string; deg: number; ok: boolean }
 const tilts = ref<Tilt[]>([])
 const tiltNow = computed<Tilt>(() => {
   const found = tilts.value.find((x) => x.id === position.value.id)
-  const autoDeg = found?.autoDeg ?? DEFAULT_TRANSFORM_TILT_DEG
-  const deg = position.value.tiltDeg > 0 ? position.value.tiltDeg : autoDeg
-  return { id: position.value.id, deg, autoDeg, ok: found && found.deg === deg ? found.ok : true }
+  const deg = position.value.tiltDeg > 0 ? position.value.tiltDeg : DEFAULT_TRANSFORM_TILT_DEG
+  return { id: position.value.id, deg, ok: found && found.deg === deg ? found.ok : true }
 })
 const motionDraft = ref<string[]>([])
 const motionError = ref('')
@@ -1914,7 +1912,7 @@ function burnDesign() {
     fileName: 'holo.iso',
     prepareLabel: t('holo.compose'),
     viewingGuide: usingExp ? 'real' : guidePos ? guidePos.mode : false,
-    viewingTiltDeg: guidePos && guidePos.tiltDeg > 0 ? guidePos.tiltDeg : (tilts.value.find((x) => x.id === guidePos?.id)?.autoDeg ?? DEFAULT_TRANSFORM_TILT_DEG),
+    viewingTiltDeg: guidePos && guidePos.tiltDeg > 0 ? guidePos.tiltDeg : DEFAULT_TRANSFORM_TILT_DEG,
     prepare: async (path: string, ctx: StepContext) => {
       if (usingExp) {
         await call('holo_build_design_iso', { preset, input: { views: expSnapshot, chromaWeight, exposure, grid }, outputIsoPath: path })

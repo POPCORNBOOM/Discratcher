@@ -416,7 +416,6 @@
   "holo.guideOneEye": "单眼 / 手机镜头",
   "holo.tiltRange": "倾斜范围",
   "holo.tiltRangeWords": "左右各 ±{n}°",
-  "holo.tiltAuto": "自动（±{n}°）",
   "holo.motionSpinY": "绕竖轴转",
   "holo.motionTiltX": "前后翻",
   "holo.motionVars": "变量",

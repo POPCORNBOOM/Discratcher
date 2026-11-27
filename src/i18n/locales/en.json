@@ -416,7 +416,6 @@
   "holo.guideOneEye": "One eye / phone camera",
   "holo.tiltRange": "Tilt range",
   "holo.tiltRangeWords": "±{n}° either way",
-  "holo.tiltAuto": "Auto (±{n}°)",
   "holo.motionSpinY": "Spin about the vertical axis",
   "holo.motionTiltX": "Flip forward",
   "holo.motionVars": "Variables",
