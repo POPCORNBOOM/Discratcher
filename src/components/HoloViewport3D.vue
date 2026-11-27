@@ -127,7 +127,9 @@ let shownPhi = 0
 let lampMesh: Mesh | null = null
 let lampBeam: LineLoop | null = null
 
-const objectMeshes = new Map<string, { wrapper: Group; mesh: Mesh; path: string }>()
+/** Each object: the mesh you place, and in transform mode a ghost of it moved by T at the preview tilt. */
+type ObjectEntry = { mesh: Mesh; ghost: Mesh; wrapper: Group; path: string }
+const objectMeshes = new Map<string, ObjectEntry>()
 const geometryCache = new Map<string, BufferGeometry>()
 const matPos = new Matrix4()
 const matNeg = new Matrix4()
@@ -374,24 +376,36 @@ function updateObjectMaterials() {
   }
 }
 
-function applyMotionWrapper(wrapper: Group, obj: HoloSceneObject, posMm: Vec3) {
+/**
+ * Show where T puts the object at the preview tilt as a ghost beside the mesh you edit, so that
+ * moving, turning and sizing the object never pass through T. Matches Rust `place_scene_object_with`:
+ * scene_p = pos + L * (scale * R * p) + tr, i.e. translate(pos) * T * translate(-pos) on the mesh.
+ */
+function applyMotionWrapper(entry: ObjectEntry, obj: HoloSceneObject) {
+  const { mesh, ghost, wrapper } = entry
   const activePos = currentPosition()
-  if (activePos?.mode === 'transform' && obj.positionId === props.positionId) {
-    const m = sampleMotion(obj.motion.samples, props.previewT)
-    // Match Rust `place_scene_object_with`: scene_p = pos + L * (scale * R * p) + tr
-    // via translate(pos) * T * translate(-pos) on top of the object's mesh transform.
-    matT.set(
-      m[0], m[1], m[2], m[3],
-      m[4], m[5], m[6], m[7],
-      m[8], m[9], m[10], m[11],
-      0, 0, 0, 1,
-    )
-    matPos.makeTranslation(posMm[0], posMm[1], posMm[2])
-    matNeg.makeTranslation(-posMm[0], -posMm[1], -posMm[2])
-    wrapper.matrix.copy(matPos).multiply(matT).multiply(matNeg)
-  } else {
-    wrapper.matrix.identity()
+  const moving = activePos?.mode === 'transform' && obj.positionId === props.positionId && obj.motion.samples.length > 0
+  if (!moving) {
+    wrapper.visible = false
+    return
   }
+  const m = sampleMotion(obj.motion.samples, props.previewT)
+  const still = m.every((v, i) => Math.abs(v - (i % 5 === 0 ? 1 : 0)) < 1e-6)
+  wrapper.visible = obj.visible && !still
+  if (!wrapper.visible) return
+  ghost.position.copy(mesh.position)
+  ghost.rotation.copy(mesh.rotation)
+  ghost.scale.copy(mesh.scale)
+  matT.set(
+    m[0], m[1], m[2], m[3],
+    m[4], m[5], m[6], m[7],
+    m[8], m[9], m[10], m[11],
+    0, 0, 0, 1,
+  )
+  const p = mesh.position
+  matPos.makeTranslation(p.x, p.y, p.z)
+  matNeg.makeTranslation(-p.x, -p.y, -p.z)
+  wrapper.matrix.copy(matPos).multiply(matT).multiply(matNeg)
   wrapper.matrixWorldNeedsUpdate = true
 }
 
@@ -399,7 +413,7 @@ function syncMotionTransforms() {
   for (const obj of props.objects) {
     const entry = objectMeshes.get(obj.id)
     if (!entry) continue
-    applyMotionWrapper(entry.wrapper, obj, obj.positionMm)
+    applyMotionWrapper(entry, obj)
   }
 }
 
@@ -411,8 +425,10 @@ function syncObjects() {
   for (const [id, entry] of objectMeshes) {
     if (!activeIds.has(id)) {
       if (gizmo?.object === entry.mesh) gizmo.detach()
+      entry.mesh.removeFromParent()
       entry.wrapper.removeFromParent()
       ;(entry.mesh.material as MeshStandardMaterial).dispose()
+      ;(entry.ghost.material as MeshStandardMaterial).dispose()
       objectMeshes.delete(id)
     }
   }
@@ -425,8 +441,10 @@ function syncObjects() {
     if (!entry || entry.path !== obj.path) {
       if (entry) {
         if (gizmo?.object === entry.mesh) gizmo.detach()
+        entry.mesh.removeFromParent()
         entry.wrapper.removeFromParent()
         ;(entry.mesh.material as MeshStandardMaterial).dispose()
+        ;(entry.ghost.material as MeshStandardMaterial).dispose()
       }
       const geo = getOrCreateGeometry(obj.path, data)
       const mat = new MeshStandardMaterial({
@@ -441,16 +459,21 @@ function syncObjects() {
       mesh.userData.objectId = obj.id
       // Match Rust `rot_xyz` (Rz * Ry * Rx).
       mesh.rotation.order = 'ZYX'
+      // The ghost cannot be picked or dragged: it only shows T.
+      const ghost = new Mesh(geo, new MeshStandardMaterial({ color: 0xae79fb, roughness: 0.6, transparent: true, opacity: 0.35, depthWrite: false, side: DoubleSide }))
+      ghost.rotation.order = 'ZYX'
+      ghost.raycast = () => {}
       const wrapper = new Group()
       wrapper.matrixAutoUpdate = false
-      wrapper.add(mesh)
-      entry = { wrapper, mesh, path: obj.path }
+      wrapper.visible = false
+      wrapper.add(ghost)
+      entry = { mesh, ghost, wrapper, path: obj.path }
       objectMeshes.set(obj.id, entry)
     }
     const { wrapper, mesh } = entry
     const group = groupFor(obj.positionId)
+    if (mesh.parent !== group) group.add(mesh)
     if (wrapper.parent !== group) group.add(wrapper)
-    wrapper.visible = obj.visible
     mesh.visible = obj.visible
     mesh.position.set(obj.positionMm[0], obj.positionMm[1], obj.positionMm[2])
     mesh.rotation.set(
@@ -460,7 +483,7 @@ function syncObjects() {
       'ZYX',
     )
     mesh.scale.setScalar(obj.scaleMm)
-    applyMotionWrapper(wrapper, obj, obj.positionMm)
+    applyMotionWrapper(entry, obj)
   }
 
   for (const [id, g] of positionGroups) {
@@ -633,7 +656,7 @@ function onPointerMove(e: PointerEvent) {
   if (!obj || !entry) return
 
   entry.mesh.position.set(nx, ny, dragTargetZ)
-  applyMotionWrapper(entry.wrapper, obj, [nx, ny, dragTargetZ])
+  applyMotionWrapper(entry, obj)
   updateDropIndicator({ ...obj, positionMm: [nx, ny, dragTargetZ] })
   suppressSync = true
   emit('transform-change', {
@@ -809,6 +832,8 @@ onMounted(() => {
       round1(MathUtils.radToDeg(mesh.rotation.z)),
     ]
 
+    const entry = objectMeshes.get(id)
+    if (entry) applyMotionWrapper(entry, obj)
     updateDropIndicator({ ...obj, positionMm: pos, rotationDeg: rot, scaleMm: nextScale })
     suppressSync = true
     emit('transform-change', { id, positionMm: pos, rotationDeg: rot, scaleMm: nextScale })
