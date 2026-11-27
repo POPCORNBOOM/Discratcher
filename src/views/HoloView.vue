@@ -54,6 +54,7 @@
 
         <!-- Object list + selected object controls -->
         <template v-else-if="scene.objects.length">
+          <!-- Where on the disc this position is, and how it is solved. -->
           <section class="section">
             <div class="title row">
               <span class="grow">{{ t('holo.positions') }}</span>
@@ -65,15 +66,7 @@
             </div>
             <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
             <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
-            <div class="field">
-              <span class="small muted">{{ t('holo.calcMode') }}</span>
-              <UiSelect
-                :model-value="position.mode"
-                :label="t('holo.calcMode')"
-                :options="calcModeOptions"
-                @update:model-value="setMode($event as HoloPositionMode)"
-              />
-            </div>
+            <UiSegmented :model-value="position.mode" :options="calcModeOptions" @update:model-value="setMode($event as HoloPositionMode)" />
             <UiSlider
               v-if="position.mode === 'real'"
               :model-value="position.parallax"
@@ -86,21 +79,53 @@
               @update:model-value="setParallax"
             />
             <template v-else>
-              <div class="title row">
-                <span class="grow small muted">{{ t('holo.tiltRange') }}</span>
-                <a v-if="position.tiltDeg > 0" class="action-link" role="button" tabindex="0" @click="setTilt(0)" @keydown.enter="setTilt(0)">{{ t('holo.tiltAuto', { n: tiltNow.autoDeg }) }}</a>
-              </div>
               <UiSlider :model-value="tiltNow.deg" :label="t('holo.tiltRange')" :min="1" :max="MAX_TRANSFORM_TILT_DEG" :step="0.5" :format="(x) => t('holo.tiltRangeWords', { n: x })" @pointerdown="beginControlEdit" @update:model-value="setTilt" />
+              <a v-if="position.tiltDeg > 0" class="action-link end" role="button" tabindex="0" @click="setTilt(0)" @keydown.enter="setTilt(0)">{{ t('holo.tiltAuto', { n: tiltNow.autoDeg }) }}</a>
             </template>
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
             </div>
+            <UiAdvanced v-if="position.mode === 'real'">
+              <UiSlider
+                v-model="opts.chromaWeight"
+                :label="t('holo.chroma')"
+                :min="0"
+                :max="3"
+                :step="0.05"
+                :format="(x) => `${Math.round(x * 100)}%`"
+              />
+            </UiAdvanced>
+          </section>
+
+          <!-- The lamp and where you look from, shared by every position. -->
+          <section class="section">
+            <div class="title row">
+              <span class="grow">{{ t('holo.lighting') }}</span>
+              <a v-if="selectedId === LAMP_ID" class="action-link" role="button" tabindex="0" @click="setLampPreset('held')" @keydown.enter="setLampPreset('held')">{{ t('holo.reset') }}</a>
+              <a class="action-link" role="button" tabindex="0" @click="selectObject(selectedId === LAMP_ID ? null : LAMP_ID)" @keydown.enter="selectObject(selectedId === LAMP_ID ? null : LAMP_ID)">{{ selectedId === LAMP_ID ? t('holo.lampDone') : t('holo.lampMove') }}</a>
+            </div>
+            <template v-if="selectedId === LAMP_ID">
+            <UiSelect :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset($event as LampPreset)" />
+            <UiSlider :model-value="opts.lampMm[0]" :label="t('holo.lampSide')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampSideWords" @update:model-value="(v) => setLampAxis(0, v)" />
+            <UiSlider :model-value="opts.lampMm[1]" :label="t('holo.lampAway')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampAwayWords" @update:model-value="(v) => setLampAxis(1, v)" />
+            <UiSlider v-if="opts.lampPreset !== 'ceiling'" :model-value="opts.lampMm[2]" :label="t('holo.lampUp')" :min="LAMP_MIN_UP_MM" :max="LAMP_MAX_UP_MM" :step="5" :format="cm" @update:model-value="(v) => setLampAxis(2, v)" />
+            </template>
+            <UiAdvanced>
+              <UiSlider
+                v-model="opts.distanceMm"
+                :label="t('holo.distance')"
+                :min="150"
+                :max="600"
+                :step="10"
+                :format="mm"
+              />
+            </UiAdvanced>
           </section>
 
           <section class="section">
-            <div class="title">{{ t('holo.objects') }}</div>
-            <div class="obj-list" role="listbox" :aria-label="t('holo.objects')">
+            <div class="title">{{ t('holo.models') }}</div>
+            <div class="obj-list" role="listbox" :aria-label="t('holo.models')">
               <div
                 v-for="obj in positionObjects"
                 :key="obj.id"
@@ -180,15 +205,16 @@
                 </div>
                 <div v-for="(mv, i) in selectedObj.motion.vars" :key="i" class="var-row">
                   <input
+                    v-if="selectedObj.motion.preset === 'custom'"
                     type="text"
                     class="num-input mono"
                     spellcheck="false"
                     autocomplete="off"
                     :value="mv.name"
-                    :readonly="selectedObj.motion.preset !== 'custom'"
                     :aria-label="t('holo.motionVarName')"
                     @change="setMotionVarName(i, $event)"
                   />
+                  <span v-else class="var-name mono small">{{ mv.name }}</span>
                   <input
                     type="number"
                     class="num-input mono"
@@ -201,7 +227,7 @@
                   <UiButton v-if="selectedObj.motion.preset === 'custom'" icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('holo.delete')" :data-tooltip="t('holo.delete')" @click="removeMotionVar(i)" />
                 </div>
               </div>
-              <div class="field">
+              <div v-if="selectedObj.motion.preset === 'custom'" class="field">
                 <span class="small muted">{{ t('holo.motionMatrix') }}</span>
                 <div class="mat-grid">
                   <input
@@ -228,44 +254,7 @@
                 <div class="grow">{{ motionError }}</div>
               </div>
             </template>
-          </section>
-
-          <section class="section">
-            <div class="title row">
-              <span class="grow">{{ t('holo.lamp') }}</span>
-              <a v-if="selectedId === LAMP_ID" class="action-link" role="button" tabindex="0" @click="setLampPreset('held')" @keydown.enter="setLampPreset('held')">{{ t('holo.reset') }}</a>
-              <a class="action-link" role="button" tabindex="0" @click="selectObject(selectedId === LAMP_ID ? null : LAMP_ID)" @keydown.enter="selectObject(selectedId === LAMP_ID ? null : LAMP_ID)">{{ selectedId === LAMP_ID ? t('holo.lampDone') : t('holo.lampMove') }}</a>
-            </div>
-            <template v-if="selectedId === LAMP_ID">
-            <UiSelect :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset($event as LampPreset)" />
-            <UiSlider :model-value="opts.lampMm[0]" :label="t('holo.lampSide')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampSideWords" @update:model-value="(v) => setLampAxis(0, v)" />
-            <UiSlider :model-value="opts.lampMm[1]" :label="t('holo.lampAway')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampAwayWords" @update:model-value="(v) => setLampAxis(1, v)" />
-            <UiSlider v-if="opts.lampPreset !== 'ceiling'" :model-value="opts.lampMm[2]" :label="t('holo.lampUp')" :min="LAMP_MIN_UP_MM" :max="LAMP_MAX_UP_MM" :step="5" :format="cm" @update:model-value="(v) => setLampAxis(2, v)" />
-            </template>
-          </section>
-        </template>
-
-        <!-- Hardcore / advanced settings -->
-        <UiAdvanced>
-          <UiSlider
-            v-model="opts.distanceMm"
-            :label="t('holo.distance')"
-            :min="150"
-            :max="600"
-            :step="10"
-            :format="mm"
-          />
-          <UiSlider
-            v-model="opts.chromaWeight"
-            :label="t('holo.chroma')"
-            :min="0"
-            :max="3"
-            :step="0.05"
-            :format="(x) => `${Math.round(x * 100)}%`"
-          />
-          
-          <!-- Per-object style & exact numeric position / rotation / scale -->
-          <section v-if="selectedObj" class="section">
+            <UiAdvanced>
             <UiSlider
               :model-value="selectedObj.style.lines"
               :label="t('holo.lines')"
@@ -296,6 +285,30 @@
               @pointerdown="beginControlEdit"
               @update:model-value="(v) => setSelectedStyle('texture', v)"
             />
+              <template v-if="position.mode === 'transform' && selectedObj.motion.preset !== 'custom'">
+                <div class="field">
+                  <span class="small muted">{{ t('holo.motionMatrix') }}</span>
+                  <div class="mat-grid">
+                    <input
+                      v-for="(expr, idx) in motionDraft"
+                      :key="idx"
+                      type="text"
+                      class="mat-input mono"
+                      spellcheck="false"
+                      autocomplete="off"
+                      :value="expr"
+                      :readonly="selectedObj.motion.preset !== 'custom'"
+                      :aria-label="`${t('holo.motionMatrix')} ${Math.floor(idx / 4) + 1},${(idx % 4) + 1}`"
+                      :data-tooltip="expr"
+                      data-tooltip-overflow
+                      @input="onMotionCellInput(idx, $event)"
+                      @blur="commitMotionMatrix"
+                      @change="commitMotionMatrix"
+                      @keydown.enter.prevent="commitMotionMatrix"
+                    />
+                  </div>
+                </div>
+              </template>
             <div class="field">
               <span class="small muted">{{ t('holo.pos') }}</span>
               <div class="num-grid">
@@ -341,50 +354,51 @@
                 @change="setSelectedScaleInput"
               />
             </div>
+            </UiAdvanced>
           </section>
+        </template>
 
-          <!-- Collapsed Experimental Tools inside Advanced -->
-          <div class="exp-box">
-            <button type="button" class="exp-toggle small" :aria-expanded="expOpen" @click="expOpen = !expOpen">
-              <UiIcon :path="mdiChevronRight" :class="{ on: expOpen }" />{{ t('holo.expTools') }}
-            </button>
-            <div v-if="expOpen" class="exp-body">
-              <div class="exp-actions">
-                <UiButton :icon="mdiFire" :disabled="!ready" @click="burnSwatch">{{ t('holo.swatchBurn') }}</UiButton>
-                <UiButton :icon="mdiCubeOutline" :disabled="loadingTest3d || !!s.job" @click="loadTest3d">{{ t('holo.test3dLoad') }}</UiButton>
-              </div>
-
-              <section class="section">
-                <div class="title row">
-                  <span class="grow">{{ t('holo.views') }}</span>
-                  <UiButton variant="ghost" :icon="mdiPlus" :disabled="expViews.length >= MAX_VIEWS" @click="addExpView">{{ t('holo.addView') }}</UiButton>
-                </div>
-                <div class="field">
-                  <div class="field-head"><span>{{ t('holo.lightMode') }}</span></div>
-                  <UiSelect
-                    :model-value="expOpts.lightMode"
-                    :label="t('holo.lightMode')"
-                    :options="lightModeOptions"
-                    @update:model-value="expOpts.lightMode = $event as LightMode"
-                  />
-                </div>
-                <UiSlider v-model="opts.exposure" :label="t('holo.exposure')" :min="0.1" :max="1.5" :step="0.05" :format="(x) => x.toFixed(2)" />
-                <UiSlider v-if="expOpts.lightMode === 'far'" v-model="expOpts.lightDeg" :label="t('holo.light')" :min="-30" :max="30" :step="0.5" :format="deg" />
-
-                <div v-for="(v, i) in expViews" :key="v.id" class="exp-view">
-                  <div class="row">
-                    <span class="grow ellipsis small" :data-tooltip="v.imagePath" data-tooltip-overflow>{{ fileName(v.imagePath) }}</span>
-                    <UiButton icon-only variant="ghost" :icon="mdiClose" :aria-label="t('holo.remove')" @click="removeExpView(i)" />
-                  </div>
-                  <UiSlider v-if="expOpts.lightMode === 'lamp'" v-model="v.headXMm" :label="t('holo.headX')" :min="-150" :max="150" :step="5" :format="signedMm" />
-                  <UiSlider v-model="v.angleDeg" :label="t('holo.tilt')" :min="5" :max="60" :step="0.5" :format="deg" />
-                  <UiSlider v-if="expOpts.lightMode !== 'lamp'" v-model="v.dirDeg" :label="t('holo.azimuth')" :min="-180" :max="180" :step="1" :format="degInt" />
-                </div>
-                <UiButton v-if="expViews.length" variant="ghost" @click="clearExpViews">{{ t('holo.clearExp') }}</UiButton>
-              </section>
+        <!-- Experimental tools -->
+        <div class="exp-box">
+          <button type="button" class="exp-toggle small" :aria-expanded="expOpen" @click="expOpen = !expOpen">
+            <UiIcon :path="mdiChevronRight" :class="{ on: expOpen }" />{{ t('holo.expTools') }}
+          </button>
+          <div v-if="expOpen" class="exp-body">
+            <div class="exp-actions">
+              <UiButton :icon="mdiFire" :disabled="!ready" @click="burnSwatch">{{ t('holo.swatchBurn') }}</UiButton>
+              <UiButton :icon="mdiCubeOutline" :disabled="loadingTest3d || !!s.job" @click="loadTest3d">{{ t('holo.test3dLoad') }}</UiButton>
             </div>
+
+            <section class="section">
+              <div class="title row">
+                <span class="grow">{{ t('holo.views') }}</span>
+                <UiButton variant="ghost" :icon="mdiPlus" :disabled="expViews.length >= MAX_VIEWS" @click="addExpView">{{ t('holo.addView') }}</UiButton>
+              </div>
+              <div class="field">
+                <div class="field-head"><span>{{ t('holo.lightMode') }}</span></div>
+                <UiSelect
+                  :model-value="expOpts.lightMode"
+                  :label="t('holo.lightMode')"
+                  :options="lightModeOptions"
+                  @update:model-value="expOpts.lightMode = $event as LightMode"
+                />
+              </div>
+              <UiSlider v-model="opts.exposure" :label="t('holo.exposure')" :min="0.1" :max="1.5" :step="0.05" :format="(x) => x.toFixed(2)" />
+              <UiSlider v-if="expOpts.lightMode === 'far'" v-model="expOpts.lightDeg" :label="t('holo.light')" :min="-30" :max="30" :step="0.5" :format="deg" />
+
+              <div v-for="(v, i) in expViews" :key="v.id" class="exp-view">
+                <div class="row">
+                  <span class="grow ellipsis small" :data-tooltip="v.imagePath" data-tooltip-overflow>{{ fileName(v.imagePath) }}</span>
+                  <UiButton icon-only variant="ghost" :icon="mdiClose" :aria-label="t('holo.remove')" @click="removeExpView(i)" />
+                </div>
+                <UiSlider v-if="expOpts.lightMode === 'lamp'" v-model="v.headXMm" :label="t('holo.headX')" :min="-150" :max="150" :step="5" :format="signedMm" />
+                <UiSlider v-model="v.angleDeg" :label="t('holo.tilt')" :min="5" :max="60" :step="0.5" :format="deg" />
+                <UiSlider v-if="expOpts.lightMode !== 'lamp'" v-model="v.dirDeg" :label="t('holo.azimuth')" :min="-180" :max="180" :step="1" :format="degInt" />
+              </div>
+              <UiButton v-if="expViews.length" variant="ghost" @click="clearExpViews">{{ t('holo.clearExp') }}</UiButton>
+            </section>
           </div>
-        </UiAdvanced>
+        </div>
       </div>
 
       <div v-if="!isDvd" class="notice warn">
@@ -1722,6 +1736,8 @@ onBeforeUnmount(() => {
 .num-input { width: 100%; min-width: 0; height: var(--oc-size-md); padding: 0 var(--oc-space-xs); border: 0; border-radius: var(--oc-radius-control); background: var(--oc-bg-input); appearance: textfield; -moz-appearance: textfield; }
 .num-input::-webkit-inner-spin-button, .num-input::-webkit-outer-spin-button { appearance: none; -webkit-appearance: none; margin: 0; }
 .var-row { display: flex; align-items: center; gap: var(--oc-space-2xs); }
+.var-name { flex: 1; min-width: 0; color: var(--oc-fg-muted); }
+.action-link.end { align-self: flex-end; }
 .mat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--oc-space-2xs); }
 .mat-input { width: 100%; min-width: 0; height: var(--oc-size-sm); padding: 0 var(--oc-space-2xs); border: 0; border-radius: 4px; background: var(--oc-bg-input); color: var(--oc-fg-default); font-size: var(--oc-text-xs); text-align: center; }
 .mat-input[readonly] { background: var(--oc-bg-base); color: var(--oc-fg-muted); text-overflow: ellipsis; }

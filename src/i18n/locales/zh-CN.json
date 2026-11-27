@@ -220,7 +220,6 @@
   "holo.positions": "观察位置",
   "holo.addPosition": "添加观察位置",
   "holo.removePosition": "删除这个位置",
-  "holo.calcMode": "计算模式",
   "holo.calcModeReal": "真实视差",
   "holo.calcModeTransform": "变换动画",
   "holo.motionPreset": "变换预设",
@@ -241,7 +240,6 @@
   "holo.phi": "转角",
   "holo.overlap": "有的位置占了同一块盘面，改一改转角或挪开模型",
   "holo.previewTurn": "拖动转盘，移动指针轻轻倾斜",
-  "holo.objects": "场景",
   "holo.openScene": "打开场景",
   "holo.opened": "已打开 {name}",
   "holo.pos": "位置 (mm)",
@@ -399,5 +397,7 @@
   "holo.motionTiltX": "前后翻",
   "holo.motionVars": "变量",
   "holo.motionAddVar": "添加变量",
-  "holo.motionVarName": "变量名"
+  "holo.motionVarName": "变量名",
+  "holo.models": "模型",
+  "holo.lighting": "光照"
 }

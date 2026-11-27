@@ -220,7 +220,6 @@
   "holo.positions": "Viewing positions",
   "holo.addPosition": "Add a viewing position",
   "holo.removePosition": "Delete this position",
-  "holo.calcMode": "Calculation mode",
   "holo.calcModeReal": "Real parallax",
   "holo.calcModeTransform": "Transform animation",
   "holo.motionPreset": "Transform preset",
@@ -241,7 +240,6 @@
   "holo.phi": "Turned by",
   "holo.overlap": "Some positions want the same part of the disc: change their angle or move a model",
   "holo.previewTurn": "Drag to turn the disc, move across it to tilt",
-  "holo.objects": "Scene",
   "holo.openScene": "Open scene",
   "holo.opened": "Opened {name}",
   "holo.pos": "Position (mm)",
@@ -399,5 +397,7 @@
   "holo.motionTiltX": "Flip forward",
   "holo.motionVars": "Variables",
   "holo.motionAddVar": "Add variable",
-  "holo.motionVarName": "Variable name"
+  "holo.motionVarName": "Variable name",
+  "holo.models": "Models",
+  "holo.lighting": "Lighting"
 }
