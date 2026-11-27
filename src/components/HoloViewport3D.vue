@@ -36,6 +36,7 @@ import {
   MeshStandardMaterial,
   PCFShadowMap,
   PerspectiveCamera,
+  PlaneGeometry,
   Plane,
   Raycaster,
   RingGeometry,
@@ -269,18 +270,30 @@ const hoveredMarker = ref<string | null>(null)
 function buildMarkers() {
   if (!scene) return
   markers?.removeFromParent()
-  for (const m of markers?.children ?? []) {
-    ;(m as Mesh).geometry.dispose()
-    ;((m as Mesh).material as MeshBasicMaterial).dispose()
-  }
+  markers?.traverse((o) => {
+    if (o instanceof Line || o instanceof Mesh) {
+      o.geometry.dispose()
+      ;(o.material as LineBasicMaterial | MeshBasicMaterial).dispose()
+    }
+  })
   markers = new Group()
   const r = DISC_PHYSICAL_OUTER_MM
   for (const p of props.positions) {
-    const geo = new BufferGeometry().setFromPoints([new Vector3(-4.5, -r - 6, 0.08), new Vector3(4.5, -r - 6, 0.08), new Vector3(0, -r - 1.5, 0.08)])
-    const m = new Mesh(geo, new MeshBasicMaterial({ transparent: true, side: DoubleSide, depthWrite: false }))
-    m.rotation.z = -MathUtils.degToRad(p.phiDeg)
-    m.userData.positionId = p.id
-    markers.add(m)
+    const arrow = new Group()
+    arrow.rotation.z = -MathUtils.degToRad(p.phiDeg)
+    arrow.userData.positionId = p.id
+    // What is drawn: a thin chevron.
+    const line = new Line(
+      new BufferGeometry().setFromPoints([new Vector3(-3.5, -r - 4.5, 0.08), new Vector3(0, -r - 1.5, 0.08), new Vector3(3.5, -r - 4.5, 0.08)]),
+      new LineBasicMaterial({ transparent: true }),
+    )
+    // What is clicked: an unseen patch well around it.
+    const hit = new Mesh(new PlaneGeometry(14, 12), new MeshBasicMaterial({ colorWrite: false, depthWrite: false }))
+    hit.position.set(0, -r - 3.5, 0.08)
+    hit.userData.positionId = p.id
+    line.userData.positionId = p.id
+    arrow.add(line, hit)
+    markers.add(arrow)
   }
   scene.add(markers)
   paintMarkers()
@@ -290,7 +303,7 @@ function buildMarkers() {
 function paintMarkers() {
   for (const m of markers?.children ?? []) {
     const id = m.userData.positionId as string
-    const mat = (m as Mesh).material as MeshBasicMaterial
+    const mat = (m.children[0] as Line).material as LineBasicMaterial
     const here = id === props.positionId
     const hot = id === hoveredMarker.value
     mat.color.setHex(here ? 0xae79fb : hot ? 0xd0d2dc : 0x77777f)
@@ -302,7 +315,7 @@ function markerAt(e: PointerEvent): string | null {
   if (!markers || !camera) return null
   updatePointerNdc(e)
   raycaster.setFromCamera(pointerNdc, camera)
-  return (raycaster.intersectObjects(markers.children, false)[0]?.object.userData.positionId as string | undefined) ?? null
+  return (raycaster.intersectObjects(markers.children, true)[0]?.object.userData.positionId as string | undefined) ?? null
 }
 
 function updateZones() {
