@@ -199,8 +199,6 @@
   "holo.toLeft": "左 {d}",
   "holo.awayFromYou": "远 {d}",
   "holo.towardsYou": "近 {d}",
-  "holo.lampMove": "调整",
-  "holo.lampDone": "完成",
   "holo.lampPosition": "灯位",
   "holo.legendDepth": "立体",
   "holo.legendGood": "优",
