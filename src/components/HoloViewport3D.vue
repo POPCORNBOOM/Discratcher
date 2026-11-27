@@ -36,7 +36,6 @@ import {
   MeshStandardMaterial,
   PCFShadowMap,
   PerspectiveCamera,
-  PlaneGeometry,
   Plane,
   Raycaster,
   RingGeometry,
@@ -271,9 +270,9 @@ function buildMarkers() {
   if (!scene) return
   markers?.removeFromParent()
   markers?.traverse((o) => {
-    if (o instanceof Line || o instanceof Mesh) {
+    if (o instanceof Line) {
       o.geometry.dispose()
-      ;(o.material as LineBasicMaterial | MeshBasicMaterial).dispose()
+      ;(o.material as LineBasicMaterial).dispose()
     }
   })
   markers = new Group()
@@ -282,17 +281,11 @@ function buildMarkers() {
     const arrow = new Group()
     arrow.rotation.z = -MathUtils.degToRad(p.phiDeg)
     arrow.userData.positionId = p.id
-    // What is drawn: a thin chevron.
     const line = new Line(
       new BufferGeometry().setFromPoints([new Vector3(-3.5, -r - 4.5, 0.08), new Vector3(0, -r - 1.5, 0.08), new Vector3(3.5, -r - 4.5, 0.08)]),
       new LineBasicMaterial({ transparent: true }),
     )
-    // What is clicked: an unseen patch well around it.
-    const hit = new Mesh(new PlaneGeometry(14, 12), new MeshBasicMaterial({ colorWrite: false, depthWrite: false }))
-    hit.position.set(0, -r - 3.5, 0.08)
-    hit.userData.positionId = p.id
-    line.userData.positionId = p.id
-    arrow.add(line, hit)
+    arrow.add(line)
     markers.add(arrow)
   }
   scene.add(markers)
@@ -311,11 +304,29 @@ function paintMarkers() {
   }
 }
 
+/** How near an arrow the pointer must be to take it, CSS pixels, whatever the view. */
+const MARKER_REACH_PX = 16
+const markerAt_ = new Vector3()
+
+/** The arrow nearest the pointer on screen, if within reach. */
 function markerAt(e: PointerEvent): string | null {
-  if (!markers || !camera) return null
-  updatePointerNdc(e)
-  raycaster.setFromCamera(pointerNdc, camera)
-  return (raycaster.intersectObjects(markers.children, true)[0]?.object.userData.positionId as string | undefined) ?? null
+  const el = canvas.value
+  if (!markers || !camera || !el) return null
+  const rect = el.getBoundingClientRect()
+  let best: string | null = null
+  let bestD = MARKER_REACH_PX
+  for (const arrow of markers.children) {
+    markerAt_.set(0, -DISC_PHYSICAL_OUTER_MM - 3, 0.08).applyMatrix4(arrow.matrixWorld).project(camera)
+    if (markerAt_.z > 1) continue
+    const x = rect.left + ((markerAt_.x + 1) / 2) * rect.width
+    const y = rect.top + ((1 - markerAt_.y) / 2) * rect.height
+    const d = Math.hypot(e.clientX - x, e.clientY - y)
+    if (d < bestD) {
+      bestD = d
+      best = arrow.userData.positionId as string
+    }
+  }
+  return best
 }
 
 function updateZones() {
