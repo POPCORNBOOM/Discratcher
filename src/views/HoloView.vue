@@ -204,7 +204,7 @@
             </template>
           </section>
 
-          <section class="section">
+          <section v-if="position.mode === 'real'" class="section">
             <div class="title row">
               <span class="grow">{{ t('holo.lamp') }}</span>
               <a v-if="selectedId === LAMP_ID" class="action-link" role="button" tabindex="0" @click="setLampPreset('held')" @keydown.enter="setLampPreset('held')">{{ t('holo.reset') }}</a>
@@ -542,7 +542,7 @@
 
       <!-- Preview: drag round the disc to turn it, move across it to tilt it -->
       <div v-show="tab === 'preview'" class="stage-body">
-        <HoloPreview v-if="previewVisited" v-show="!expViews.length" v-model:turn="lookTurn" :active="tab === 'preview' && !expViews.length && hasPreviewSource" :weights="weights" :tables="tables" :inner-radius-mm="radii.inner" :outer-radius-mm="radii.outer" :lamp-mm="opts.lampMm" :distance-mm="opts.distanceMm" />
+        <HoloPreview v-if="previewVisited" v-show="!expViews.length" v-model:turn="lookTurn" v-model:preview-t="previewT" :mode="position.mode" :active="tab === 'preview' && !expViews.length && hasPreviewSource" :weights="weights" :tables="tables" :inner-radius-mm="radii.inner" :outer-radius-mm="radii.outer" :lamp-mm="opts.lampMm" :distance-mm="opts.distanceMm" />
         <div v-if="expViews.length" class="preview-stage" :class="{ dragging: previewDragging }" @pointerdown="onPreviewPointerDown" @pointermove="onPreviewPointerMove" @pointerup="onPreviewPointerUp" @pointercancel="onPreviewPointerUp">
           <canvas ref="previewCanvas" class="preview-disc" />
         </div>
@@ -605,6 +605,7 @@ import {
   LAMP_MAX_UP_MM,
   LAMP_MIN_UP_MM,
   LAMP_REACH_MM,
+  transformTiltDeg,
   type Vec3,
 } from '../holo/constants'
 import {
@@ -823,7 +824,11 @@ const signedMm = (x: number) => {
 }
 const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path
 const previewReadout = computed(() => {
-  if (!expViews.value.length) return degInt(lookTurn.value)
+  if (!expViews.value.length) {
+    return position.value.mode === 'transform'
+      ? `${degInt(lookTurn.value)}  ${deg(transformTiltDeg(previewT.value))}`
+      : degInt(lookTurn.value)
+  }
   return expOpts.lightMode === 'lamp' ? `${signedMm(lookHeadX.value)}  ${deg(lookTilt.value)}` : `${deg(lookTilt.value)}  ${degInt(lookDir.value)}`
 })
 
@@ -926,7 +931,9 @@ function selectObject(id: string | null) {
 
 function goToPosition(id: string, keepSelection = false) {
   positionId.value = id
-  if (!keepSelection && selectedId.value !== LAMP_ID) selectedId.value = positionObjects.value[0]?.id ?? null
+  if ((!keepSelection && selectedId.value !== LAMP_ID) || (position.value.mode === 'transform' && selectedId.value === LAMP_ID)) {
+    selectedId.value = positionObjects.value[0]?.id ?? null
+  }
   lookTurn.value = position.value.phiDeg
 }
 
@@ -959,6 +966,9 @@ function setMode(mode: HoloPositionMode) {
   if (position.value.mode === mode) return
   pushHistory()
   position.value.mode = mode
+  if (mode === 'transform' && selectedId.value === LAMP_ID) {
+    selectedId.value = positionObjects.value[0]?.id ?? null
+  }
 }
 
 function setParallax(v: number) {
@@ -1475,6 +1485,10 @@ function burnDesign() {
   const exposure = opts.exposure
   const grid = opts.grid
 
+  const guidePos = positionObjects.value.some((o) => o.visible)
+    ? position.value
+    : sceneSnapshot.positions.find((q) => sceneSnapshot.objects.some((o) => o.visible && o.positionId === q.id)) ?? position.value
+
   p.openBurn({
     title: t('holo.burnTitle'),
     note: usingExp
@@ -1482,7 +1496,7 @@ function burnDesign() {
       : t('holo.burnNoteModels', { n: visibleObjects.value.length }),
     fileName: 'holo.iso',
     prepareLabel: t('holo.compose'),
-    viewingGuide: true,
+    viewingGuide: usingExp ? 'real' : guidePos.mode,
     prepare: async (path: string, ctx: StepContext) => {
       if (usingExp) {
         await call('holo_build_design_iso', { preset, input: { views: expSnapshot, chromaWeight, exposure, grid }, outputIsoPath: path })

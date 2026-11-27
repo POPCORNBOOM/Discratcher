@@ -2,9 +2,9 @@
   <figure class="guide" :aria-label="t('holo.guideTitle')">
     <figcaption class="guide-head">
       <span class="title">{{ t('holo.guideTitle') }}</span>
-      <span class="small muted">{{ t('holo.guideSub', { right: LAMP_RIGHT_CM, up: LAMP_UP_CM }) }}</span>
+      <span class="small muted">{{ subText }}</span>
     </figcaption>
-    <div ref="box" class="stage" role="img" :aria-label="t('holo.guideAlt', { right: LAMP_RIGHT_CM, up: LAMP_UP_CM })">
+    <div ref="box" class="stage" role="img" :aria-label="altText">
       <span
         v-for="l in labels"
         :key="l.key"
@@ -17,7 +17,9 @@
 </template>
 
 <script setup lang="ts">
-// The viewing set-up in 3D: the disc stands facing you, the phone light sits beside your head.
+// The viewing set-up in 3D:
+// - Real mode: the disc stands facing you, the phone light sits beside your head, turn the disc.
+// - Transform mode: phone flashlight right beside the camera/eye (40 cm), tilt disc left-right ~6°–22°.
 // Units are centimetres; x right, y up, z from the disc toward you.
 import {
   BufferGeometry,
@@ -43,9 +45,32 @@ import {
   ConeGeometry,
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { LAMP_RIGHT_CM, LAMP_UP_CM } from '../holo/constants'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import {
+  LAMP_RIGHT_CM,
+  LAMP_UP_CM,
+  TRANSFORM_LAMP_UP_CM,
+  TRANSFORM_TILT_END_DEG,
+  TRANSFORM_TILT_START_DEG,
+} from '../holo/constants'
+import type { HoloPositionMode } from '../holo/scene'
 import { t } from '../i18n'
+
+const props = withDefaults(defineProps<{ mode?: HoloPositionMode }>(), { mode: 'real' })
+const isTransform = computed(() => props.mode === 'transform')
+
+const GUIDE_TILT_FROM = Math.floor(TRANSFORM_TILT_START_DEG)
+const GUIDE_TILT_TO = Math.floor(TRANSFORM_TILT_END_DEG)
+const subText = computed(() =>
+  isTransform.value
+    ? t('holo.guideTransformSub', { from: GUIDE_TILT_FROM, to: GUIDE_TILT_TO, up: TRANSFORM_LAMP_UP_CM })
+    : t('holo.guideSub', { right: LAMP_RIGHT_CM, up: LAMP_UP_CM }),
+)
+const altText = computed(() =>
+  isTransform.value
+    ? t('holo.guideTransformAlt', { from: GUIDE_TILT_FROM, to: GUIDE_TILT_TO, up: TRANSFORM_LAMP_UP_CM })
+    : t('holo.guideAlt', { right: LAMP_RIGHT_CM, up: LAMP_UP_CM }),
+)
 
 // --oc-* tokens (WebGL needs numbers).
 const ACCENT = 0x9045f9
@@ -61,17 +86,26 @@ const HOLE_R = 0.75
 const HEAD_Z = 35
 const HEAD_R = 8
 const LAMP = new Vector3(LAMP_RIGHT_CM, 0, LAMP_UP_CM)
+const TRANSFORM_PHONE = new Vector3(0, 0, TRANSFORM_LAMP_UP_CM)
 const FLOOR = -13
 
 const box = ref<HTMLDivElement>()
 type Label = { key: string; text: string; kind: string; at: Vector3; x: number; y: number; shown: boolean }
-const labels = reactive<Label[]>([
-  { key: 'disc', text: t('holo.guideDisc'), kind: 'strong', at: new Vector3(0, DISC_R + 4, 0), x: 0, y: 0, shown: false },
-  { key: 'eye', text: t('holo.guideEye'), kind: 'strong', at: new Vector3(0, HEAD_R + 3, HEAD_Z), x: 0, y: 0, shown: false },
-  { key: 'lamp', text: t('holo.guideLamp'), kind: 'strong', at: new Vector3(LAMP.x + 8, -2, LAMP.z + 3), x: 0, y: 0, shown: false },
-  { key: 'right', text: t('holo.guideRight', { cm: LAMP_RIGHT_CM }), kind: 'dim', at: new Vector3(LAMP.x / 2, FLOOR - 2.2, LAMP.z + 2), x: 0, y: 0, shown: false },
-  { key: 'away', text: `${LAMP_UP_CM} cm`, kind: 'dim', at: new Vector3(LAMP.x + 5, FLOOR, LAMP.z * 0.12), x: 0, y: 0, shown: false },
-])
+const labels = reactive<Label[]>(
+  props.mode === 'transform'
+    ? [
+        { key: 'disc', text: t('holo.guideTiltDisc', { from: GUIDE_TILT_FROM, to: GUIDE_TILT_TO }), kind: 'strong', at: new Vector3(0, DISC_R + 4.5, 0), x: 0, y: 0, shown: false },
+        { key: 'phone', text: t('holo.guidePhoneCam'), kind: 'strong', at: new Vector3(0, 8, TRANSFORM_PHONE.z), x: 0, y: 0, shown: false },
+        { key: 'away', text: `${TRANSFORM_LAMP_UP_CM} cm`, kind: 'dim', at: new Vector3(5, FLOOR, TRANSFORM_PHONE.z * 0.48), x: 0, y: 0, shown: false },
+      ]
+    : [
+        { key: 'disc', text: t('holo.guideDisc'), kind: 'strong', at: new Vector3(0, DISC_R + 4, 0), x: 0, y: 0, shown: false },
+        { key: 'eye', text: t('holo.guideEye'), kind: 'strong', at: new Vector3(0, HEAD_R + 3, HEAD_Z), x: 0, y: 0, shown: false },
+        { key: 'lamp', text: t('holo.guideLamp'), kind: 'strong', at: new Vector3(LAMP.x + 8, -2, LAMP.z + 3), x: 0, y: 0, shown: false },
+        { key: 'right', text: t('holo.guideRight', { cm: LAMP_RIGHT_CM }), kind: 'dim', at: new Vector3(LAMP.x / 2, FLOOR - 2.2, LAMP.z + 2), x: 0, y: 0, shown: false },
+        { key: 'away', text: `${LAMP_UP_CM} cm`, kind: 'dim', at: new Vector3(LAMP.x + 5, FLOOR, LAMP.z * 0.12), x: 0, y: 0, shown: false },
+      ],
+)
 
 let renderer: WebGLRenderer | null = null
 let controls: OrbitControls | null = null
@@ -176,6 +210,78 @@ function build(scene: Scene): { spin: Group } {
   return { spin }
 }
 
+function buildTransform(scene: Scene): { pivot: Group } {
+  // Disc pivoting left-right about Y over +6.5°→+22.5° (matching solver & preview).
+  const pivot = new Group()
+  const face = new Mesh(keep(new RingGeometry(HOLE_R * 2, DISC_R, 96)), keep(new MeshBasicMaterial({ color: RAISED, side: DoubleSide })))
+  pivot.add(face)
+  const sheen = new Mesh(
+    keep(new RingGeometry(HOLE_R * 2.6, DISC_R * 0.97, 64, 1, -0.35, 0.7)),
+    keep(new MeshBasicMaterial({ color: FG_ACCENT, transparent: true, opacity: 0.18, side: DoubleSide })),
+  )
+  sheen.position.z = 0.02
+  pivot.add(sheen)
+  const mark = new Mesh(keep(new CircleGeometry(0.45, 16)), keep(new MeshBasicMaterial({ color: FG_ACCENT })))
+  mark.position.set(0, DISC_R * 0.72, 0.04)
+  pivot.add(mark)
+  pivot.add(arc(DISC_R, 0, Math.PI * 2, 0.05, ACCENT))
+  pivot.add(arc(HOLE_R * 2, 0, Math.PI * 2, 0.05, SUBTLE))
+  scene.add(pivot)
+
+  // Horizontal tilt arrow in XZ plane above the disc showing left-right tilt.
+  const arcR = DISC_R + 1.5
+  const arcY = DISC_R + 1.1
+  const a0 = -0.32
+  const a1 = 0.55
+  const tiltPts: Vector3[] = []
+  for (let i = 0; i <= 32; i++) {
+    const a = a0 + ((a1 - a0) * i) / 32
+    tiltPts.push(new Vector3(arcR * Math.sin(a), arcY, arcR * Math.cos(a) - arcR))
+  }
+  scene.add(line(tiltPts, FG_ACCENT))
+  for (const [endA, dir] of [[a0, -1], [a1, 1]] as const) {
+    const cone = new Mesh(keep(new ConeGeometry(0.45, 1.2, 12)), keep(new MeshBasicMaterial({ color: FG_ACCENT })))
+    cone.position.set(arcR * Math.sin(endA), arcY, arcR * Math.cos(endA) - arcR)
+    const tx = Math.cos(endA) * dir
+    const tz = -Math.sin(endA) * dir
+    cone.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), new Vector3(tx, 0, tz).normalize())
+    scene.add(cone)
+  }
+
+  // Phone right in front at 40 cm, torch right next to camera/eye.
+  const phone = new Mesh(keep(new BoxGeometry(3.8, 7.6, 0.6)), keep(new MeshBasicMaterial({ color: SURFACE })))
+  phone.position.copy(TRANSFORM_PHONE)
+  scene.add(phone)
+  scene.add(
+    line(
+      [
+        new Vector3(-1.9, -3.8, -0.31),
+        new Vector3(1.9, -3.8, -0.31),
+        new Vector3(1.9, 3.8, -0.31),
+        new Vector3(-1.9, 3.8, -0.31),
+        new Vector3(-1.9, -3.8, -0.31),
+      ].map((p) => p.add(TRANSFORM_PHONE)),
+      FG,
+    ),
+  )
+  const cam = new Mesh(keep(new CircleGeometry(0.55, 16)), keep(new MeshBasicMaterial({ color: ACCENT, side: DoubleSide })))
+  cam.position.set(TRANSFORM_PHONE.x - 0.7, TRANSFORM_PHONE.y + 2.4, TRANSFORM_PHONE.z - 0.32)
+  scene.add(cam)
+  const torch = new Mesh(keep(new CircleGeometry(0.55, 16)), keep(new MeshBasicMaterial({ color: FG_ACCENT, side: DoubleSide })))
+  torch.position.set(TRANSFORM_PHONE.x + 0.7, TRANSFORM_PHONE.y + 2.4, TRANSFORM_PHONE.z - 0.32)
+  scene.add(torch)
+
+  // Coaxial sight and light rays.
+  scene.add(line([cam.position.clone(), new Vector3(0, 0, 0.1)], MUTED, true))
+  scene.add(line([torch.position.clone(), new Vector3(0, 0, 0.1)], FG_ACCENT, true))
+
+  // Distance on the floor.
+  scene.add(line([new Vector3(0, FLOOR, 0), new Vector3(0, FLOOR, TRANSFORM_PHONE.z)], SUBTLE))
+  scene.add(line([new Vector3(0, FLOOR, 0), new Vector3(0, -DISC_R, 0)], SUBTLE, true, 0.6))
+  scene.add(line([new Vector3(0, FLOOR, TRANSFORM_PHONE.z), new Vector3(0, -3.8, TRANSFORM_PHONE.z)], SUBTLE, true, 0.6))
+  return { pivot }
+}
+
 onMounted(() => {
   const el = box.value
   if (!el) return
@@ -189,15 +295,15 @@ onMounted(() => {
   el.prepend(renderer.domElement)
   const scene = new Scene()
   const camera = new PerspectiveCamera(25, 2, 1, 500)
-  // Behind you and up to the right: the disc ahead, the light beside your head.
+  // Behind you and up to the right: the disc ahead, the phone light ahead or beside your head.
   camera.position.set(52, 44, 112)
-  const target = new Vector3(5, -5, 19)
+  const target = new Vector3(props.mode === 'transform' ? 0 : 5, -5, 19)
   scene.add(new AmbientLight(0xffffff, 1.6))
   const sun = new DirectionalLight(0xffffff, 1.8)
   sun.position.set(40, 60, 50)
   scene.add(sun)
   camera.lookAt(target)
-  const { spin } = build(scene)
+  const anim = props.mode === 'transform' ? { pivot: buildTransform(scene).pivot, spin: null } : { pivot: null, spin: build(scene).spin }
 
   controls = new OrbitControls(camera, renderer.domElement)
   controls.target.copy(target)
@@ -224,7 +330,13 @@ onMounted(() => {
   const loop = (now: number) => {
     frame = requestAnimationFrame(loop)
     if (!renderer || document.hidden) return
-    spin.rotation.z = -now / 2600
+    if (anim.pivot) {
+      const s = 0.5 - 0.5 * Math.cos(now / 600)
+      const deg = TRANSFORM_TILT_START_DEG + (TRANSFORM_TILT_END_DEG - TRANSFORM_TILT_START_DEG) * s
+      anim.pivot.rotation.y = (deg * Math.PI) / 180
+    } else if (anim.spin) {
+      anim.spin.rotation.z = -now / 2600
+    }
     controls?.update()
     renderer.render(scene, camera)
     const w = el.clientWidth

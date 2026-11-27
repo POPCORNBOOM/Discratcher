@@ -18,8 +18,17 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
-/// Solved eye positions across the sweep.
+/// Solved eye positions across the sweep (real parallax mode).
 pub const VIEWS: usize = 24;
+/// Solved disc-tilt poses across the sweep (transform animation mode).
+pub const TRANSFORM_VIEWS: usize = 40;
+/// One-sided disc tilt sweep for transform animation (Winner A), degrees.
+pub const TRANSFORM_TILT_START_DEG: f64 = 6.5;
+pub const TRANSFORM_TILT_END_DEG: f64 = 22.5;
+/// Lamp next to the eye in the viewer's frame for transform animation, mm.
+pub const TRANSFORM_LAMP_MM: [f64; 3] = [0.0, 0.0, 400.0];
+/// Fixed target exposure for transform animation (Winner A).
+pub const TRANSFORM_EXPOSURE: f64 = 0.6;
 /// Half the width of the head's sweep, mm.
 pub const HEAD_HALF_SPAN_MM: f64 = 40.0;
 /// The lamp, in the viewer's frame: right, up, towards the viewer.
@@ -72,6 +81,81 @@ pub fn tilted_eye_and_lamp(opts: &Options, lamp_mm: V3, tilt: f64, angle: f64) -
     let (s, c) = tilt.sin_cos();
     let roll = |p: V3| [p[0] * c - p[2] * s, p[1], p[0] * s + p[2] * c];
     (turn(roll([0.0, 0.0, opts.distance_mm]), angle), turn(roll(model3d::scene_to_disc(lamp_mm)), angle))
+}
+
+/// Number of solver views for a position's calculation mode.
+pub fn views_for_mode(mode: model3d::Mode) -> usize {
+    match mode {
+        model3d::Mode::Real => VIEWS,
+        model3d::Mode::Transform => TRANSFORM_VIEWS,
+    }
+}
+
+/// Disc tilt angle in degrees for transform animation parameter `t` in `[0, 1]`.
+pub fn transform_tilt_deg(t: f64) -> f64 {
+    TRANSFORM_TILT_START_DEG + (TRANSFORM_TILT_END_DEG - TRANSFORM_TILT_START_DEG) * t
+}
+
+/// Eye and lamp in the disc frame for a transform-mode position at animation parameter `t` in `[0, 1]`.
+pub fn transform_pose(opts: &Options, t: f64, angle: f64) -> (V3, V3) {
+    tilted_eye_and_lamp(opts, TRANSFORM_LAMP_MM, transform_tilt_deg(t).to_radians(), angle)
+}
+
+fn transform_poses(opts: &Options, angle: f64) -> Vec<(V3, V3)> {
+    let denom = (TRANSFORM_VIEWS - 1).max(1) as f64;
+    (0..TRANSFORM_VIEWS).map(|i| transform_pose(opts, i as f64 / denom, angle)).collect()
+}
+
+fn transform_options(opts: &Options) -> Options {
+    Options { chroma_weight: 0.0, wide: 0.0, exposure: TRANSFORM_EXPOSURE, ..opts.clone() }
+}
+
+/// Pick the codebook option (or plain data last) with the lowest peak rendered luminance over
+/// `poses` across `pos`'s kept crop sectors.
+fn transform_background(pos: &Position, poses: &[(V3, V3)], resp: &Responses, preset: &DiscGeometryPreset) -> (usize, f64) {
+    let k = resp.options;
+    let plain = k - 1;
+    let phi_rad = pos.phi_deg.to_radians();
+    let crop_rad = pos.crop_deg.min(90.0).to_radians();
+    let luma = |p: [f32; 3]| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
+
+    const NR: usize = 5;
+    const NA: usize = 7;
+    let mut pts = Vec::with_capacity(NR * NA * 2);
+    for ir in 0..NR {
+        let r = preset.inner_radius_mm + (preset.outer_radius_mm - preset.inner_radius_mm) * (ir as f64 + 0.5) / NR as f64;
+        for ia in 0..NA {
+            let off = -crop_rad + 2.0 * crop_rad * ia as f64 / (NA - 1) as f64;
+            let (so, co) = off.sin_cos();
+            pts.push(turn([r * so, -r * co, 0.0], phi_rad));
+            pts.push(turn([r * so, r * co, 0.0], phi_rad));
+        }
+    }
+
+    let mut max_y = vec![0.0f64; k];
+    for &(eye, lamp) in poses {
+        let sc = scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() };
+        for &p in &pts {
+            let (gt, gr) = scene::g_at(&sc, p[0], p[1]);
+            let plain_y = luma(resp.at(plain, gt, gr));
+            for j in 0..k {
+                let y = (1.0 - PLAIN_LEAK) * luma(resp.at(j, gt, gr)) + PLAIN_LEAK * plain_y;
+                if y > max_y[j] {
+                    max_y[j] = y;
+                }
+            }
+        }
+    }
+
+    let mut best = 0usize;
+    let mut best_y = f64::INFINITY;
+    for (j, &y) in max_y.iter().enumerate() {
+        if y < best_y {
+            best_y = y;
+            best = j;
+        }
+    }
+    (best, best_y)
 }
 
 fn place_normalized_with(norm: &Mesh, obj: &SceneObject, transform: Option<&[f64; 16]>, angle: f64, thickness_mm: f64) -> Mesh {
@@ -165,7 +249,7 @@ pub struct Solution {
 }
 
 fn position_targets(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, preset: &DiscGeometryPreset) -> Result<Vec<Vec<f32>>, String> {
-    position_targets_n(pos, objects, lamp_mm, opts, preset, VIEWS)
+    position_targets_n(pos, objects, lamp_mm, opts, preset, views_for_mode(pos.mode))
 }
 
 fn position_targets_n(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, preset: &DiscGeometryPreset, views: usize) -> Result<Vec<Vec<f32>>, String> {
@@ -192,24 +276,21 @@ fn position_targets_n(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opt
                 .map(|e| ink::draw(&mesh, *e, angle, n, preset.inner_radius_mm, preset.outer_radius_mm))
                 .collect())
         }
-        model3d::Mode::Transform => {
-            let center_eye = eye_and_lamp(opts, lamp_mm, 0.0, angle).0;
-            Ok((0..views)
-                .into_par_iter()
-                .map(|i| {
-                    let t = i as f64 / denom;
-                    let mesh: Vec<(Mesh, ink::Style)> = objects
-                        .iter()
-                        .zip(&normalized)
-                        .map(|(o, norm)| {
-                            let m = o.motion.sample(t);
-                            (place_normalized_with(norm, o, Some(&m), angle, THICKNESS_MM), o.style)
-                        })
-                        .collect();
-                    ink::draw(&mesh, center_eye, angle, n, preset.inner_radius_mm, preset.outer_radius_mm)
-                })
-                .collect())
-        }
+        model3d::Mode::Transform => Ok((0..views)
+            .into_par_iter()
+            .map(|i| {
+                let t = i as f64 / denom;
+                let mesh: Vec<(Mesh, ink::Style)> = objects
+                    .iter()
+                    .zip(&normalized)
+                    .map(|(o, norm)| {
+                        let m = o.motion.sample(t);
+                        (place_normalized_with(norm, o, Some(&m), angle, THICKNESS_MM), o.style)
+                    })
+                    .collect();
+                ink::draw_ortho(&mesh, angle, n, preset.inner_radius_mm, preset.outer_radius_mm)
+            })
+            .collect()),
     }
 }
 
@@ -318,23 +399,33 @@ fn solve_patch(
 
 fn solve_position(pos: &Position, objects: &[&SceneObject], lamp_mm: V3, opts: &Options, resp: &Responses, preset: &DiscGeometryPreset) -> Result<Patch, String> {
     let angle = pos.phi_deg.to_radians();
-    let poses: Vec<(V3, V3)> = (0..VIEWS)
-        .map(|i| eye_and_lamp(opts, lamp_mm, HEAD_HALF_SPAN_MM * (2.0 * i as f64 / (VIEWS - 1) as f64 - 1.0), angle))
-        .collect();
-    let wide_poses: Vec<(V3, V3, usize)> = if opts.wide > 0.0 {
-        WIDE_MM
-            .iter()
-            .flat_map(|&h| [(-h, 0usize), (h, VIEWS - 1)])
-            .map(|(head, rv)| {
-                let (eye, lamp) = eye_and_lamp(opts, lamp_mm, head, angle);
-                (eye, lamp, rv)
-            })
-            .collect()
-    } else {
-        vec![]
-    };
-    let sharp = position_targets(pos, objects, lamp_mm, opts, preset)?;
-    Ok(solve_patch(&poses, &wide_poses, &sharp, true, opts, resp, preset))
+    match pos.mode {
+        model3d::Mode::Real => {
+            let poses: Vec<(V3, V3)> = (0..VIEWS)
+                .map(|i| eye_and_lamp(opts, lamp_mm, HEAD_HALF_SPAN_MM * (2.0 * i as f64 / (VIEWS - 1) as f64 - 1.0), angle))
+                .collect();
+            let wide_poses: Vec<(V3, V3, usize)> = if opts.wide > 0.0 {
+                WIDE_MM
+                    .iter()
+                    .flat_map(|&h| [(-h, 0usize), (h, VIEWS - 1)])
+                    .map(|(head, rv)| {
+                        let (eye, lamp) = eye_and_lamp(opts, lamp_mm, head, angle);
+                        (eye, lamp, rv)
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+            let sharp = position_targets(pos, objects, lamp_mm, opts, preset)?;
+            Ok(solve_patch(&poses, &wide_poses, &sharp, true, opts, resp, preset))
+        }
+        model3d::Mode::Transform => {
+            let t_opts = transform_options(opts);
+            let poses = transform_poses(&t_opts, angle);
+            let sharp = position_targets(pos, objects, TRANSFORM_LAMP_MM, &t_opts, preset)?;
+            Ok(solve_patch(&poses, &[], &sharp, false, &t_opts, resp, preset))
+        }
+    }
 }
 
 /// Solve every position and lay the patches out on the disc. Positions already solved, and not
@@ -360,7 +451,11 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
                 (SceneObject { id: String::new(), name: String::new(), position_id: String::new(), ..(*o).clone() }, modified)
             })
             .collect();
-        let key = serde_json::to_string(&(pos.phi_deg, pos.mode, pos.parallax, &same, lamp, &opts, preset)).map_err(|e| e.to_string())?;
+        let (eff_lamp, eff_opts, eff_parallax) = match pos.mode {
+            model3d::Mode::Real => (lamp, opts.clone(), pos.parallax),
+            model3d::Mode::Transform => (TRANSFORM_LAMP_MM, transform_options(&opts), 0.0),
+        };
+        let key = serde_json::to_string(&(pos.phi_deg, pos.mode, eff_parallax, &same, eff_lamp, &eff_opts, preset)).map_err(|e| e.to_string())?;
         let held = CACHE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|c| c.0 == key).map(|c| c.1.clone());
         let patch = match held {
             Some(p) => p,
@@ -413,6 +508,38 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
             }
             owner[c] = i;
             weights[c * k..(c + 1) * k].copy_from_slice(&p.weights[j * k..(j + 1) * k]);
+        }
+    }
+    // Unlit cells inside a transform position's kept sectors use the darkest option over its tilt
+    // sweep (0xA7 glows at the upper end of 6.5°→22.5°); real positions keep 0xA7.
+    for (pos, _) in &groups {
+        if pos.mode != model3d::Mode::Transform {
+            continue;
+        }
+        let phi_rad = pos.phi_deg.to_radians();
+        let t_opts = transform_options(&opts);
+        let poses = transform_poses(&t_opts, phi_rad);
+        let (t_bg, _) = transform_background(pos, &poses, resp, preset);
+        if t_bg == bg {
+            continue;
+        }
+        let crop_deg = pos.crop_deg;
+        let crop_rad = crop_deg.to_radians();
+        for c in 0..n * n {
+            if owner[c] != usize::MAX {
+                continue;
+            }
+            if crop_deg < 90.0 {
+                let x = (((c % n) as f64 + 0.5) / n as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
+                let y = (((c / n) as f64 + 0.5) / n as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
+                let at = model3d::scene_to_disc(turn([x, y, 0.0], -phi_rad));
+                if at[0].abs().atan2(at[1].abs()) > crop_rad {
+                    continue;
+                }
+            }
+            let cell = &mut weights[c * k..(c + 1) * k];
+            cell.fill(0.0);
+            cell[t_bg] = 1.0;
         }
     }
     let overlapping = groups.iter().zip(&clash).filter(|(_, &c)| c).map(|(g, _)| g.0.id.clone()).collect();
@@ -663,19 +790,20 @@ mod tests {
     }
 
     #[test]
-    fn transform_mode_identity_motion_gives_constant_targets_and_matches_zero_parallax() {
+    fn transform_mode_identity_motion_gives_constant_targets_and_ignores_distance() {
         let preset = reference_preset();
         let opts = Options { grid: 96, ..Default::default() };
-        let obj = star("0", 0.0, 41.0);
+        let obj = SceneObject { position_mm: [0.0, 41.0, 0.0], ..star("0", 0.0, 41.0) };
         let p_transform = Position { mode: model3d::Mode::Transform, ..pos("0", 0.0, 30.0) };
-        let p_real_zero = Position { mode: model3d::Mode::Real, parallax: 0.0, ..pos("0", 0.0, 30.0) };
         let t_targets = position_targets(&p_transform, &[&obj], LAMP_MM, &opts, &preset).unwrap();
-        let r_targets = position_targets(&p_real_zero, &[&obj], LAMP_MM, &opts, &preset).unwrap();
-        assert_eq!(t_targets.len(), VIEWS);
-        for v in 0..VIEWS {
+        assert_eq!(t_targets.len(), TRANSFORM_VIEWS);
+        for v in 0..TRANSFORM_VIEWS {
             assert_eq!(t_targets[v], t_targets[0], "view {v} should match view 0 for identity motion");
-            assert_eq!(t_targets[v], r_targets[v], "view {v} should match real mode with parallax 0");
         }
+        // Viewing distance must not affect orthographic transform targets.
+        let near = position_targets(&p_transform, &[&obj], LAMP_MM, &Options { distance_mm: 180.0, ..opts.clone() }, &preset).unwrap();
+        let far = position_targets(&p_transform, &[&obj], LAMP_MM, &Options { distance_mm: 600.0, ..opts.clone() }, &preset).unwrap();
+        assert_eq!(near, far, "transform targets must be independent of viewing distance");
 
         // Non-identity motion must shift targets between t=0 and t=1.
         let mut moved = obj.clone();
@@ -688,7 +816,103 @@ mod tests {
             ],
         };
         let anim_targets = position_targets(&p_transform, &[&moved], LAMP_MM, &opts, &preset).unwrap();
-        assert_ne!(anim_targets[0], anim_targets[VIEWS - 1], "sliding motion should change target across views");
+        assert_ne!(anim_targets[0], anim_targets[TRANSFORM_VIEWS - 1], "sliding motion should change target across views");
+    }
+
+    #[test]
+    fn transform_mode_spinning_star_separates_start_and_end_frames() {
+        let shared = design::shared_codebook(0.1333);
+        let (cb, resp) = (&shared.0, &shared.1);
+        let preset = reference_preset();
+        let grid = 192usize;
+        let samples: Vec<[f64; 16]> = (0..=64)
+            .map(|i| {
+                let rad = (i as f64 / 64.0 * 180.0).to_radians();
+                let (s, c) = rad.sin_cos();
+                [c, 0.0, s, 0.0, 0.0, 1.0, 0.0, 0.0, -s, 0.0, c, 0.0, 0.0, 0.0, 0.0, 1.0]
+            })
+            .collect();
+        let obj = SceneObject {
+            id: "star".into(),
+            path: model3d::BUILTIN_SAMPLE_PATH.into(),
+            name: "star".into(),
+            visible: true,
+            position_mm: [0.0, 41.0, 0.0],
+            rotation_deg: [0.0; 3],
+            scale_mm: 30.0,
+            position_id: "0".into(),
+            style: ink::Style::default(),
+            motion: model3d::Motion { preset: "spinY180".into(), matrix: vec![], samples },
+        };
+        let p0 = Position { mode: model3d::Mode::Transform, ..pos("0", 0.0, 30.0) };
+        let sc = Scene {
+            version: model3d::SCENE_VERSION,
+            objects: vec![obj.clone()],
+            // Deliberately non-default lamp to confirm transform mode ignores scene.lamp_mm.
+            lamp_mm: Some([280.0, 90.0, 500.0]),
+            positions: vec![p0.clone()],
+        };
+        let opts = Options { grid, chroma_weight: 1.0, exposure: 1.0, wide: 0.3, ..Default::default() };
+        let sol = solve(&sc, &opts, cb, resp, &preset).unwrap();
+
+        let targets = position_targets(&p0, &[&obj], TRANSFORM_LAMP_MM, &opts, &preset).unwrap();
+        let region: Vec<usize> = (0..grid * grid).filter(|&c| targets.iter().any(|t| t[c] > LIT)).collect();
+        let pearson = |a: &[f64], b: &[f32]| -> f64 {
+            let n = region.len() as f64;
+            let (mut sa, mut sb, mut saa, mut sbb, mut sab) = (0.0, 0.0, 0.0, 0.0, 0.0);
+            for &c in &region {
+                let (x, y) = (a[c], b[c] as f64);
+                sa += x; sb += y; saa += x * x; sbb += y * y; sab += x * y;
+            }
+            let d = ((saa - sa * sa / n).max(0.0) * (sbb - sb * sb / n).max(0.0)).sqrt();
+            if d < 1e-12 { 0.0 } else { (sab - sa * sb / n) / d }
+        };
+        let render_at = |t: f64| -> Vec<f64> {
+            let (e, l) = transform_pose(&opts, t, 0.0);
+            super::super::lightfield::render_float(&sol.solved, resp, &preset, e, l, grid, true)
+                .into_iter()
+                .map(super::super::lightfield::luma)
+                .collect()
+        };
+        let r0 = render_at(0.0);
+        let r_mid = render_at(0.5);
+        let r1 = render_at(1.0);
+        let mid_v = TRANSFORM_VIEWS / 2;
+        let (c00, c01, c0m) = (pearson(&r0, &targets[0]), pearson(&r0, &targets[TRANSFORM_VIEWS - 1]), pearson(&r0, &targets[mid_v]));
+        let (c11, c10, c1m) = (pearson(&r1, &targets[TRANSFORM_VIEWS - 1]), pearson(&r1, &targets[0]), pearson(&r1, &targets[mid_v]));
+        let (cmm, cm0, cm1) = (pearson(&r_mid, &targets[mid_v]), pearson(&r_mid, &targets[0]), pearson(&r_mid, &targets[TRANSFORM_VIEWS - 1]));
+
+        // Unlit cell inside the kept sector uses the darkest transform background, darker than 0xA7.
+        let bg_a7 = cb.entries.iter().position(|e| e.bytes.iter().all(|&b| b == design::BACKGROUND_BYTE)).unwrap();
+        let poses = transform_poses(&opts, 0.0);
+        let (t_bg, t_bg_max) = transform_background(&p0, &poses, resp, &preset);
+        let mut a7_max = 0.0f64;
+        let ro = preset.outer_radius_mm;
+        for &(eye, lamp) in &poses {
+            let s = scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() };
+            let (gt, gr) = scene::g_at(&s, 0.0, -41.0);
+            let y = (1.0 - PLAIN_LEAK) * super::super::lightfield::luma(resp.at(bg_a7, gt, gr))
+                + PLAIN_LEAK * super::super::lightfield::luma(resp.at(resp.options - 1, gt, gr));
+            a7_max = a7_max.max(y);
+        }
+        println!(
+            "transform_star: t=0(own={c00:.3}, t1={c01:.3}, mid={c0m:.3}) t=0.5(own={cmm:.3}, t0={cm0:.3}, t1={cm1:.3}) t=1(own={c11:.3}, t0={c10:.3}, mid={c1m:.3}) | bg_opt={t_bg} (plain={}) max_y={t_bg_max:.4} vs 0xA7(opt {bg_a7}) max_y={a7_max:.4}",
+            t_bg == cb.entries.len(),
+        );
+        assert!(c00 > c01, "t=0 render must correlate better with t=0 target than t=1: own={c00:.3} other={c01:.3}");
+        assert!(c11 > c10, "t=1 render must correlate better with t=1 target than t=0: own={c11:.3} other={c10:.3}");
+        assert!(c00 > c0m + 0.15, "t=0 (face-on) must clearly beat t=0.5 (edge-on): own={c00:.3} mid={c0m:.3}");
+        assert!(cmm > cm0.max(cm1) + 0.15, "t=0.5 (edge-on) must clearly beat face-on endpoints: own={cmm:.3} t0={cm0:.3} t1={cm1:.3}");
+        assert!(c11 > c1m + 0.15, "t=1 (face-on) must clearly beat t=0.5 (edge-on): own={c11:.3} mid={c1m:.3}");
+        assert!(t_bg_max < a7_max, "transform background opt {t_bg} ({t_bg_max:.3}) must be darker than 0xA7 ({a7_max:.3})");
+        // Check an unlit cell at 6 o'clock (0, +41 mm), inside ±30° crop sector.
+        let unlit_u = 0.5;
+        let unlit_v = 0.5 + 41.0 / (2.0 * ro);
+        let w = sol.solved.cell(unlit_u, unlit_v).unwrap();
+        assert_eq!(w[t_bg], 1.0, "unlit cell inside transform crop sector must use opt {t_bg}");
+        // Check an unlit cell at 3 o'clock (+41, 0 mm), outside ±30° crop sector, keeps 0xA7.
+        let out_w = sol.solved.cell(0.5 + 41.0 / (2.0 * ro), 0.5).unwrap();
+        assert_eq!(out_w[bg_a7], 1.0, "unlit cell outside transform crop sector must keep 0xA7");
     }
 
     #[test]

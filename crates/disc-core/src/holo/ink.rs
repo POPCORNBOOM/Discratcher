@@ -44,10 +44,21 @@ fn dot(a: V3, b: V3) -> f64 {
 /// Brightness 0..1 of placed meshes seen from `eye`, `n` square over the disc, disc frame. The
 /// light stays with the viewer: it is turned by `angle` with them. Each mesh carries its own style.
 pub fn draw(meshes: &[(Mesh, Style)], eye: V3, angle: f64, n: usize, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
+    draw_with(meshes, Some(eye), angle, n, inner_mm, outer_mm)
+}
+
+/// As [`draw`], seen face-on from infinitely far along `+z` (orthographic, 1:1 mm scale at any
+/// depth). Viewing distance has no effect; overlaps are still inked by relative depth.
+pub fn draw_ortho(meshes: &[(Mesh, Style)], angle: f64, n: usize, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
+    draw_with(meshes, None, angle, n, inner_mm, outer_mm)
+}
+
+fn draw_with(meshes: &[(Mesh, Style)], eye: Option<V3>, angle: f64, n: usize, inner_mm: f64, outer_mm: f64) -> Vec<f32> {
     const SS: usize = 2;
     let w = n * SS;
     let px_mm = 2.0 * outer_mm / w as f64;
-    let mut depth = vec![0.0f32; w * w]; // 1 / distance; 0 where empty
+    let empty = if eye.is_some() { 0.0f32 } else { f32::NEG_INFINITY };
+    let mut depth = vec![empty; w * w]; // perspective: 1/distance (0 empty); ortho: z_mm (-inf empty)
     let mut normal = vec![[0.0f32; 3]; w * w];
     let mut albedo = vec![0.0f32; w * w];
     let mut owner = vec![0u32; w * w];
@@ -57,9 +68,14 @@ pub fn draw(meshes: &[(Mesh, Style)], eye: V3, angle: f64, n: usize, inner_mm: f
             let mut p = [(0.0, 0.0, 0.0); 3];
             let mut ok = true;
             for (q, v) in p.iter_mut().zip(tri) {
-                match model3d::project_point(v.pos, eye) {
-                    Some((x, y, d)) => *q = ((x / (2.0 * outer_mm) + 0.5) * w as f64, (y / (2.0 * outer_mm) + 0.5) * w as f64, 1.0 / d),
-                    None => ok = false,
+                match eye {
+                    Some(e) => match model3d::project_point(v.pos, e) {
+                        Some((x, y, d)) => *q = ((x / (2.0 * outer_mm) + 0.5) * w as f64, (y / (2.0 * outer_mm) + 0.5) * w as f64, 1.0 / d),
+                        None => ok = false,
+                    },
+                    None => {
+                        *q = ((v.pos[0] / (2.0 * outer_mm) + 0.5) * w as f64, (v.pos[1] / (2.0 * outer_mm) + 0.5) * w as f64, v.pos[2]);
+                    }
                 }
             }
             let area = (p[1].0 - p[0].0) * (p[2].1 - p[0].1) - (p[1].1 - p[0].1) * (p[2].0 - p[0].0);
@@ -87,11 +103,17 @@ pub fn draw(meshes: &[(Mesh, Style)], eye: V3, angle: f64, n: usize, inner_mm: f
                     hit = true;
                     depth[i] = d as f32;
                     owner[i] = mi as u32;
-                    let k = [a * p[0].2 / d, b * p[1].2 / d, c * p[2].2 / d];
+                    let k = if eye.is_some() { [a * p[0].2 / d, b * p[1].2 / d, c * p[2].2 / d] } else { [a, b, c] };
                     let mix = |f: &dyn Fn(usize) -> f64| k[0] * f(0) + k[1] * f(1) + k[2] * f(2);
                     let mut nn = [0, 1, 2].map(|c| mix(&|v| tri[v].normal[c]));
-                    let at = [0, 1, 2].map(|c| mix(&|v| tri[v].pos[c]));
-                    let l = dot(nn, nn).sqrt().max(1e-9) * if dot(nn, [eye[0] - at[0], eye[1] - at[1], eye[2] - at[2]]) < 0.0 { -1.0 } else { 1.0 };
+                    let facing = match eye {
+                        Some(e) => {
+                            let at = [0, 1, 2].map(|c| mix(&|v| tri[v].pos[c]));
+                            dot(nn, [e[0] - at[0], e[1] - at[1], e[2] - at[2]])
+                        }
+                        None => nn[2],
+                    };
+                    let l = dot(nn, nn).sqrt().max(1e-9) * if facing < 0.0 { -1.0 } else { 1.0 };
                     nn = nn.map(|v| v / l);
                     normal[i] = nn.map(|v| v as f32);
                     albedo[i] = mix(&|v| tri[v].albedo as f64) as f32;
@@ -106,16 +128,23 @@ pub fn draw(meshes: &[(Mesh, Style)], eye: V3, angle: f64, n: usize, inner_mm: f
     if x0 > x1 {
         return out;
     }
-    let near = surroundings(&albedo, &depth, w, (x0, x1, y0, y1), (LOCAL_MM / px_mm) as usize);
+    let near = surroundings(&albedo, &depth, empty, w, (x0, x1, y0, y1), (LOCAL_MM / px_mm) as usize);
     let light = super::turntable::turn(model3d::scene_to_disc(LIGHT), angle);
     let ll = dot(light, light).sqrt();
     let value = |x: usize, y: usize| -> f32 {
         let i = y * w + x;
-        if depth[i] <= 0.0 {
+        if depth[i] <= empty {
             return 0.0;
         }
         let style = &meshes[owner[i] as usize].1;
-        let z = |x: usize, y: usize| { let d = depth[y * w + x]; if d > 0.0 { Some(1.0 / d as f64) } else { None } };
+        let z = |x: usize, y: usize| {
+            let d = depth[y * w + x];
+            if d > empty {
+                Some(if eye.is_some() { 1.0 / d as f64 } else { -(d as f64) })
+            } else {
+                None
+            }
+        };
         let mut ink = 0.0f64;
         if style.lines > 0.0 {
             const R: usize = 2;
@@ -165,13 +194,13 @@ pub fn draw(meshes: &[(Mesh, Style)], eye: V3, angle: f64, n: usize, inner_mm: f
 }
 
 /// Mean of `v` over the covered pixels within `r`, two box passes, inside a window.
-fn surroundings(v: &[f32], cover: &[f32], w: usize, (x0, x1, y0, y1): (usize, usize, usize, usize), r: usize) -> Vec<f32> {
+fn surroundings(v: &[f32], cover: &[f32], empty: f32, w: usize, (x0, x1, y0, y1): (usize, usize, usize, usize), r: usize) -> Vec<f32> {
     let (cw, ch) = (x1 - x0 + 1, y1 - y0 + 1);
     let mut sum: Vec<f32> = Vec::with_capacity(cw * ch);
     let mut count: Vec<f32> = Vec::with_capacity(cw * ch);
     for y in y0..=y1 {
         for x in x0..=x1 {
-            let c = cover[y * w + x] > 0.0;
+            let c = cover[y * w + x] > empty;
             sum.push(if c { v[y * w + x] } else { 0.0 });
             count.push(c as u8 as f32);
         }
@@ -249,5 +278,21 @@ mod tests {
         let p = draw(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), plain), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), inked)], [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
         let darkest = (0..40).map(|i| at(&p, n, 3.0 + i as f64 * 0.06, -41.0)).fold(1.0f32, f32::min);
         assert!(darkest > 0.9, "lines=0 mesh should stay un-inked: {darkest}");
+    }
+
+    #[test]
+    fn ortho_matches_depth_zero_and_inks_overlaps() {
+        let n = 512;
+        let s = Style::default();
+        // Flat quad at z = 0 matches perspective draw from [0, 0, 350] pixel-for-pixel.
+        let q0 = [(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), s)];
+        let persp = draw(&q0, [0.0, 0.0, 350.0], 0.0, n, 24.0, 58.0);
+        let ortho = draw_ortho(&q0, 0.0, n, 24.0, 58.0);
+        assert_eq!(ortho, persp, "depth-0 ortho must match perspective size and tone");
+        // Overlapping quads still ink the far edge without perspective scaling.
+        let p = draw_ortho(&[(quad([-12.0, 12.0], [-52.0, -30.0], 0.0, 1.0), s), (quad([-4.0, 4.0], [-46.0, -36.0], 4.0, 1.0), s)], 0.0, n, 24.0, 58.0);
+        assert!(at(&p, n, 0.0, -41.0) > 0.85 && at(&p, n, 9.0, -41.0) > 0.85);
+        let darkest = (0..40).map(|i| at(&p, n, 3.0 + i as f64 * 0.06, -41.0)).fold(1.0f32, f32::min);
+        assert!(darkest < 0.6, "ortho overlap should be inked: {darkest}");
     }
 }
