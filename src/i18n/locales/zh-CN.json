@@ -226,11 +226,7 @@
   "holo.motionPreset": "变换预设",
   "holo.motionMatrix": "变换矩阵",
   "holo.motionNone": "静止",
-  "holo.motionSpinY90": "绕竖轴转 90°",
-  "holo.motionSpinY180": "绕竖轴转 180°",
-  "holo.motionSpinY360": "绕竖轴转一圈",
-  "holo.motionTiltX90": "前后翻 90°",
-  "holo.motionSlideX": "左右平移 40 mm",
+  "holo.motionSlideX": "左右平移",
   "holo.motionGrow": "由小变大",
   "holo.motionCustom": "自定义",
   "holo.motionError": "第 {row} 行第 {col} 列：{error}",
@@ -398,5 +394,10 @@
   "holo.guideOneEye": "单眼 / 手机镜头",
   "holo.tiltRange": "倾斜范围",
   "holo.tiltRangeWords": "左右各 ±{n}°",
-  "holo.tiltAuto": "自动（±{n}°）"
+  "holo.tiltAuto": "自动（±{n}°）",
+  "holo.motionSpinY": "绕竖轴转",
+  "holo.motionTiltX": "前后翻",
+  "holo.motionAngle": "角度",
+  "holo.motionDistance": "距离",
+  "holo.motionStartSize": "起始大小"
 }

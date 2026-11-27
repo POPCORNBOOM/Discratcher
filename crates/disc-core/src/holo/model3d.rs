@@ -405,6 +405,8 @@ pub struct Motion {
     pub preset: String,
     pub matrix: Vec<String>,
     pub samples: Vec<[f64; 16]>,
+    /// The preset's one number, kept so a saved scene opens with it.
+    pub amount: f64,
 }
 
 impl Motion {

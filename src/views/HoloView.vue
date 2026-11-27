@@ -173,6 +173,17 @@
                   @update:model-value="setMotionPreset($event as MotionPresetId)"
                 />
               </div>
+              <UiSlider
+                v-if="motionAmount"
+                :model-value="selectedObj.motion.amount"
+                :label="t(motionAmount.label)"
+                :min="motionAmount.min"
+                :max="motionAmount.max"
+                :step="motionAmount.step"
+                :format="(x) => `${x}${motionAmount!.unit}`"
+                @pointerdown="beginControlEdit"
+                @update:model-value="setMotionAmount"
+              />
               <div class="field">
                 <span class="small muted">{{ t('holo.motionMatrix') }}</span>
                 <div class="mat-grid">
@@ -614,6 +625,7 @@ import {
   evaluateMatrixSamples,
   makePresetMotion,
   MOTION_PRESET_IDS,
+  PRESET_AMOUNTS,
   type MotionPresetId,
 } from '../holo/motion'
 import { decodeDisplayMesh, type DisplayMeshData } from '../holo/sampleMesh'
@@ -812,14 +824,13 @@ const calcModeOptions = computed<UiSelectOption[]>(() => [
 ])
 const motionPresetLabels: Record<MotionPresetId, string> = {
   none: 'holo.motionNone',
-  spinY90: 'holo.motionSpinY90',
-  spinY180: 'holo.motionSpinY180',
-  spinY360: 'holo.motionSpinY360',
-  tiltX90: 'holo.motionTiltX90',
+  spinY: 'holo.motionSpinY',
+  tiltX: 'holo.motionTiltX',
   slideX: 'holo.motionSlideX',
   grow: 'holo.motionGrow',
   custom: 'holo.motionCustom',
 }
+const motionAmount = computed(() => (selectedObj.value ? PRESET_AMOUNTS[selectedObj.value.motion.preset as MotionPresetId] : undefined))
 const motionPresetOptions = computed<UiSelectOption[]>(() =>
   MOTION_PRESET_IDS.map((id) => ({ value: id, label: t(motionPresetLabels[id]) })),
 )
@@ -997,6 +1008,12 @@ function setMotionPreset(preset: MotionPresetId) {
   }
 }
 
+function setMotionAmount(v: number) {
+  const obj = selectedObj.value
+  if (!obj || obj.motion.preset === 'custom' || obj.motion.preset === 'none') return
+  obj.motion = makePresetMotion(obj.motion.preset as Exclude<MotionPresetId, 'custom'>, v)
+}
+
 function onMotionCellInput(idx: number, e: Event) {
   motionDraft.value[idx] = (e.target as HTMLInputElement).value
 }
@@ -1016,7 +1033,7 @@ function commitMotionMatrix() {
   motionDraft.value = next
   if (next.every((v, i) => v === obj.motion.matrix[i])) return
   pushHistory()
-  obj.motion = { preset: 'custom', matrix: next, samples: res.samples }
+  obj.motion = { preset: 'custom', amount: 0, matrix: next, samples: res.samples }
 }
 
 watch(

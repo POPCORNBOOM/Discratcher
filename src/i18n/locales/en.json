@@ -226,11 +226,7 @@
   "holo.motionPreset": "Transform preset",
   "holo.motionMatrix": "Transform matrix",
   "holo.motionNone": "None",
-  "holo.motionSpinY90": "Spin Y 90°",
-  "holo.motionSpinY180": "Spin Y 180°",
-  "holo.motionSpinY360": "Spin Y 360°",
-  "holo.motionTiltX90": "Tilt X 90°",
-  "holo.motionSlideX": "Slide X 40 mm",
+  "holo.motionSlideX": "Slide left–right",
   "holo.motionGrow": "Grow",
   "holo.motionCustom": "Custom",
   "holo.motionError": "Row {row}, col {col}: {error}",
@@ -398,5 +394,10 @@
   "holo.guideOneEye": "One eye / phone camera",
   "holo.tiltRange": "Tilt range",
   "holo.tiltRangeWords": "±{n}° either way",
-  "holo.tiltAuto": "Auto (±{n}°)"
+  "holo.tiltAuto": "Auto (±{n}°)",
+  "holo.motionSpinY": "Spin about the vertical axis",
+  "holo.motionTiltX": "Flip forward",
+  "holo.motionAngle": "Angle",
+  "holo.motionDistance": "Distance",
+  "holo.motionStartSize": "Starting size"
 }

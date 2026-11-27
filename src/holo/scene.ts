@@ -12,8 +12,8 @@ import {
   defaultMotion,
   evaluateMatrixSamples,
   IDENTITY_MATRIX_STRINGS,
-  isPresetId,
-  presetMatrixStrings,
+  makePresetMotion,
+  readPreset,
   type HoloMotion,
 } from './motion'
 
@@ -225,33 +225,26 @@ function asSamples(raw: unknown): number[][] | null {
 function asMotion(raw: unknown): HoloMotion {
   if (!raw || typeof raw !== 'object') return defaultMotion()
   const m = raw as Record<string, unknown>
-  const preset = typeof m.preset === 'string' && isPresetId(m.preset) ? m.preset : 'none'
+  const read = typeof m.preset === 'string' ? readPreset(m.preset, m.amount) : null
+  const preset = read?.[0] ?? 'none'
   const rawMatrix =
     Array.isArray(m.matrix) && m.matrix.length === 16 && m.matrix.every((v) => typeof v === 'string')
       ? [...(m.matrix as string[])]
       : null
   const rawSamples = asSamples(m.samples)
 
-  if (preset !== 'custom') {
-    const presetMat = presetMatrixStrings(preset)
-    if (presetMat) {
-      const evaluated = evaluateMatrixSamples(presetMat)
-      if (evaluated.ok) {
-        return { preset, matrix: presetMat, samples: evaluated.samples }
-      }
-    }
-  }
+  if (preset !== 'custom') return makePresetMotion(preset, read?.[1])
   if (rawMatrix) {
     const evaluated = evaluateMatrixSamples(rawMatrix)
     if (evaluated.ok) {
-      return { preset, matrix: rawMatrix, samples: evaluated.samples }
+      return { preset, amount: 0, matrix: rawMatrix, samples: evaluated.samples }
     }
     if (rawSamples) {
-      return { preset, matrix: rawMatrix, samples: rawSamples }
+      return { preset, amount: 0, matrix: rawMatrix, samples: rawSamples }
     }
   }
   if (rawSamples) {
-    return { preset: 'custom', matrix: [...IDENTITY_MATRIX_STRINGS], samples: rawSamples }
+    return { preset: 'custom', amount: 0, matrix: [...IDENTITY_MATRIX_STRINGS], samples: rawSamples }
   }
   return defaultMotion()
 }
