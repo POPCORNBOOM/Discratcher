@@ -173,17 +173,34 @@
                   @update:model-value="setMotionPreset($event as MotionPresetId)"
                 />
               </div>
-              <UiSlider
-                v-if="motionAmount"
-                :model-value="selectedObj.motion.amount"
-                :label="t(motionAmount.label)"
-                :min="motionAmount.min"
-                :max="motionAmount.max"
-                :step="motionAmount.step"
-                :format="(x) => `${x}${motionAmount!.unit}`"
-                @pointerdown="beginControlEdit"
-                @update:model-value="setMotionAmount"
-              />
+              <div v-if="selectedObj.motion.vars.length || selectedObj.motion.preset === 'custom'" class="field">
+                <div class="title row">
+                  <span class="grow small muted">{{ t('holo.motionVars') }}</span>
+                  <a v-if="selectedObj.motion.preset === 'custom'" class="action-link" role="button" tabindex="0" @click="addMotionVar" @keydown.enter="addMotionVar">{{ t('holo.motionAddVar') }}</a>
+                </div>
+                <div v-for="(mv, i) in selectedObj.motion.vars" :key="i" class="var-row">
+                  <input
+                    type="text"
+                    class="num-input mono"
+                    spellcheck="false"
+                    autocomplete="off"
+                    :value="mv.name"
+                    :readonly="selectedObj.motion.preset !== 'custom'"
+                    :aria-label="t('holo.motionVarName')"
+                    @change="setMotionVarName(i, $event)"
+                  />
+                  <input
+                    type="number"
+                    class="num-input mono"
+                    step="any"
+                    :value="mv.value"
+                    :aria-label="mv.name"
+                    @focus="beginControlEdit"
+                    @change="setMotionVarValue(i, $event)"
+                  />
+                  <UiButton v-if="selectedObj.motion.preset === 'custom'" icon-only variant="ghost" :icon="mdiTrashCanOutline" :aria-label="t('holo.delete')" :data-tooltip="t('holo.delete')" @click="removeMotionVar(i)" />
+                </div>
+              </div>
               <div class="field">
                 <span class="small muted">{{ t('holo.motionMatrix') }}</span>
                 <div class="mat-grid">
@@ -625,7 +642,9 @@ import {
   evaluateMatrixSamples,
   makePresetMotion,
   MOTION_PRESET_IDS,
-  PRESET_AMOUNTS,
+  VAR_NAME,
+  evaluateMatrixSamples as evalMotion,
+  type MotionVar,
   type MotionPresetId,
 } from '../holo/motion'
 import { decodeDisplayMesh, type DisplayMeshData } from '../holo/sampleMesh'
@@ -830,7 +849,6 @@ const motionPresetLabels: Record<MotionPresetId, string> = {
   grow: 'holo.motionGrow',
   custom: 'holo.motionCustom',
 }
-const motionAmount = computed(() => (selectedObj.value ? PRESET_AMOUNTS[selectedObj.value.motion.preset as MotionPresetId] : undefined))
 const motionPresetOptions = computed<UiSelectOption[]>(() =>
   MOTION_PRESET_IDS.map((id) => ({ value: id, label: t(motionPresetLabels[id]) })),
 )
@@ -1008,10 +1026,57 @@ function setMotionPreset(preset: MotionPresetId) {
   }
 }
 
-function setMotionAmount(v: number) {
+/** Re-sample the selected motion from a matrix and variables; on a bad one keep what was there and say why. */
+function applyMotion(matrix: string[], vars: MotionVar[], keepAnyway = false) {
   const obj = selectedObj.value
-  if (!obj || obj.motion.preset === 'custom' || obj.motion.preset === 'none') return
-  obj.motion = makePresetMotion(obj.motion.preset as Exclude<MotionPresetId, 'custom'>, v)
+  if (!obj) return
+  const res = evalMotion(matrix, vars)
+  if (!res.ok) {
+    motionError.value = t('holo.motionError', { row: Math.floor(res.cell / 4) + 1, col: (res.cell % 4) + 1, error: res.error })
+    if (keepAnyway) obj.motion = { ...obj.motion, matrix, vars }
+    return
+  }
+  motionError.value = ''
+  obj.motion = { preset: obj.motion.preset, matrix, vars, samples: res.samples }
+}
+
+function setMotionVarValue(i: number, e: Event) {
+  const obj = selectedObj.value
+  const value = Number((e.target as HTMLInputElement).value)
+  if (!obj || !Number.isFinite(value)) return
+  applyMotion(obj.motion.matrix, obj.motion.vars.map((x, j) => (j === i ? { ...x, value } : x)))
+}
+
+function setMotionVarName(i: number, e: Event) {
+  const obj = selectedObj.value
+  const el = e.target as HTMLInputElement
+  const name = el.value.trim()
+  if (!obj || obj.motion.preset !== 'custom') return
+  const old = obj.motion.vars[i].name
+  if (name === old) return
+  if (!VAR_NAME.test(name) || obj.motion.vars.some((x) => x.name === name)) {
+    el.value = old
+    return
+  }
+  pushHistory()
+  const rename = (s: string) => s.replace(new RegExp(`\\{\\{\\s*${old}\\s*\\}\\}`, 'g'), `{{${name}}}`)
+  applyMotion(obj.motion.matrix.map(rename), obj.motion.vars.map((x, j) => (j === i ? { ...x, name } : x)), true)
+}
+
+function addMotionVar() {
+  const obj = selectedObj.value
+  if (!obj || obj.motion.preset !== 'custom') return
+  let n = obj.motion.vars.length + 1
+  while (obj.motion.vars.some((x) => x.name === `v${n}`)) n++
+  pushHistory()
+  obj.motion = { ...obj.motion, vars: [...obj.motion.vars, { name: `v${n}`, value: 0 }] }
+}
+
+function removeMotionVar(i: number) {
+  const obj = selectedObj.value
+  if (!obj || obj.motion.preset !== 'custom') return
+  pushHistory()
+  applyMotion(obj.motion.matrix, obj.motion.vars.filter((_, j) => j !== i), true)
 }
 
 function onMotionCellInput(idx: number, e: Event) {
@@ -1022,7 +1087,7 @@ function commitMotionMatrix() {
   const obj = selectedObj.value
   if (!obj || obj.motion.preset !== 'custom') return
   const next = motionDraft.value.map((s) => s.trim())
-  const res = evaluateMatrixSamples(next)
+  const res = evaluateMatrixSamples(next, obj.motion.vars)
   if (!res.ok) {
     const row = Math.floor(res.cell / 4) + 1
     const col = (res.cell % 4) + 1
@@ -1033,7 +1098,7 @@ function commitMotionMatrix() {
   motionDraft.value = next
   if (next.every((v, i) => v === obj.motion.matrix[i])) return
   pushHistory()
-  obj.motion = { preset: 'custom', amount: 0, matrix: next, samples: res.samples }
+  obj.motion = { preset: 'custom', matrix: next, vars: obj.motion.vars, samples: res.samples }
 }
 
 watch(
@@ -1656,6 +1721,7 @@ onBeforeUnmount(() => {
 .num-field { display: flex; align-items: center; gap: var(--oc-space-2xs); min-width: 0; }
 .num-input { width: 100%; min-width: 0; height: var(--oc-size-md); padding: 0 var(--oc-space-xs); border: 0; border-radius: var(--oc-radius-control); background: var(--oc-bg-input); appearance: textfield; -moz-appearance: textfield; }
 .num-input::-webkit-inner-spin-button, .num-input::-webkit-outer-spin-button { appearance: none; -webkit-appearance: none; margin: 0; }
+.var-row { display: flex; align-items: center; gap: var(--oc-space-2xs); }
 .mat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--oc-space-2xs); }
 .mat-input { width: 100%; min-width: 0; height: var(--oc-size-sm); padding: 0 var(--oc-space-2xs); border: 0; border-radius: 4px; background: var(--oc-bg-input); color: var(--oc-fg-default); font-size: var(--oc-text-xs); text-align: center; }
 .mat-input[readonly] { background: var(--oc-bg-base); color: var(--oc-fg-muted); text-overflow: ellipsis; }

@@ -10,11 +10,11 @@ import {
 import {
   cloneMotion,
   defaultMotion,
-  evaluateMatrixSamples,
   IDENTITY_MATRIX_STRINGS,
-  makePresetMotion,
-  readPreset,
+  readMotion,
+  VAR_NAME,
   type HoloMotion,
+  type MotionVar,
 } from './motion'
 
 export const SCENE_VERSION = 1 as const
@@ -225,27 +225,24 @@ function asSamples(raw: unknown): number[][] | null {
 function asMotion(raw: unknown): HoloMotion {
   if (!raw || typeof raw !== 'object') return defaultMotion()
   const m = raw as Record<string, unknown>
-  const read = typeof m.preset === 'string' ? readPreset(m.preset, m.amount) : null
-  const preset = read?.[0] ?? 'none'
-  const rawMatrix =
+  const preset = typeof m.preset === 'string' ? m.preset : 'none'
+  const matrix =
     Array.isArray(m.matrix) && m.matrix.length === 16 && m.matrix.every((v) => typeof v === 'string')
       ? [...(m.matrix as string[])]
       : null
-  const rawSamples = asSamples(m.samples)
-
-  if (preset !== 'custom') return makePresetMotion(preset, read?.[1])
-  if (rawMatrix) {
-    const evaluated = evaluateMatrixSamples(rawMatrix)
-    if (evaluated.ok) {
-      return { preset, amount: 0, matrix: rawMatrix, samples: evaluated.samples }
-    }
-    if (rawSamples) {
-      return { preset, amount: 0, matrix: rawMatrix, samples: rawSamples }
-    }
-  }
-  if (rawSamples) {
-    return { preset: 'custom', amount: 0, matrix: [...IDENTITY_MATRIX_STRINGS], samples: rawSamples }
-  }
+  const vars: MotionVar[] = Array.isArray(m.vars)
+    ? (m.vars as unknown[]).flatMap((v) => {
+        const x = v as Record<string, unknown> | null
+        return x && typeof x.name === 'string' && VAR_NAME.test(x.name) && typeof x.value === 'number' && Number.isFinite(x.value)
+          ? [{ name: x.name, value: x.value }]
+          : []
+      })
+    : []
+  const read = readMotion(preset, matrix, vars)
+  if (read) return read
+  // A custom matrix that no longer evaluates keeps what was solved from it.
+  const samples = asSamples(m.samples)
+  if (preset === 'custom' && samples) return { preset, matrix: matrix ?? [...IDENTITY_MATRIX_STRINGS], vars, samples }
   return defaultMotion()
 }
 

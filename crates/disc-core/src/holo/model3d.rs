@@ -405,8 +405,16 @@ pub struct Motion {
     pub preset: String,
     pub matrix: Vec<String>,
     pub samples: Vec<[f64; 16]>,
-    /// The preset's one number, kept so a saved scene opens with it.
-    pub amount: f64,
+    /// The numbers the matrix names as `{{name}}`, kept so a saved scene opens with them.
+    pub vars: Vec<MotionVar>,
+}
+
+/// A named number in a motion's matrix.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct MotionVar {
+    pub name: String,
+    pub value: f64,
 }
 
 impl Motion {

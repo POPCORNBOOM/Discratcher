@@ -397,7 +397,7 @@
   "holo.tiltAuto": "Auto (±{n}°)",
   "holo.motionSpinY": "Spin about the vertical axis",
   "holo.motionTiltX": "Flip forward",
-  "holo.motionAngle": "Angle",
-  "holo.motionDistance": "Distance",
-  "holo.motionStartSize": "Starting size"
+  "holo.motionVars": "Variables",
+  "holo.motionAddVar": "Add variable",
+  "holo.motionVarName": "Variable name"
 }

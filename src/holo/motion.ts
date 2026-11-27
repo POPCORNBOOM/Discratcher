@@ -6,39 +6,19 @@ export type MotionPresetId = 'none' | 'spinY' | 'tiltX' | 'slideX' | 'grow' | 'c
 
 export const MOTION_PRESET_IDS: readonly MotionPresetId[] = ['none', 'spinY', 'tiltX', 'slideX', 'grow', 'custom']
 
+/** A named number the matrix uses as `{{name}}`. */
+export interface MotionVar {
+  name: string
+  value: number
+}
+
 export interface HoloMotion {
   preset: string
-  /** The preset's one number: degrees to turn, mm to slide, or % to start from. */
-  amount: number
-  /** 16 row-major expression strings (scene axes, mm, angles in degrees, t in [0, 1]). */
+  /** 16 row-major expression strings (scene axes, mm, angles in degrees, t in [0, 1]); `{{name}}` is a variable. */
   matrix: string[]
+  vars: MotionVar[]
   /** 25 sampled row-major 4x4 numeric matrices evenly spaced over t in [0, 1]. */
   samples: number[][]
-}
-
-/** The number a preset takes: its label, range and unit. */
-export interface PresetAmount {
-  label: string
-  min: number
-  max: number
-  step: number
-  unit: string
-  initial: number
-}
-
-export const PRESET_AMOUNTS: Partial<Record<MotionPresetId, PresetAmount>> = {
-  spinY: { label: 'holo.motionAngle', min: 0, max: 720, step: 5, unit: '°', initial: 90 },
-  tiltX: { label: 'holo.motionAngle', min: 0, max: 360, step: 5, unit: '°', initial: 90 },
-  slideX: { label: 'holo.motionDistance', min: 0, max: 80, step: 1, unit: ' mm', initial: 40 },
-  grow: { label: 'holo.motionStartSize', min: 5, max: 100, step: 5, unit: '%', initial: 50 },
-}
-
-/** Presets from before they took a number. */
-const LEGACY: Record<string, [MotionPresetId, number]> = {
-  spinY90: ['spinY', 90],
-  spinY180: ['spinY', 180],
-  spinY360: ['spinY', 360],
-  tiltX90: ['tiltX', 90],
 }
 
 export const IDENTITY_MATRIX_STRINGS: readonly string[] = [
@@ -55,55 +35,91 @@ export const IDENTITY_MATRIX_NUMS: readonly number[] = [
   0, 0, 0, 1,
 ]
 
-const num = (v: number) => String(Math.round(v * 1000) / 1000)
-
-/** A preset's matrix with its number written in; the motion is centred, so the disc held flat shows the model as placed. */
-export function presetMatrixStrings(preset: string, amount = PRESET_AMOUNTS[preset as MotionPresetId]?.initial ?? 0): string[] | null {
-  const a = `${num(amount)}*(t-0.5)`
-  switch (preset) {
-    case 'none':
-      return [...IDENTITY_MATRIX_STRINGS]
-    case 'spinY':
-      return [`cos(${a})`, '0', `sin(${a})`, '0', '0', '1', '0', '0', `-sin(${a})`, '0', `cos(${a})`, '0', '0', '0', '0', '1']
-    case 'tiltX':
-      return ['1', '0', '0', '0', '0', `cos(${a})`, `-sin(${a})`, '0', '0', `sin(${a})`, `cos(${a})`, '0', '0', '0', '0', '1']
-    case 'slideX':
-      return ['1', '0', '0', a, '0', '1', '0', '0', '0', '0', '1', '0', '0', '0', '0', '1']
-    case 'grow': {
-      const s0 = num(amount / 100)
-      const s = `${s0}+(1-${s0})*t`
-      return [s, '0', '0', '0', '0', s, '0', '0', '0', '0', s, '0', '0', '0', '0', '1']
-    }
-    default:
-      return null
-  }
+/**
+ * Presets: their matrix and their variables. Turns and slides are centred, so the disc held flat
+ * shows the model as placed.
+ */
+const PRESETS: Record<Exclude<MotionPresetId, 'custom'>, { matrix: readonly string[]; vars: readonly MotionVar[] }> = {
+  none: { matrix: IDENTITY_MATRIX_STRINGS, vars: [] },
+  spinY: {
+    matrix: [
+      'cos({{angle}}*(t-0.5))', '0', 'sin({{angle}}*(t-0.5))', '0',
+      '0', '1', '0', '0',
+      '-sin({{angle}}*(t-0.5))', '0', 'cos({{angle}}*(t-0.5))', '0',
+      '0', '0', '0', '1',
+    ],
+    vars: [{ name: 'angle', value: 90 }],
+  },
+  tiltX: {
+    matrix: [
+      '1', '0', '0', '0',
+      '0', 'cos({{angle}}*(t-0.5))', '-sin({{angle}}*(t-0.5))', '0',
+      '0', 'sin({{angle}}*(t-0.5))', 'cos({{angle}}*(t-0.5))', '0',
+      '0', '0', '0', '1',
+    ],
+    vars: [{ name: 'angle', value: 90 }],
+  },
+  slideX: {
+    matrix: [
+      '1', '0', '0', '{{distance}}*(t-0.5)',
+      '0', '1', '0', '0',
+      '0', '0', '1', '0',
+      '0', '0', '0', '1',
+    ],
+    vars: [{ name: 'distance', value: 40 }],
+  },
+  grow: {
+    matrix: [
+      '{{start}}+(1-{{start}})*t', '0', '0', '0',
+      '0', '{{start}}+(1-{{start}})*t', '0', '0',
+      '0', '0', '{{start}}+(1-{{start}})*t', '0',
+      '0', '0', '0', '1',
+    ],
+    vars: [{ name: 'start', value: 0.5 }],
+  },
 }
+
+/** Presets from before they had variables, and the value they stood for. */
+const LEGACY: Record<string, [Exclude<MotionPresetId, 'custom'>, number]> = {
+  spinY90: ['spinY', 90],
+  spinY180: ['spinY', 180],
+  spinY360: ['spinY', 360],
+  tiltX90: ['tiltX', 90],
+}
+
+export const VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 export function isPresetId(preset: string): preset is MotionPresetId {
   return (MOTION_PRESET_IDS as readonly string[]).includes(preset)
 }
 
-/** A saved preset and its number, reading presets from before they took one. */
-export function readPreset(preset: string, amount: unknown): [MotionPresetId, number] | null {
-  if (preset in LEGACY) return LEGACY[preset]
-  if (!isPresetId(preset)) return null
-  const range = PRESET_AMOUNTS[preset]
-  if (!range) return [preset, 0]
-  const n = typeof amount === 'number' && Number.isFinite(amount) ? amount : range.initial
-  return [preset, Math.min(range.max, Math.max(range.min, n))]
+/** Write each `{{name}}` as its value. */
+export function substituteVars(expr: string, vars: readonly MotionVar[]): { ok: true; expr: string } | { ok: false; error: string } {
+  let missing = ''
+  const out = expr.replace(/\{\{\s*([^}]*?)\s*\}\}/g, (_, name: string) => {
+    const v = vars.find((x) => x.name === name)
+    if (!v) {
+      missing ||= name
+      return '0'
+    }
+    return `(${v.value})`
+  })
+  return missing ? { ok: false, error: `Unknown variable "${missing}"` } : { ok: true, expr: out }
 }
 
 export type MatrixEvalResult =
   | { ok: true; samples: number[][] }
   | { ok: false; error: string; cell: number }
 
-export function evaluateMatrixSamples(matrix: readonly string[], count = MOTION_SAMPLES): MatrixEvalResult {
+export function evaluateMatrixSamples(matrix: readonly string[], vars: readonly MotionVar[] = [], count = MOTION_SAMPLES): MatrixEvalResult {
   if (matrix.length !== 16) {
     return { ok: false, error: 'Matrix must have 16 cells', cell: 0 }
   }
   const fns: CompiledExpr[] = []
   for (let c = 0; c < 16; c++) {
-    const res = compileExpr(matrix[c])
+    const sub = substituteVars(matrix[c], vars)
+    if (!sub.ok) return { ok: false, error: sub.error, cell: c }
+    const res = compileExpr(sub.expr)
     if (!res.ok) {
       return { ok: false, error: res.error, cell: c }
     }
@@ -145,15 +161,15 @@ export function sampleMotion(samples: readonly (readonly number[])[], t: number)
 }
 
 const DEFAULT_IDENTITY_SAMPLES: readonly (readonly number[])[] = (() => {
-  const res = evaluateMatrixSamples(IDENTITY_MATRIX_STRINGS, MOTION_SAMPLES)
+  const res = evaluateMatrixSamples(IDENTITY_MATRIX_STRINGS)
   return res.ok ? res.samples : []
 })()
 
 export function defaultMotion(): HoloMotion {
   return {
     preset: 'none',
-    amount: 0,
     matrix: [...IDENTITY_MATRIX_STRINGS],
+    vars: [],
     samples: DEFAULT_IDENTITY_SAMPLES.map((s) => [...s]),
   }
 }
@@ -161,19 +177,37 @@ export function defaultMotion(): HoloMotion {
 export function cloneMotion(m: HoloMotion): HoloMotion {
   return {
     preset: m.preset,
-    amount: m.amount,
     matrix: [...m.matrix],
+    vars: m.vars.map((v) => ({ ...v })),
     samples: m.samples.map((s) => [...s]),
   }
 }
 
-export function makePresetMotion(preset: Exclude<MotionPresetId, 'custom'>, amount = PRESET_AMOUNTS[preset]?.initial ?? 0): HoloMotion {
-  const matrix = presetMatrixStrings(preset, amount) ?? [...IDENTITY_MATRIX_STRINGS]
-  const res = evaluateMatrixSamples(matrix, MOTION_SAMPLES)
-  return {
-    preset,
-    amount,
-    matrix,
-    samples: res.ok ? res.samples : DEFAULT_IDENTITY_SAMPLES.map((s) => [...s]),
+/**
+ * A motion from a matrix and its variables, or null when they do not evaluate. A preset keeps its
+ * own matrix and variable names; only the values given are taken.
+ */
+export function makeMotion(preset: string, matrix: readonly string[], vars: readonly MotionVar[]): HoloMotion | null {
+  let m = [...matrix]
+  let v = vars.map((x) => ({ ...x }))
+  if (preset !== 'custom') {
+    const p = PRESETS[preset as Exclude<MotionPresetId, 'custom'>]
+    if (!p) return null
+    m = [...p.matrix]
+    v = p.vars.map((x) => ({ name: x.name, value: vars.find((y) => y.name === x.name)?.value ?? x.value }))
   }
+  const res = evaluateMatrixSamples(m, v)
+  return res.ok ? { preset, matrix: m, vars: v, samples: res.samples } : null
+}
+
+export function makePresetMotion(preset: Exclude<MotionPresetId, 'custom'>): HoloMotion {
+  return makeMotion(preset, [], []) ?? defaultMotion()
+}
+
+/** A saved motion read back, including presets from before they had variables. */
+export function readMotion(preset: string, matrix: readonly string[] | null, vars: readonly MotionVar[]): HoloMotion | null {
+  const legacy = LEGACY[preset]
+  if (legacy) return makeMotion(legacy[0], [], [{ name: PRESETS[legacy[0]].vars[0].name, value: legacy[1] }])
+  if (!isPresetId(preset)) return null
+  return makeMotion(preset, matrix ?? IDENTITY_MATRIX_STRINGS, vars)
 }

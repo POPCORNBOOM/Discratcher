@@ -397,7 +397,7 @@
   "holo.tiltAuto": "自动（±{n}°）",
   "holo.motionSpinY": "绕竖轴转",
   "holo.motionTiltX": "前后翻",
-  "holo.motionAngle": "角度",
-  "holo.motionDistance": "距离",
-  "holo.motionStartSize": "起始大小"
+  "holo.motionVars": "变量",
+  "holo.motionAddVar": "添加变量",
+  "holo.motionVarName": "变量名"
 }

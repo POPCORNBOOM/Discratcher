@@ -889,7 +889,7 @@ mod tests {
                 [1.0, 0.0, 0.0, -10.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
                 [1.0, 0.0, 0.0, 10.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
             ],
-            amount: 20.0,
+            vars: vec![],
         };
         let anim_targets = position_targets(&p_transform, &[&moved], LAMP_MM, &opts, &preset).unwrap();
         assert_ne!(anim_targets[0], anim_targets[TRANSFORM_VIEWS - 1], "sliding motion should change target across views");
@@ -940,7 +940,7 @@ mod tests {
             scale_mm: 30.0,
             position_id: "0".into(),
             style: ink::Style::default(),
-            motion: model3d::Motion { preset: "spinY".into(), matrix: vec![], samples, amount: 180.0 },
+            motion: model3d::Motion { preset: "spinY".into(), matrix: vec![], samples, vars: vec![] },
         };
         let p0 = Position { mode: model3d::Mode::Transform, ..pos("0", 0.0, 30.0) };
         let lamp = [225.0, 0.0, 400.0];
@@ -1478,7 +1478,7 @@ mod frames_study {
             scale_mm: 30.0,
             position_id: "0".into(),
             style,
-            motion: model3d::Motion { preset: "spinY".into(), matrix: vec![], samples, amount: 180.0 },
+            motion: model3d::Motion { preset: "spinY".into(), matrix: vec![], samples, vars: vec![] },
         };
         let pos = Position {
             id: "0".into(),
