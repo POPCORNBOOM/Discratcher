@@ -140,6 +140,8 @@ const props = defineProps<{
   images: HoloImage[]
   thumbnails: Record<string, string>
   selectedImageId: string | null
+  /** Show only what is selected, when anything is. */
+  isolate: boolean
 }>()
 
 const emit = defineEmits<{
@@ -365,6 +367,7 @@ function buildMarkers() {
     markers.add(arrow)
   }
   scene.add(markers)
+  markers.visible = !isolated()
   paintMarkers()
   turnGroups()
 }
@@ -387,7 +390,7 @@ const markerAt_ = new Vector3()
 /** The arrow nearest the pointer on screen, if within reach. */
 function markerAt(e: PointerEvent): string | null {
   const el = canvas.value
-  if (!markers || !camera || !el) return null
+  if (!markers?.visible || !camera || !el) return null
   const rect = el.getBoundingClientRect()
   let best: string | null = null
   let bestD = MARKER_REACH_PX
@@ -513,7 +516,7 @@ function applyMotionWrapper(entry: ObjectEntry, obj: HoloSceneObject) {
   }
   const m = sampleMotion(obj.motion.samples, props.previewT)
   const still = m.every((v, i) => Math.abs(v - (i % 5 === 0 ? 1 : 0)) < 1e-6)
-  wrapper.visible = obj.visible && !still
+  wrapper.visible = obj.visible && shown(obj.id) && !still
   if (!wrapper.visible) return
   ghost.position.copy(mesh.position)
   ghost.rotation.copy(mesh.rotation)
@@ -596,7 +599,7 @@ function syncObjects() {
     const group = groupFor(obj.positionId)
     if (mesh.parent !== group) group.add(mesh)
     if (wrapper.parent !== group) group.add(wrapper)
-    mesh.visible = obj.visible
+    mesh.visible = obj.visible && shown(obj.id)
     mesh.position.set(obj.positionMm[0], obj.positionMm[1], obj.positionMm[2])
     mesh.rotation.set(
       MathUtils.degToRad(obj.rotationDeg[0]),
@@ -1572,19 +1575,29 @@ watch(() => [props.mode, props.snap], () => {
   syncGizmoAttachment()
 })
 watch(() => props.previewT, () => syncMotionTransforms())
-watch(() => [props.objects, props.meshes, props.selectedId, props.positions, props.positionId], () => syncObjects(), { deep: true })
+watch(() => [props.objects, props.meshes, props.selectedId, props.selectedImageId, props.isolate, props.positions, props.positionId], () => syncObjects(), { deep: true })
+
+/** The selected model's or picture's id, when only it is to be shown. */
+const isolated = () => (props.isolate ? (props.selectedId && props.selectedId !== LAMP_ID ? props.selectedId : props.selectedImageId) : null)
+/** Whether the model or picture `id` is drawn: everything, unless only the selection is. */
+function shown(id: string) {
+  const only = isolated()
+  return !only || only === id
+}
 
 function syncPictures() {
   if (pictureDrag) return
   pictures?.sync({
     images: props.images, positions: props.positions, positionId: props.positionId, thumbnails: props.thumbnails,
     // The 2D manipulation frame renders the selection outline and handles.
-    selectedId: null, innerRadiusMm: props.innerRadiusMm, outerRadiusMm: props.outerRadiusMm,
+    selectedId: null, only: isolated(), innerRadiusMm: props.innerRadiusMm, outerRadiusMm: props.outerRadiusMm,
   })
+  // The rim's position arrows go with everything else that is not the selection.
+  if (markers) markers.visible = !isolated()
   syncGizmoAttachment()
 }
 
-watch(() => [props.images, props.thumbnails, props.selectedImageId, props.positions, props.positionId, props.innerRadiusMm, props.outerRadiusMm], syncPictures, { deep: true })
+watch(() => [props.images, props.thumbnails, props.selectedId, props.selectedImageId, props.isolate, props.positions, props.positionId, props.innerRadiusMm, props.outerRadiusMm], syncPictures, { deep: true })
 
 onBeforeUnmount(() => {
   canvas.value?.removeEventListener('pointermove', onGizmoHoverPriority)

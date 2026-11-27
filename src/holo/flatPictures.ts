@@ -64,6 +64,8 @@ export interface FlatPictureState {
   /** Each picture's thumbnail, a data URL, by path. */
   thumbnails: Readonly<Record<string, string>>
   selectedId: string | null
+  /** When set, the only picture drawn. */
+  only: string | null
   innerRadiusMm: number
   outerRadiusMm: number
 }
@@ -137,7 +139,7 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
       e.mesh.rotation.set(0, 0, -(img.rotationDeg * Math.PI) / 180)
       e.mesh.renderOrder = 2 + order
       e.mesh.updateMatrix()
-      e.mesh.visible = !!e.texture
+      e.mesh.visible = !!e.texture && (!st.only || st.only === img.id)
       e.outline.visible = img.id === st.selectedId
       const pos = st.positions.find((q) => q.id === img.positionId)
       const u = e.mesh.material.uniforms

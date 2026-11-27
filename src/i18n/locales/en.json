@@ -276,6 +276,7 @@
   "holo.sizeY": "Height",
   "holo.sizeZ": "Thickness",
   "holo.size": "Size",
+  "holo.isolate": "Show only the selection",
   "holo.snap": "Snap to grid",
   "holo.swatchBurn": "Burn calibration disc",
   "holo.swatchNote": "16 concentric codebook rings",

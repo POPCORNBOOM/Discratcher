@@ -515,6 +515,15 @@
             :data-tooltip="t('holo.snap')"
             @click="snap = !snap"
           />
+          <UiButton
+            icon-only
+            :variant="isolate ? 'soft' : 'ghost'"
+            :icon="mdiImageFilterCenterFocus"
+            :aria-label="t('holo.isolate')"
+            :aria-pressed="isolate"
+            :data-tooltip="`${t('holo.isolate')} (H)`"
+            @click="isolate = !isolate"
+          />
           <span class="sep" aria-hidden="true" />
           <UiButton
             icon-only
@@ -600,6 +609,7 @@
           :images="scene.images"
           :thumbnails="thumbnails"
           :selected-image-id="selectedImageId"
+          :isolate="isolate"
           @select="selectObject"
           @select-image="choosePicture"
           @image-transform="onImageTransform"
@@ -701,6 +711,7 @@ import {
   mdiFlaskOutline,
   mdiFolderOpenOutline,
   mdiGrid,
+  mdiImageFilterCenterFocus,
   mdiImageOutline,
   mdiImagePlusOutline,
   mdiLayersOutline,
@@ -863,6 +874,8 @@ const shownTab = ref<'edit' | 'preview'>('edit')
 const SWING_MS = 420
 const gizmoMode = ref<GizmoMode>('all')
 const snap = ref(false)
+/** The 3D view shows only the selected model or picture. */
+const isolate = ref(false)
 const scene = ref<HoloScene>(emptyScene())
 const selectedId = ref<string | null>(null)
 /** The settings group open in the side panel. */
@@ -2147,6 +2160,7 @@ function onKeyDown(e: KeyboardEvent) {
 
   if (tab.value === 'edit') {
     if (key === 'q') { gizmoMode.value = 'all'; e.preventDefault() }
+    else if (key === 'h') { isolate.value = !isolate.value; e.preventDefault() }
     else if (key === 'w') { gizmoMode.value = 'translate'; e.preventDefault() }
     else if (key === 'e') { gizmoMode.value = 'rotate'; e.preventDefault() }
     else if (key === 'r') { gizmoMode.value = 'scale'; e.preventDefault() }
