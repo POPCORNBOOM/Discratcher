@@ -669,6 +669,7 @@
           :thumbnails="thumbnails"
           :selected-image-id="selectedImageId"
           :isolate="isolate"
+          :zones="zones"
           @select="selectObject"
           @select-image="choosePicture"
           @image-transform="onImageTransform"
@@ -685,8 +686,8 @@
         <div class="float left small muted gestures edit-gestures">
           <span v-for="g in editGestures" :key="g.text" class="gesture"><UiIcon :path="g.icon" :size="16" />{{ g.text }}</span>
         </div>
-        <div class="float legend small muted" aria-hidden="true">
-          <span class="legend-name">{{ t('holo.legendDepth') }}</span>
+        <div v-if="zones" class="float legend small muted" aria-hidden="true">
+          <span class="legend-name">{{ t(zones === 'colour' ? 'holo.legendColour' : 'holo.legendDepth') }}</span>
           <span class="scale">
             <i class="ramp" />
             <i class="unusable" />
@@ -829,6 +830,7 @@ import {
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, shallowRef, watch } from 'vue'
 import { call, on, defaultDesignLocation, pickDesign, pickFolder, pickImage, pickLegacyScene, pickModel, revealPath, type RecentDesign } from '../api'
 import { DESIGN_TEMPLATES, type DesignTemplate } from '../holo/templates'
+import type { ZoneKind } from '../holo/usability'
 import HoloPreview from '../components/HoloPreview.vue'
 import HoloViewport3D, { type GizmoMode } from '../components/HoloViewport3D.vue'
 import UiAdvanced from '../components/UiAdvanced.vue'
@@ -1369,6 +1371,9 @@ const positionImages = computed(() => scene.value.images.filter((i) => i.positio
 const imagesFull = computed(() => positionImages.value.length >= MAX_LAYERS)
 const selectedImageId = ref<string | null>(null)
 const selectedImage = computed(() => positionImages.value.find((i) => i.id === selectedImageId.value) ?? null)
+/** The disc's zones follow what is selected: colour for a colour picture, none for a grey one,
+ * which is carved and shows from anywhere, and depth otherwise. */
+const zones = computed<ZoneKind | null>(() => (selectedImage.value ? (selectedImage.value.colour ? 'colour' : null) : 'depth'))
 /** Thumbnails and tone hints, by path. */
 const pictures = ref<Record<string, ArtworkAnalysis>>({})
 const thumbnails = computed(() => Object.fromEntries(Object.entries(pictures.value).map(([p, a]) => [p, a.thumbnail])))

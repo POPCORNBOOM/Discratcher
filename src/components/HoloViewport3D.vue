@@ -85,7 +85,7 @@ import {
 import type { DisplayMeshData } from '../holo/sampleMesh'
 import { round1, type HoloImage, type HoloPosition, type HoloSceneObject } from '../holo/scene'
 import { cropUniforms } from '../holo/cropGlsl'
-import { zonesMaterial } from '../holo/usability'
+import { zonesMaterial, type ZoneKind } from '../holo/usability'
 import { layerExtent } from '../layers'
 
 export type GizmoMode = 'all' | 'translate' | 'rotate' | 'scale'
@@ -142,6 +142,8 @@ const props = defineProps<{
   selectedImageId: string | null
   /** Show only what is selected, when anything is. */
   isolate: boolean
+  /** What the zones on the disc show; none hides them. */
+  zones: ZoneKind | null
 }>()
 
 const emit = defineEmits<{
@@ -412,6 +414,8 @@ function updateZones() {
   if (!u) return
   ;(u.lamp.value as Vector3).set(...props.lampMm)
   u.distance.value = props.distanceMm
+  u.kind.value = props.zones === 'colour' ? 1 : 0
+  if (usabilityMesh) usabilityMesh.visible = props.zones !== null
   const left = turnLeft()
   u.phi.value = Math.abs(left) < 0.05 ? 0 : MathUtils.degToRad(left)
   const c = cropUniforms(currentPosition())
@@ -1560,7 +1564,7 @@ watch(() => [props.positions, props.positionId], () => {
   buildMarkers()
   updateZones()
 }, { deep: true })
-watch(() => [props.lampMm, props.distanceMm], () => {
+watch(() => [props.lampMm, props.distanceMm, props.zones], () => {
   updateZones()
   syncLamp()
 }, { deep: true })
