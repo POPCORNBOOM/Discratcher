@@ -8,14 +8,21 @@ export const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p
 export const coverSize = (l: Pick<Layer, 'width' | 'height'>) => Math.max(l.width, l.height) / Math.max(1, Math.min(l.width, l.height))
 
 /** What a layer from an older file lacks. */
-const NEW_EFFECTS = { pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0 }
+const NEW_EFFECTS = { pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0, stretchX: 1, stretchY: 1 }
+
+/** A picture's width and height on the disc, as shares of the diameter (`Composition::new`). */
+export function layerExtent(l: Pick<Layer, 'width' | 'height' | 'size' | 'stretchX' | 'stretchY'>): [number, number] {
+  const long = Math.max(l.width, l.height, 1)
+  const s = (v: number) => (Number.isFinite(v) && v > 0 ? v : 1)
+  return [(l.size * s(l.stretchX) * l.width) / long, (l.size * s(l.stretchY) * l.height) / long]
+}
 
 /** A new layer for `file`. The first picture fills the disc; later ones arrive smaller, on top. */
 export function makeLayer(file: string, a: ArtworkAnalysis, first: boolean): Layer {
   const l: Layer = {
     id: crypto.randomUUID(), path: file, name: fileName(file), width: a.width, height: a.height,
     x: 0, y: 0, size: 0, rotationDeg: 0, invert: a.suggestInvert, contrast: 0, brightness: 0,
-    pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0,
+    pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0, stretchX: 1, stretchY: 1,
   }
   l.size = first ? coverSize(l) : 0.5
   return l
@@ -50,5 +57,6 @@ export function readLayer(raw: unknown): Layer | null {
     width: num(l.width, 1), height: num(l.height, 1),
     x: num(l.x, 0), y: num(l.y, 0), size: num(l.size, 1), rotationDeg: num(l.rotationDeg, 0),
     invert: !!l.invert, contrast: num(l.contrast, 0), brightness: num(l.brightness, 0),
+    stretchX: num(l.stretchX, 1), stretchY: num(l.stretchY, 1),
   }
 }

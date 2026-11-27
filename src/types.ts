@@ -73,6 +73,9 @@ export interface Layer {
   repeatAngle: number
   /** Percent of a tile every other row slides along. */
   repeatStagger: number
+  /** Stretch along the picture's own width and height; 1 keeps its shape. */
+  stretchX: number
+  stretchY: number
 }
 export interface CarveJobConfig {
   /** Bottom first. */

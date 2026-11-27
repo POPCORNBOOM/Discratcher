@@ -2,7 +2,15 @@
   <div
     ref="host"
     class="vp3d"
-    :class="{ grabbing: planeDragging, pointing: !!hoveredMarker }"
+    :class="{
+      grabbing: planeDragging || frameCursor === 'grabbing',
+      pointing: !!hoveredMarker,
+      moving: !planeDragging && !hoveredMarker && frameCursor === 'move',
+      'resize-nwse': !planeDragging && !hoveredMarker && frameCursor === 'nwse',
+      'resize-nesw': !planeDragging && !hoveredMarker && frameCursor === 'nesw',
+      'resize-ew': !planeDragging && !hoveredMarker && frameCursor === 'ew',
+      'resize-ns': !planeDragging && !hoveredMarker && frameCursor === 'ns',
+    }"
     @pointerdown.capture="routeOrbitButtons"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
@@ -68,11 +76,51 @@ import {
 import { createAxesGizmo } from '../holo/axesGizmo'
 import { createFlatPictures } from '../holo/flatPictures'
 import { sampleMotion } from '../holo/motion'
+import {
+  createPictureFrame,
+  type CornerHandleKind,
+  type EdgeHandleKind,
+  type PictureFrameTarget,
+  type PictureHandleKind,
+} from '../holo/pictureFrame'
 import type { DisplayMeshData } from '../holo/sampleMesh'
 import { DEFAULT_CROP_DEG, round1, type HoloImage, type HoloPosition, type HoloSceneObject } from '../holo/scene'
 import { zonesMaterial } from '../holo/usability'
+import { layerExtent } from '../layers'
 
-export type GizmoMode = 'translate' | 'rotate' | 'scale'
+export type GizmoMode = 'all' | 'translate' | 'rotate' | 'scale'
+type SingleGizmoMode = 'translate' | 'rotate' | 'scale'
+type FrameCursor = 'move' | 'nwse' | 'nesw' | 'ew' | 'ns' | 'grab' | 'grabbing'
+type PictureDragMode = 'move' | 'scale' | 'stretchX' | 'stretchY' | 'rotate'
+
+interface PictureDragState {
+  id: string
+  positionId: string
+  mode: PictureDragMode
+  handle: PictureHandleKind | null
+  plane: Plane
+  imgWidth: number
+  imgHeight: number
+  across: number
+  startLocalX: number
+  startLocalY: number
+  startCenterX: number
+  startCenterY: number
+  startX: number
+  startY: number
+  startSize: number
+  startStretchX: number
+  startStretchY: number
+  startRotDeg: number
+  startDist: number
+  startEdgeDist: number
+  startAngle: number
+  axisXx: number
+  axisXy: number
+  axisYx: number
+  axisYy: number
+  started: boolean
+}
 
 const props = defineProps<{
   objects: HoloSceneObject[]
@@ -98,7 +146,7 @@ const emit = defineEmits<{
   select: [id: string | null]
   'select-image': [id: string]
   /** A picture moved, turned or sized with the handles: its layer's new place (`Layer`). */
-  'image-transform': [payload: { id: string; x: number; y: number; size: number; rotationDeg: number }]
+  'image-transform': [payload: { id: string; x: number; y: number; size: number; stretchX: number; stretchY: number; rotationDeg: number }]
   position: [id: string]
   'transform-start': [id: string]
   'transform-change': [payload: { id: string; positionMm: Vec3; rotationDeg: Vec3; scaleMm: Vec3 }]
@@ -106,8 +154,15 @@ const emit = defineEmits<{
 }>()
 
 const SNAP_TRANSLATE_MM = 2
-const SNAP_ROTATE_RAD = MathUtils.degToRad(15)
+const SNAP_ROTATE_DEG = 15
+const SNAP_ROTATE_RAD = MathUtils.degToRad(SNAP_ROTATE_DEG)
 const SNAP_SCALE_MM = 2
+const GIZMO_SINGLE_SIZE = 0.85
+const GIZMO_ALL_SIZES: Record<SingleGizmoMode, number> = {
+  translate: 0.8,
+  rotate: 1.0,
+  scale: 1.25,
+}
 const CAMERA_FOV_DEG = 32
 const CAMERA_VIEW_DIST_MM = 275
 const LAMP_CONE_SEGMENTS = 96
@@ -117,14 +172,17 @@ const host = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const webglError = ref('')
 const planeDragging = ref(false)
+const frameCursor = ref<FrameCursor | null>(null)
 
 let renderer: WebGLRenderer | null = null
 let scene: Scene | null = null
 let camera: PerspectiveCamera | null = null
 let axes: ReturnType<typeof createAxesGizmo> | null = null
 let pictures: ReturnType<typeof createFlatPictures> | null = null
+let pictureFrame: ReturnType<typeof createPictureFrame> | null = null
 let orbit: OrbitControls | null = null
-let gizmo: TransformControls | null = null
+let gizmos: Record<SingleGizmoMode, TransformControls> | null = null
+let activeGizmo: TransformControls | null = null
 let resizeObs: ResizeObserver | null = null
 let animFrame = 0
 
@@ -161,6 +219,7 @@ raycaster.params.Line.threshold = 3
 const pointerNdc = new Vector2()
 const dragPlane = new Plane(new Vector3(0, 0, 1), 0)
 const dragHit = new Vector3()
+const dragLocal = new Vector3()
 const dragOffset = new Vector3()
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -169,7 +228,7 @@ let pointerDownPos = { x: 0, y: 0 }
 let dragTargetId: string | null = null
 let dragTargetZ = 0
 let dragStarted = false
-let suppressSync = false
+let pictureDrag: PictureDragState | null = null
 
 function makeCirclePoints(radius: number, segments = 128, z = 0.08): Vector3[] {
   const pts: Vector3[] = []
@@ -481,13 +540,13 @@ function syncMotionTransforms() {
 }
 
 function syncObjects() {
-  if (!scene || suppressSync) return
+  if (!scene || gizmoDragging || planeDragging.value) return
   const activeIds = new Set(props.objects.map((o) => o.id))
 
   // Remove deleted objects
   for (const [id, entry] of objectMeshes) {
     if (!activeIds.has(id)) {
-      if (gizmo?.object === entry.mesh) gizmo.detach()
+      detachGizmosFrom(entry.mesh)
       entry.mesh.removeFromParent()
       entry.wrapper.removeFromParent()
       ;(entry.mesh.material as MeshStandardMaterial).dispose()
@@ -503,7 +562,7 @@ function syncObjects() {
     let entry = objectMeshes.get(obj.id)
     if (!entry || entry.path !== obj.path) {
       if (entry) {
-        if (gizmo?.object === entry.mesh) gizmo.detach()
+        detachGizmosFrom(entry.mesh)
         entry.mesh.removeFromParent()
         entry.wrapper.removeFromParent()
         ;(entry.mesh.material as MeshStandardMaterial).dispose()
@@ -621,7 +680,7 @@ function buildLamp() {
 
 function syncLamp() {
   if (!lampMesh || !lampCone) return
-  if (!(gizmoDragging && gizmo?.object === lampMesh)) lampMesh.position.set(...props.lampMm)
+  if (!(gizmoDragging && activeGizmo?.object === lampMesh)) lampMesh.position.set(...props.lampMm)
   const pos = lampCone.geometry.getAttribute('position') as Float32BufferAttribute
   const at = lampMesh.position
   pos.setXYZ(0, at.x, at.y, at.z)
@@ -650,39 +709,223 @@ function stepLightFade(dtMs: number) {
   lampCone.visible = lightFade > 0
 }
 
+function gizmoList(): TransformControls[] {
+  return gizmos ? [gizmos.translate, gizmos.rotate, gizmos.scale] : []
+}
+
+function anyGizmoAxis(): boolean {
+  return gizmoList().some((g) => Boolean(g.axis))
+}
+
+function detachGizmosFrom(mesh?: Mesh) {
+  for (const g of gizmoList()) {
+    if (!mesh || g.object === mesh) {
+      if (g.object) g.detach()
+      g.enabled = false
+    }
+  }
+}
+
+/** Keep only the highest-priority hovered handle highlighted in 'all' mode, matching pointerdown order. */
+function onGizmoHoverPriority() {
+  if (!gizmos || gizmoDragging || props.mode !== 'all') return
+  if (gizmos.translate.axis) {
+    gizmos.rotate.axis = null
+    gizmos.scale.axis = null
+  } else if (gizmos.rotate.axis) {
+    gizmos.scale.axis = null
+  }
+}
+
+function onGizmoDraggingChanged(control: TransformControls, dragging: boolean) {
+  if (dragging) {
+    if (activeGizmo && activeGizmo !== control) return
+    activeGizmo = control
+    gizmoDragging = true
+    for (const g of gizmoList()) {
+      if (g !== control) g.enabled = false
+    }
+    if (orbit) orbit.enabled = false
+    if (props.selectedId) emit('transform-start', props.selectedId)
+    return
+  }
+  if (activeGizmo !== control) return
+  activeGizmo = null
+  gizmoDragging = false
+  if (orbit) orbit.enabled = true
+  if (props.selectedId) {
+    emit('transform-end', props.selectedId)
+    syncMotionTransforms()
+  }
+  // Defer re-enabling the other controls until after the current pointerup dispatch finishes.
+  queueMicrotask(() => {
+    if (gizmoDragging) return
+    syncObjects()
+    for (const g of gizmoList()) g.enabled = Boolean(g.object)
+  })
+}
+
+function onGizmoObjectChange(control: TransformControls) {
+  if (activeGizmo !== control || !gizmoDragging) return
+  const mesh = control.object
+  const id = props.selectedId
+  if (!mesh || !id) return
+
+  if (id === LAMP_ID) {
+    const at: Vec3 = [
+      MathUtils.clamp(Math.round(mesh.position.x), -LAMP_REACH_MM, LAMP_REACH_MM),
+      MathUtils.clamp(Math.round(mesh.position.y), -LAMP_REACH_MM, LAMP_REACH_MM),
+      MathUtils.clamp(Math.round(mesh.position.z), LAMP_MIN_UP_MM, LAMP_MAX_UP_MM),
+    ]
+    mesh.position.set(...at)
+    syncLamp()
+    emit('transform-change', { id, positionMm: at, rotationDeg: [0, 0, 0], scaleMm: [1, 1, 1] })
+    return
+  }
+
+  const obj = props.objects.find((o) => o.id === id)
+  if (!obj) return
+
+  // Update only the channel owned by the dragging control so the other channels never drift.
+  let pos: Vec3 = [...obj.positionMm] as Vec3
+  let rot: Vec3 = [...obj.rotationDeg] as Vec3
+  let nextScale: Vec3 = [...obj.scaleMm] as Vec3
+  const controlMode = control.getMode()
+
+  if (controlMode === 'translate') {
+    pos = [
+      MathUtils.clamp(round1(mesh.position.x), -DISC_PHYSICAL_OUTER_MM, DISC_PHYSICAL_OUTER_MM),
+      MathUtils.clamp(round1(mesh.position.y), -DISC_PHYSICAL_OUTER_MM, DISC_PHYSICAL_OUTER_MM),
+      MathUtils.clamp(round1(mesh.position.z), -40, 40),
+    ]
+    mesh.position.set(pos[0], pos[1], pos[2])
+  } else if (controlMode === 'rotate') {
+    rot = [
+      round1(MathUtils.radToDeg(mesh.rotation.x)),
+      round1(MathUtils.radToDeg(mesh.rotation.y)),
+      round1(MathUtils.radToDeg(mesh.rotation.z)),
+    ]
+  } else if (controlMode === 'scale') {
+    // Each axis scales on its own; the centre box (XYZ) scales all three together.
+    const ax = control.axis ?? 'XYZ'
+    const axisNames: readonly ('X' | 'Y' | 'Z')[] = ['X', 'Y', 'Z']
+    const raw: Vec3 = [mesh.scale.x, mesh.scale.y, mesh.scale.z]
+    nextScale = raw.map((v, i) => {
+      if (!ax.includes(axisNames[i])) return obj.scaleMm[i]
+      const s = MathUtils.clamp(round1(v), 2, 120)
+      return props.snap ? Math.max(2, Math.round(s / SNAP_SCALE_MM) * SNAP_SCALE_MM) : s
+    }) as Vec3
+    mesh.scale.set(...nextScale)
+  }
+
+  const entry = objectMeshes.get(id)
+  if (entry) applyMotionWrapper(entry, obj)
+  updateDropIndicator({ ...obj, positionMm: pos, rotationDeg: rot, scaleMm: nextScale })
+  emit('transform-change', { id, positionMm: pos, rotationDeg: rot, scaleMm: nextScale })
+}
+
+function attachSingleGizmo(control: TransformControls, mesh: Mesh, size: number) {
+  control.setSize(size)
+  control.showX = control.showY = control.showZ = true
+  control.showXY = control.showYZ = control.showXZ = true
+  control.showE = control.showXYZE = true
+  if (control.object !== mesh) control.attach(mesh)
+  if (!gizmoDragging) control.enabled = true
+}
+
+function pictureTargetFor(img: HoloImage): PictureFrameTarget | null {
+  if (img.positionId !== props.positionId) return null
+  const mesh = pictures?.meshOf(img.id)
+  if (!mesh || !mesh.visible) return null
+  const across = 2 * props.outerRadiusMm
+  const [ew, eh] = layerExtent(img)
+  return {
+    id: img.id,
+    positionId: img.positionId,
+    cx: img.x * across,
+    cy: -img.y * across,
+    z: mesh.position.z,
+    widthMm: ew * across,
+    heightMm: eh * across,
+    rotationDeg: img.rotationDeg,
+  }
+}
+
+function syncPictureFrame() {
+  const img = props.images.find((i) => i.id === props.selectedImageId && i.positionId === props.positionId)
+  const target = img ? pictureTargetFor(img) : null
+  pictureFrame?.sync(target)
+  if (target && camera) pictureFrame?.updateForCamera(camera)
+  if (!target && !pictureDrag) frameCursor.value = null
+}
+
 function syncGizmoAttachment() {
-  if (!gizmo) return
-  // A lamp has a place and nothing else to change.
-  gizmo.setMode(props.selectedId === LAMP_ID ? 'translate' : props.mode)
-  // A picture lies on the disc: it moves and sizes across it and turns about its normal.
-  const picture = pictures?.meshOf(props.selectedImageId)
-  if (picture && props.images.some((i) => i.id === props.selectedImageId && i.positionId === props.positionId)) {
-    const turning = props.mode === 'rotate'
-    gizmo.showX = gizmo.showY = !turning
-    gizmo.showZ = turning
-    if (gizmo.object !== picture) gizmo.attach(picture)
+  if (!gizmos) return
+  syncPictureFrame()
+  // Selected flat pictures use the 2D disc-plane frame instead of 3D TransformControls.
+  const selectedImg = props.images.find((i) => i.id === props.selectedImageId && i.positionId === props.positionId)
+  if (selectedImg && pictures?.meshOf(selectedImg.id)) {
+    detachGizmosFrom()
     return
   }
-  gizmo.showX = gizmo.showY = gizmo.showZ = true
+
+  // The lamp has only a position, regardless of the active gizmo mode.
   if (props.selectedId === LAMP_ID && lampMesh) {
-    if (gizmo.object !== lampMesh) gizmo.attach(lampMesh)
+    attachSingleGizmo(gizmos.translate, lampMesh, GIZMO_SINGLE_SIZE)
+    for (const other of [gizmos.rotate, gizmos.scale]) {
+      if (other.object) other.detach()
+      other.enabled = false
+    }
     return
   }
+
   const selObj = props.objects.find((o) => o.id === props.selectedId && o.visible && o.positionId === props.positionId)
   const entry = selObj ? objectMeshes.get(selObj.id) : undefined
-  if (entry) {
-    if (gizmo.object !== entry.mesh) gizmo.attach(entry.mesh)
-  } else {
-    gizmo.detach()
+  if (!entry) {
+    detachGizmosFrom()
+    return
+  }
+
+  if (props.mode === 'all') {
+    const { translate, rotate, scale } = gizmos
+    translate.setSize(GIZMO_ALL_SIZES.translate)
+    translate.showX = translate.showY = translate.showZ = true
+    translate.showXY = translate.showYZ = translate.showXZ = true
+
+    rotate.setSize(GIZMO_ALL_SIZES.rotate)
+    rotate.showX = rotate.showY = rotate.showZ = true
+    rotate.showE = false
+    rotate.showXYZE = false
+
+    scale.setSize(GIZMO_ALL_SIZES.scale)
+    scale.showX = scale.showY = scale.showZ = true
+    scale.showXY = scale.showYZ = scale.showXZ = false
+
+    for (const g of [translate, rotate, scale]) {
+      if (g.object !== entry.mesh) g.attach(entry.mesh)
+      if (!gizmoDragging) g.enabled = true
+    }
+    return
+  }
+
+  const modes: readonly SingleGizmoMode[] = ['translate', 'rotate', 'scale']
+  for (const m of modes) {
+    const control = gizmos[m]
+    if (m === props.mode) {
+      attachSingleGizmo(control, entry.mesh, GIZMO_SINGLE_SIZE)
+    } else {
+      if (control.object) control.detach()
+      control.enabled = false
+    }
   }
 }
 
 function syncGizmoModeAndSnap() {
-  if (!gizmo) return
-  gizmo.setMode(props.selectedId === LAMP_ID ? 'translate' : props.mode)
-  gizmo.setTranslationSnap(props.snap ? SNAP_TRANSLATE_MM : null)
-  gizmo.setRotationSnap(props.snap ? SNAP_ROTATE_RAD : null)
-  gizmo.setScaleSnap(props.snap ? SNAP_SCALE_MM : null)
+  for (const g of gizmoList()) {
+    g.setTranslationSnap(props.snap ? SNAP_TRANSLATE_MM : null)
+    g.setRotationSnap(props.snap ? SNAP_ROTATE_RAD : null)
+    g.setScaleSnap(props.snap ? SNAP_SCALE_MM : null)
+  }
 }
 
 function resetCamera() {
@@ -833,10 +1076,205 @@ function routeOrbitButtons(e: PointerEvent) {
   if (orbit) orbit.mouseButtons.LEFT = e.button === 0 && e.altKey ? MOUSE.ROTATE : null
 }
 
+function wrapRotationDeg(deg: number): number {
+  let d = (((deg + 180) % 360) + 360) % 360 - 180
+  if (d <= -180) d += 360
+  return d
+}
+
+function isCornerHandle(kind: PictureHandleKind): kind is CornerHandleKind {
+  return kind === 'tl' || kind === 'tr' || kind === 'br' || kind === 'bl'
+}
+
+function isEdgeHandle(kind: PictureHandleKind): kind is EdgeHandleKind {
+  return kind === 'l' || kind === 'r' || kind === 't' || kind === 'b'
+}
+
+function intersectPicturePlane(e: PointerEvent, positionId: string, plane: Plane, out: Vector3): boolean {
+  if (!camera) return false
+  updatePointerNdc(e)
+  raycaster.setFromCamera(pointerNdc, camera)
+  if (!raycaster.ray.intersectPlane(plane, dragHit)) return false
+  const group = groupFor(positionId)
+  group.updateMatrixWorld(true)
+  group.worldToLocal(out.copy(dragHit))
+  return true
+}
+
+function beginPictureDrag(e: PointerEvent, img: HoloImage, mode: PictureDragMode, handle: PictureHandleKind | null) {
+  const mesh = pictures?.meshOf(img.id)
+  if (!mesh || !camera) return
+  const plane = new Plane(new Vector3(0, 0, 1), -mesh.position.z)
+  if (!intersectPicturePlane(e, img.positionId, plane, dragLocal)) return
+
+  const across = 2 * props.outerRadiusMm
+  const cx = img.x * across
+  const cy = -img.y * across
+  const theta = -MathUtils.degToRad(img.rotationDeg)
+  const cosT = Math.cos(theta)
+  const sinT = Math.sin(theta)
+  const dx = dragLocal.x - cx
+  const dy = dragLocal.y - cy
+  const startStretchX = Number.isFinite(img.stretchX) && img.stretchX > 0 ? img.stretchX : 1
+  const startStretchY = Number.isFinite(img.stretchY) && img.stretchY > 0 ? img.stretchY : 1
+
+  let startEdgeDist = 0.5
+  if (mode === 'stretchX') {
+    const sign = handle === 'r' ? 1 : -1
+    startEdgeDist = Math.max(sign * (dx * cosT + dy * sinT), 0.5)
+  } else if (mode === 'stretchY') {
+    const sign = handle === 't' ? 1 : -1
+    startEdgeDist = Math.max(sign * (-dx * sinT + dy * cosT), 0.5)
+  }
+
+  pictureDrag = {
+    id: img.id,
+    positionId: img.positionId,
+    mode,
+    handle,
+    plane,
+    imgWidth: img.width,
+    imgHeight: img.height,
+    across,
+    startLocalX: dragLocal.x,
+    startLocalY: dragLocal.y,
+    startCenterX: cx,
+    startCenterY: cy,
+    startX: img.x,
+    startY: img.y,
+    startSize: img.size,
+    startStretchX,
+    startStretchY,
+    startRotDeg: img.rotationDeg,
+    startDist: Math.max(Math.hypot(dx, dy), 0.5),
+    startEdgeDist,
+    startAngle: Math.atan2(dy, dx),
+    axisXx: cosT,
+    axisXy: sinT,
+    axisYx: -sinT,
+    axisYy: cosT,
+    started: false,
+  }
+
+  if (orbit) orbit.enabled = false
+  ;(e.currentTarget as HTMLElement | null)?.setPointerCapture(e.pointerId)
+  if (mode === 'move') frameCursor.value = 'move'
+  else if (mode === 'rotate') frameCursor.value = 'grabbing'
+  else if (handle && isCornerHandle(handle)) frameCursor.value = pictureFrame?.cornerCursor(handle, camera) ?? 'nwse'
+  else if (handle && isEdgeHandle(handle)) frameCursor.value = pictureFrame?.edgeCursor(handle, camera) ?? 'ew'
+}
+
+/** Update a picture drag strictly from pointerdown-captured values and the current ray hit. */
+function updatePictureDrag(e: PointerEvent) {
+  const drag = pictureDrag
+  if (!drag || !camera) return
+  const distPx = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y)
+  const threshold = drag.mode === 'move' ? 3 : 2
+  if (!drag.started && distPx < threshold) return
+  if (!drag.started) {
+    drag.started = true
+    emit('transform-start', drag.id)
+  }
+  if (!intersectPicturePlane(e, drag.positionId, drag.plane, dragLocal)) return
+
+  let nx = drag.startCenterX
+  let ny = drag.startCenterY
+  let x = drag.startX
+  let y = drag.startY
+  let size = drag.startSize
+  let stretchX = drag.startStretchX
+  let stretchY = drag.startStretchY
+  let rotationDeg = drag.startRotDeg
+
+  if (drag.mode === 'move') {
+    nx = drag.startCenterX + (dragLocal.x - drag.startLocalX)
+    ny = drag.startCenterY + (dragLocal.y - drag.startLocalY)
+    if (props.snap) {
+      nx = Math.round(nx / SNAP_TRANSLATE_MM) * SNAP_TRANSLATE_MM
+      ny = Math.round(ny / SNAP_TRANSLATE_MM) * SNAP_TRANSLATE_MM
+    }
+    nx = MathUtils.clamp(round1(nx), -DISC_PHYSICAL_OUTER_MM, DISC_PHYSICAL_OUTER_MM)
+    ny = MathUtils.clamp(round1(ny), -DISC_PHYSICAL_OUTER_MM, DISC_PHYSICAL_OUTER_MM)
+    x = Math.round((nx / drag.across) * 1000) / 1000
+    y = Math.round((-ny / drag.across) * 1000) / 1000
+  } else if (drag.mode === 'scale') {
+    const curDist = Math.hypot(dragLocal.x - drag.startCenterX, dragLocal.y - drag.startCenterY)
+    size = MathUtils.clamp(Math.round((drag.startSize * (curDist / drag.startDist)) * 1000) / 1000, 0.02, 3)
+  } else if (drag.mode === 'stretchX') {
+    const sign = drag.handle === 'r' ? 1 : -1
+    const proj = sign * ((dragLocal.x - drag.startCenterX) * drag.axisXx + (dragLocal.y - drag.startCenterY) * drag.axisXy)
+    stretchX = MathUtils.clamp(Math.round((drag.startStretchX * (Math.max(0, proj) / drag.startEdgeDist)) * 1000) / 1000, 0.1, 4)
+  } else if (drag.mode === 'stretchY') {
+    const sign = drag.handle === 't' ? 1 : -1
+    const proj = sign * ((dragLocal.x - drag.startCenterX) * drag.axisYx + (dragLocal.y - drag.startCenterY) * drag.axisYy)
+    stretchY = MathUtils.clamp(Math.round((drag.startStretchY * (Math.max(0, proj) / drag.startEdgeDist)) * 1000) / 1000, 0.1, 4)
+  } else if (drag.mode === 'rotate') {
+    const curAngle = Math.atan2(dragLocal.y - drag.startCenterY, dragLocal.x - drag.startCenterX)
+    const rawDeg = drag.startRotDeg - MathUtils.radToDeg(curAngle - drag.startAngle)
+    rotationDeg = props.snap
+      ? wrapRotationDeg(Math.round(rawDeg / SNAP_ROTATE_DEG) * SNAP_ROTATE_DEG)
+      : round1(wrapRotationDeg(rawDeg))
+  }
+
+  const [ew, eh] = layerExtent({ width: drag.imgWidth, height: drag.imgHeight, size, stretchX, stretchY })
+  const widthMm = ew * drag.across
+  const heightMm = eh * drag.across
+  const mesh = pictures?.meshOf(drag.id)
+  if (mesh) {
+    mesh.position.set(nx, ny, mesh.position.z)
+    mesh.scale.set(widthMm, heightMm, 1)
+    mesh.rotation.set(0, 0, -MathUtils.degToRad(rotationDeg))
+    mesh.updateMatrix()
+    const u = (mesh.material as ShaderMaterial | undefined)?.uniforms
+    if (u?.toGroup) u.toGroup.value.copy(mesh.matrix)
+    pictureFrame?.sync({
+      id: drag.id,
+      positionId: drag.positionId,
+      cx: nx,
+      cy: ny,
+      z: mesh.position.z,
+      widthMm,
+      heightMm,
+      rotationDeg,
+    })
+  }
+  emit('image-transform', { id: drag.id, x, y, size, stretchX, stretchY, rotationDeg })
+}
+
+function updateFrameHover(e: PointerEvent) {
+  if (!camera || !pictureFrame) return
+  if (hoveredMarker.value || anyGizmoAxis()) {
+    pictureFrame.setHovered(null)
+    frameCursor.value = null
+    return
+  }
+  updatePointerNdc(e)
+  raycaster.setFromCamera(pointerNdc, camera)
+  const handle = pictureFrame.pickHandle(raycaster)
+  pictureFrame.setHovered(handle)
+  if (handle === 'rotate') {
+    frameCursor.value = 'grab'
+    return
+  }
+  if (handle && isCornerHandle(handle)) {
+    frameCursor.value = pictureFrame.cornerCursor(handle, camera)
+    return
+  }
+  if (handle && isEdgeHandle(handle)) {
+    frameCursor.value = pictureFrame.edgeCursor(handle, camera)
+    return
+  }
+  if (props.selectedImageId && !pickObjectId(e) && pickImageId(e) === props.selectedImageId) {
+    frameCursor.value = 'move'
+  } else {
+    frameCursor.value = null
+  }
+}
+
 function onPointerDown(e: PointerEvent) {
   if (e.button !== 0 || e.altKey || gizmoDragging) return
   // If pointer is hovering a TransformControls handle, let the gizmo own this drag.
-  if (gizmo?.axis) return
+  if (anyGizmoAxis()) return
   pointerDownPos = { x: e.clientX, y: e.clientY }
 
   const mark = markerAt(e)
@@ -844,10 +1282,37 @@ function onPointerDown(e: PointerEvent) {
     emit('position', mark)
     return
   }
+
+  // Check 2D picture frame handles before scene meshes since the frame renders on top.
+  if (camera && pictureFrame && props.selectedImageId) {
+    updatePointerNdc(e)
+    raycaster.setFromCamera(pointerNdc, camera)
+    const handle = pictureFrame.pickHandle(raycaster)
+    if (handle) {
+      const img = props.images.find((i) => i.id === props.selectedImageId && i.positionId === props.positionId)
+      if (img) {
+        const mode: PictureDragMode =
+          handle === 'rotate' ? 'rotate'
+          : handle === 'l' || handle === 'r' ? 'stretchX'
+          : handle === 't' || handle === 'b' ? 'stretchY'
+          : 'scale'
+        beginPictureDrag(e, img, mode, handle)
+        return
+      }
+    }
+  }
+
   const hitId = pickObjectId(e)
   if (!hitId) {
     const imageId = pickImageId(e)
-    if (imageId && imageId !== props.selectedImageId) emit('select-image', imageId)
+    if (imageId) {
+      if (imageId !== props.selectedImageId) emit('select-image', imageId)
+      const img = props.images.find((i) => i.id === imageId && i.positionId === props.positionId)
+      if (img) {
+        pictureFrame?.sync(pictureTargetFor(img))
+        beginPictureDrag(e, img, 'move', null)
+      }
+    }
     return
   }
 
@@ -855,8 +1320,8 @@ function onPointerDown(e: PointerEvent) {
     emit('select', hitId)
   }
 
-  // In translate mode, dragging directly on the model slides it across the disc plane (XY) at its current z.
-  if (props.mode === 'translate' && camera) {
+  // In translate or all mode, dragging directly on the model slides it across the disc plane (XY) at its current z.
+  if ((props.mode === 'translate' || props.mode === 'all') && camera) {
     const obj = props.objects.find((o) => o.id === hitId)
     if (!obj || obj.positionId !== props.positionId) return
     dragTargetId = hitId
@@ -875,12 +1340,17 @@ function onPointerDown(e: PointerEvent) {
 }
 
 function onPointerMove(e: PointerEvent) {
+  if (pictureDrag) {
+    updatePictureDrag(e)
+    return
+  }
   if (!planeDragging.value && !gizmoDragging) {
     const mark = markerAt(e)
     if (mark !== hoveredMarker.value) {
       hoveredMarker.value = mark
       paintMarkers()
     }
+    updateFrameHover(e)
   }
   if (!planeDragging.value || !dragTargetId || !camera) return
   const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y)
@@ -909,17 +1379,25 @@ function onPointerMove(e: PointerEvent) {
   entry.mesh.position.set(nx, ny, dragTargetZ)
   applyMotionWrapper(entry, obj)
   updateDropIndicator({ ...obj, positionMm: [nx, ny, dragTargetZ] })
-  suppressSync = true
   emit('transform-change', {
     id: dragTargetId,
     positionMm: [nx, ny, round1(dragTargetZ)],
     rotationDeg: [...obj.rotationDeg] as Vec3,
     scaleMm: [...obj.scaleMm] as Vec3,
   })
-  suppressSync = false
 }
 
 function onPointerUp(e: PointerEvent) {
+  if (pictureDrag) {
+    const finishedId = pictureDrag.id
+    const wasStarted = pictureDrag.started
+    pictureDrag = null
+    if (orbit) orbit.enabled = true
+    if (wasStarted) emit('transform-end', finishedId)
+    syncPictures()
+    updateFrameHover(e)
+    return
+  }
   if (planeDragging.value) {
     const finishedId = dragTargetId
     const wasDragged = dragStarted
@@ -928,13 +1406,19 @@ function onPointerUp(e: PointerEvent) {
     dragStarted = false
     if (orbit) orbit.enabled = true
     if (wasDragged && finishedId) emit('transform-end', finishedId)
+    syncObjects()
     return
   }
   if (e.button !== 0 || gizmoDragging) return
   const moved = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y)
   if (moved > 4 || markerAt(e)) return
+  if (camera && pictureFrame) {
+    updatePointerNdc(e)
+    raycaster.setFromCamera(pointerNdc, camera)
+    if (pictureFrame.pickHandle(raycaster)) return
+  }
   const hitId = pickObjectId(e) ?? pickImageId(e)
-  if (!hitId && !gizmo?.axis) {
+  if (!hitId && !anyGizmoAxis()) {
     emit('select', null)
   }
 }
@@ -968,6 +1452,7 @@ function animate() {
   stepFlight(now)
   orbit?.update()
   if (renderer && scene && camera) {
+    pictureFrame?.updateForCamera(camera)
     renderer.render(scene, camera)
     axes?.render(renderer, camera)
   }
@@ -992,6 +1477,7 @@ onMounted(() => {
   scene = new Scene()
   axes = createAxesGizmo()
   pictures = createFlatPictures(groupFor, () => {})
+  pictureFrame = createPictureFrame(groupFor)
   camera = new PerspectiveCamera(CAMERA_FOV_DEG, 1, 1, 8000)
   // Scene space: +x right, +y up (12 o'clock), +z toward viewer.
   camera.up.set(0, 0, 1)
@@ -1032,74 +1518,24 @@ onMounted(() => {
   // Middle drag turns the view and right drag pans it; the left button is for picking and handles.
   orbit.mouseButtons = { LEFT: null, MIDDLE: MOUSE.ROTATE, RIGHT: MOUSE.PAN }
 
-  gizmo = new TransformControls(camera, el)
-  gizmo.setSize(0.85)
-  gizmo.setSpace('world')
-  gizmo.addEventListener('dragging-changed', (ev) => {
-    gizmoDragging = Boolean(ev.value)
-    if (orbit) orbit.enabled = !gizmoDragging
-    const id = (gizmo?.object?.userData.imageId as string | undefined) ?? props.selectedId
-    if (!id) return
-    if (gizmoDragging) {
-      emit('transform-start', id)
-    } else {
-      emit('transform-end', id)
-      syncMotionTransforms()
-    }
-  })
-  gizmo.addEventListener('objectChange', () => {
-    const mesh = gizmo?.object
-    if (mesh?.userData.imageId && gizmoDragging) {
-      movePicture(mesh as Mesh)
-      return
-    }
-    const id = props.selectedId
-    if (!mesh || !id || !gizmoDragging) return
-    if (id === LAMP_ID) {
-      const at: Vec3 = [
-        MathUtils.clamp(Math.round(mesh.position.x), -LAMP_REACH_MM, LAMP_REACH_MM),
-        MathUtils.clamp(Math.round(mesh.position.y), -LAMP_REACH_MM, LAMP_REACH_MM),
-        MathUtils.clamp(Math.round(mesh.position.z), LAMP_MIN_UP_MM, LAMP_MAX_UP_MM),
-      ]
-      mesh.position.set(...at)
-      syncLamp()
-      emit('transform-change', { id, positionMm: at, rotationDeg: [0, 0, 0], scaleMm: [1, 1, 1] })
-      return
-    }
-    const obj = props.objects.find((o) => o.id === id)
-    if (!obj) return
-
-    // Each axis on its own; the centre handle moves all three together.
-    let nextScale: Vec3 = [...obj.scaleMm] as Vec3
-    if (props.mode === 'scale') {
-      nextScale = [mesh.scale.x, mesh.scale.y, mesh.scale.z].map((v) => {
-        const s = MathUtils.clamp(round1(v), 2, 120)
-        return props.snap ? Math.max(2, Math.round(s / SNAP_SCALE_MM) * SNAP_SCALE_MM) : s
-      }) as Vec3
-      mesh.scale.set(...nextScale)
-    }
-
-    const pos: Vec3 = [
-      MathUtils.clamp(round1(mesh.position.x), -DISC_PHYSICAL_OUTER_MM, DISC_PHYSICAL_OUTER_MM),
-      MathUtils.clamp(round1(mesh.position.y), -DISC_PHYSICAL_OUTER_MM, DISC_PHYSICAL_OUTER_MM),
-      MathUtils.clamp(round1(mesh.position.z), -40, 40),
-    ]
-    mesh.position.set(pos[0], pos[1], pos[2])
-
-    const rot: Vec3 = [
-      round1(MathUtils.radToDeg(mesh.rotation.x)),
-      round1(MathUtils.radToDeg(mesh.rotation.y)),
-      round1(MathUtils.radToDeg(mesh.rotation.z)),
-    ]
-
-    const entry = objectMeshes.get(id)
-    if (entry) applyMotionWrapper(entry, obj)
-    updateDropIndicator({ ...obj, positionMm: pos, rotationDeg: rot, scaleMm: nextScale })
-    suppressSync = true
-    emit('transform-change', { id, positionMm: pos, rotationDeg: rot, scaleMm: nextScale })
-    suppressSync = false
-  })
-  scene.add(gizmo.getHelper())
+  const makeGizmo = (mode: SingleGizmoMode) => {
+    const control = new TransformControls(camera!, el)
+    control.setMode(mode)
+    control.setSize(GIZMO_SINGLE_SIZE)
+    control.setSpace('world')
+    control.enabled = false
+    control.addEventListener('dragging-changed', (ev) => onGizmoDraggingChanged(control, Boolean(ev.value)))
+    control.addEventListener('objectChange', () => onGizmoObjectChange(control))
+    scene!.add(control.getHelper())
+    return control
+  }
+  // Register translate, rotate, then scale so inner arrows/planes win over outer scale handles.
+  gizmos = {
+    translate: makeGizmo('translate'),
+    rotate: makeGizmo('rotate'),
+    scale: makeGizmo('scale'),
+  }
+  el.addEventListener('pointermove', onGizmoHoverPriority)
 
   shownPhi = currentPhi()
   buildDisc()
@@ -1139,46 +1575,31 @@ watch(() => props.previewT, () => syncMotionTransforms())
 watch(() => [props.objects, props.meshes, props.selectedId, props.positions, props.positionId], () => syncObjects(), { deep: true })
 
 function syncPictures() {
+  if (pictureDrag) return
   pictures?.sync({
     images: props.images, positions: props.positions, positionId: props.positionId, thumbnails: props.thumbnails,
-    selectedId: props.selectedImageId, innerRadiusMm: props.innerRadiusMm, outerRadiusMm: props.outerRadiusMm,
+    // The 2D manipulation frame renders the selection outline and handles.
+    selectedId: null, innerRadiusMm: props.innerRadiusMm, outerRadiusMm: props.outerRadiusMm,
   })
   syncGizmoAttachment()
 }
 
-/**
- * A picture's mesh after the handles moved it, read back as its layer: kept flat on the disc and
- * its own shape, the size taken from whichever side was pulled the more.
- */
-function movePicture(mesh: Mesh) {
-  const id = mesh.userData.imageId as string
-  const img = props.images.find((i) => i.id === id)
-  if (!img) return
-  const across = 2 * props.outerRadiusMm
-  const long = Math.max(img.width, img.height, 1)
-  const [w, h] = [(across * img.width) / long, (across * img.height) / long]
-  const fx = mesh.scale.x / (img.size * w)
-  const fy = mesh.scale.y / (img.size * h)
-  const size = MathUtils.clamp(Math.round(img.size * (Math.abs(fx - 1) >= Math.abs(fy - 1) ? fx : fy) * 1000) / 1000, 0.02, 3)
-  mesh.scale.set(size * w, size * h, 1)
-  mesh.rotation.x = mesh.rotation.y = 0
-  emit('image-transform', {
-    id,
-    x: Math.round((mesh.position.x / across) * 1000) / 1000,
-    y: Math.round((-mesh.position.y / across) * 1000) / 1000,
-    size,
-    rotationDeg: round1(-MathUtils.radToDeg(mesh.rotation.z)),
-  })
-}
 watch(() => [props.images, props.thumbnails, props.selectedImageId, props.positions, props.positionId, props.innerRadiusMm, props.outerRadiusMm], syncPictures, { deep: true })
 
 onBeforeUnmount(() => {
+  canvas.value?.removeEventListener('pointermove', onGizmoHoverPriority)
+  pictureFrame?.dispose()
+  pictureFrame = null
   pictures?.dispose()
   cancelAnimationFrame(animFrame)
   axes?.dispose()
   resizeObs?.disconnect()
-  gizmo?.detach()
-  gizmo?.dispose()
+  for (const g of gizmoList()) {
+    g.detach()
+    g.dispose()
+  }
+  gizmos = null
+  activeGizmo = null
   orbit?.dispose()
   for (const { mesh } of objectMeshes.values()) {
     ;(mesh.material as MeshStandardMaterial).dispose()
@@ -1215,7 +1636,6 @@ onBeforeUnmount(() => {
   scene = null
   camera = null
   orbit = null
-  gizmo = null
 })
 
 defineExpose({ resetCamera, focusSelected, faceOn, faceOff })
@@ -1234,6 +1654,21 @@ defineExpose({ resetCamera, focusSelected, faceOn, faceOff })
 }
 .vp3d.pointing {
   cursor: pointer;
+}
+.vp3d.moving {
+  cursor: move;
+}
+.vp3d.resize-nwse {
+  cursor: nwse-resize;
+}
+.vp3d.resize-nesw {
+  cursor: nesw-resize;
+}
+.vp3d.resize-ew {
+  cursor: ew-resize;
+}
+.vp3d.resize-ns {
+  cursor: ns-resize;
 }
 .vp3d-canvas {
   display: block;

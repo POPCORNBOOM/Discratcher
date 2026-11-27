@@ -112,6 +112,7 @@ import { t } from '../i18n'
 import { issueOf } from '../catalog'
 import { notifyError, notifySuccess } from '../notices'
 import { rememberTwist } from '../twist'
+import { layerExtent } from '../layers'
 import { coverSize, fileName, useComposition } from '../stores/composition'
 import { useProcess, type StepContext } from '../stores/process'
 import { useStudio } from '../stores/studio'
@@ -254,8 +255,8 @@ const toDisc = (e: PointerEvent) => {
   return { x: (e.clientX - r.left - frame.value!.cx) / frame.value!.k, y: (e.clientY - r.top - frame.value!.cy) / frame.value!.k }
 }
 function halfExtent(l: Layer) {
-  const long = Math.max(l.width, l.height, 1)
-  return [(l.size * l.width) / long / 2, (l.size * l.height) / long / 2]
+  const [w, h] = layerExtent(l)
+  return [w / 2, h / 2]
 }
 /** A point of the picture, given relative to its centre, on the disc. Turns clockwise as seen. */
 function corner(l: Layer, u: number, v: number) {

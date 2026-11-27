@@ -15,6 +15,7 @@ import {
   type Group,
   type Texture,
 } from 'three'
+import { layerExtent } from '../layers'
 import type { HoloImage, HoloPosition } from './scene'
 
 const VERTEX = `
@@ -128,9 +129,9 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
       }
       const group = groupFor(img.positionId)
       if (e.mesh.parent !== group) group.add(e.mesh)
-      // Long edge `size` of the diameter, the picture keeping its own shape.
-      const long = Math.max(img.width, img.height, 1)
-      e.mesh.scale.set((img.size * across * img.width) / long, (img.size * across * img.height) / long, 1)
+      // Picture width and height on the disc, including any single-axis stretch.
+      const [ew, eh] = layerExtent(img)
+      e.mesh.scale.set(ew * across, eh * across, 1)
       e.mesh.position.set(img.x * across, -img.y * across, 0.06 + order * 0.002)
       // Clockwise as seen.
       e.mesh.rotation.set(0, 0, -(img.rotationDeg * Math.PI) / 180)

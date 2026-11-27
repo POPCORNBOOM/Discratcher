@@ -471,6 +471,15 @@
         <div v-if="shownTab === 'edit'" class="toolbar" role="toolbar" :aria-label="t('holo.modeEdit')">
           <UiButton
             icon-only
+            :variant="gizmoMode === 'all' ? 'soft' : 'ghost'"
+            :icon="mdiAxisArrow"
+            :aria-label="t('holo.transformAll')"
+            :aria-pressed="gizmoMode === 'all'"
+            :data-tooltip="t('holo.transformAll')"
+            @click="gizmoMode = 'all'"
+          />
+          <UiButton
+            icon-only
             :variant="gizmoMode === 'translate' ? 'soft' : 'ghost'"
             :icon="mdiCursorMove"
             :aria-label="t('holo.move')"
@@ -676,6 +685,7 @@ import {
   mdiAlertOutline,
   mdiArrowDown,
   mdiArrowUp,
+  mdiAxisArrow,
   mdiClose,
   mdiContentCopy,
   mdiContentSaveOutline,
@@ -851,7 +861,7 @@ const tab = ref<'edit' | 'preview'>('edit')
 const shownTab = ref<'edit' | 'preview'>('edit')
 /** How long the edit view takes to swing face-on and back, ms. */
 const SWING_MS = 420
-const gizmoMode = ref<GizmoMode>('translate')
+const gizmoMode = ref<GizmoMode>('all')
 const snap = ref(false)
 const scene = ref<HoloScene>(emptyScene())
 const selectedId = ref<string | null>(null)
@@ -1546,9 +1556,9 @@ function onTransformChange(payload: { id: string; positionMm: Vec3; rotationDeg:
 }
 
 /** A picture moved, turned or sized with the handles in the 3D view. */
-function onImageTransform(p: { id: string; x: number; y: number; size: number; rotationDeg: number }) {
+function onImageTransform(p: { id: string; x: number; y: number; size: number; stretchX: number; stretchY: number; rotationDeg: number }) {
   const img = scene.value.images.find((i) => i.id === p.id)
-  if (img) Object.assign(img, { x: p.x, y: p.y, size: p.size, rotationDeg: p.rotationDeg })
+  if (img) Object.assign(img, { x: p.x, y: p.y, size: p.size, stretchX: p.stretchX, stretchY: p.stretchY, rotationDeg: p.rotationDeg })
 }
 
 function onTransformEnd(_id: string) {
@@ -2136,7 +2146,8 @@ function onKeyDown(e: KeyboardEvent) {
   if (mod || e.altKey) return
 
   if (tab.value === 'edit') {
-    if (key === 'w') { gizmoMode.value = 'translate'; e.preventDefault() }
+    if (key === 'q') { gizmoMode.value = 'all'; e.preventDefault() }
+    else if (key === 'w') { gizmoMode.value = 'translate'; e.preventDefault() }
     else if (key === 'e') { gizmoMode.value = 'rotate'; e.preventDefault() }
     else if (key === 'r') { gizmoMode.value = 'scale'; e.preventDefault() }
     else if (key === 'f' && selectedObj.value) { viewportRef.value?.focusSelected(); e.preventDefault() }

@@ -46,10 +46,19 @@ pub struct Layer {
     /// How far every other row slides along, in percent of a tile: 50 lays bricks.
     #[serde(default)]
     pub repeat_stagger: f32,
+    /// Stretch across and along the picture's own width and height; 1 keeps its shape.
+    #[serde(default = "one")]
+    pub stretch_x: f64,
+    #[serde(default = "one")]
+    pub stretch_y: f64,
 }
 
 fn full_density() -> f32 {
     100.0
+}
+
+fn one() -> f64 {
+    1.0
 }
 
 impl Layer {
@@ -69,6 +78,8 @@ impl Layer {
             repeat_density: 100.0,
             repeat_angle: 0.0,
             repeat_stagger: 0.0,
+            stretch_x: 1.0,
+            stretch_y: 1.0,
         }
     }
 }
@@ -210,7 +221,8 @@ impl Composition {
                 let long = picture.width.max(picture.height) as f64;
                 let size = if l.size.is_finite() && l.size > 0.0 { l.size } else { 1.0 };
                 let (sin, cos) = l.rotation_deg.to_radians().sin_cos();
-                let (w, h) = (size * picture.width as f64 / long, size * picture.height as f64 / long);
+                let stretch = |s: f64| if s.is_finite() && s > 0.0 { s } else { 1.0 };
+                let (w, h) = (size * stretch(l.stretch_x) * picture.width as f64 / long, size * stretch(l.stretch_y) * picture.height as f64 / long);
                 let grid = l.repeat.then(|| {
                     let fill = if l.repeat_density.is_finite() { l.repeat_density.clamp(10.0, 100.0) as f64 / 100.0 } else { 1.0 };
                     let (gs, gc) = (if l.repeat_angle.is_finite() { l.repeat_angle as f64 } else { 0.0 }).to_radians().sin_cos();
@@ -359,6 +371,20 @@ pub(crate) mod tests {
         let d = std::env::temp_dir().join(format!("disc-core-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn a_stretched_layer_reaches_further_one_way_only() {
+        let black = || Arc::new(Picture::from_luma(4, 4, vec![0; 16]));
+        let at = |sx: f64, sy: f64| Composition::new([(Layer { size: 0.2, stretch_x: sx, stretch_y: sy, ..Layer::plain() }, black())]);
+        let plain = at(1.0, 1.0);
+        let wide = at(2.0, 1.0);
+        // 0.15 across is past the plain picture's half width of 0.1, inside the stretched one's 0.2.
+        assert_eq!(plain.sample(0.15, 0.0), 255.0);
+        assert_eq!(wide.sample(0.15, 0.0), 0.0);
+        assert_eq!(wide.sample(0.0, 0.15), 255.0, "not taller");
+        let old: Layer = serde_json::from_str(r#"{"path":"p","x":0,"y":0,"size":1,"rotationDeg":0}"#).unwrap();
+        assert_eq!((old.stretch_x, old.stretch_y), (1.0, 1.0));
     }
 
     /// A layer of `picture` covering the disc, centred and upright.
