@@ -1203,6 +1203,289 @@ fn color_study() {
     }
     writeln!(md).unwrap();
 
+    // =========================================================================
+    // E9: Single diagonal lamp serving both 3D (12 o'clock) and flat colour (3 o'clock)
+    // =========================================================================
+    writeln!(
+        md,
+        "## E9: Shared Diagonal Lamp for 3D (12 o'clock) + Flat Colour (3 o'clock)"
+    )
+    .unwrap();
+    writeln!(md).unwrap();
+
+    const G0_TARGET_GT: f64 = 0.3435;
+    let w12 = &e8_wedges[0];
+    let w3 = &e8_wedges[1];
+
+    let mean_abs_gt_wedge = |wedge: &WedgeGrid, sc: &Scene| -> f64 {
+        let sum: f64 = wedge.points.iter().map(|pt| g_at(sc, pt.x, pt.y).0.abs()).sum();
+        sum / wedge.points.len() as f64
+    };
+    let mean_abs_gr_wedge = |wedge: &WedgeGrid, sc: &Scene| -> f64 {
+        let sum: f64 = wedge.points.iter().map(|pt| g_at(sc, pt.x, pt.y).1.abs()).sum();
+        sum / wedge.points.len() as f64
+    };
+
+    // E9.1: Lamp search [a, a, 400] for a in 100..=320 step 10, plus best a for z = 300, 500
+    writeln!(
+        md,
+        "### E9.1 Diagonal Lamp Search: lamp_scene = [a, a, 400] (target |gt| = {:.4})",
+        G0_TARGET_GT
+    )
+    .unwrap();
+    writeln!(md).unwrap();
+    writeln!(
+        md,
+        "| a (mm) | mean |gt| (12 o'clock) | mean |gt| (3 o'clock) | mean |gr| (12 o'clock) | mean |gr| (3 o'clock) | err vs 0.3435 |"
+    )
+    .unwrap();
+    writeln!(md, "|---:|---:|---:|---:|---:|---:|").unwrap();
+
+    let search_z = |z: f64, log_table: Option<&mut String>| -> (f64, f64, f64, f64) {
+        let mut best_a = 100.0;
+        let mut best_m12 = 0.0;
+        let mut best_m3 = 0.0;
+        let mut best_err = f64::INFINITY;
+        let mut out_md = log_table;
+        for a_int in (100..=320).step_by(10) {
+            let a = a_int as f64;
+            let sc = general_pose_scene([a, a, z], 0.0, 0.0, 0.0);
+            let m12 = mean_abs_gt_wedge(w12, &sc);
+            let m3 = mean_abs_gt_wedge(w3, &sc);
+            let err = ((m12 - G0_TARGET_GT).abs() + (m3 - G0_TARGET_GT).abs()) * 0.5;
+            if let Some(ref mut s) = out_md {
+                let gr12 = mean_abs_gr_wedge(w12, &sc);
+                let gr3 = mean_abs_gr_wedge(w3, &sc);
+                writeln!(
+                    s,
+                    "| {:3} | {:.4} | {:.4} | {:.4} | {:.4} | {:.4} |",
+                    a_int, m12, m3, gr12, gr3, err
+                )
+                .unwrap();
+            }
+            if err < best_err {
+                best_err = err;
+                best_a = a;
+                best_m12 = m12;
+                best_m3 = m3;
+            }
+        }
+        (best_a, best_m12, best_m3, best_err)
+    };
+
+    let (a400, m12_400, m3_400, err_400) = search_z(400.0, Some(&mut md));
+    let (a300, m12_300, m3_300, err_300) = search_z(300.0, None);
+    let (a500, m12_500, m3_500, err_500) = search_z(500.0, None);
+
+    writeln!(md).unwrap();
+    writeln!(md, "Best `a` per lamp height `z` (a in 100..=320 step 10):").unwrap();
+    writeln!(md).unwrap();
+    writeln!(
+        md,
+        "| z (mm) | best a (mm) | mean |gt| (12 o'clock) | mean |gt| (3 o'clock) | mean err vs 0.3435 |"
+    )
+    .unwrap();
+    writeln!(md, "|---:|---:|---:|---:|---:|").unwrap();
+    for &(z, a, m12, m3, err) in &[
+        (300.0, a300, m12_300, m3_300, err_300),
+        (400.0, a400, m12_400, m3_400, err_400),
+        (500.0, a500, m12_500, m3_500, err_500),
+    ] {
+        writeln!(md, "| {:.0} | {:.0} | {:.4} | {:.4} | {:.4} |", z, a, m12, m3, err).unwrap();
+    }
+    writeln!(md).unwrap();
+
+    // Use z = 400 a* unless another z gets both means clearly closer (by > 0.005).
+    let (chosen_a, chosen_z) = if err_300 + 0.005 < err_400 && err_300 <= err_500 {
+        (a300, 300.0)
+    } else if err_500 + 0.005 < err_400 {
+        (a500, 500.0)
+    } else {
+        (a400, 400.0)
+    };
+    let diag_lamp_scene = [chosen_a, chosen_a, chosen_z];
+    let diag_design_sc = general_pose_scene(diag_lamp_scene, 0.0, 0.0, 0.0);
+    writeln!(
+        md,
+        "Chosen diagonal lamp: `a* = {:.0} mm, z = {:.0} mm` -> scene `{:?}`, disc `{:?}`.",
+        chosen_a, chosen_z, diag_lamp_scene, diag_design_sc.light_mm
+    )
+    .unwrap();
+    writeln!(md).unwrap();
+
+    // E9.2: Brightness headroom and design-pose dE
+    let mean_headroom = |wedge: &WedgeGrid, sc: &Scene| -> f64 {
+        let k = resp.options;
+        let sum: f64 = wedge
+            .points
+            .par_iter()
+            .map(|pt| {
+                let (gt, gr) = g_at(sc, pt.x, pt.y);
+                (0..k).map(|j| luma_f32(resp.at(j, gt, gr))).fold(0.0_f64, f64::max)
+            })
+            .sum();
+        sum / wedge.points.len() as f64
+    };
+
+    let diag12_centre_w = solve_wedge(
+        w12,
+        resp,
+        &[diag_design_sc.clone()],
+        GeomModel::True,
+        DEFAULT_EXPOSURE,
+        DEFAULT_CHROMA_WEIGHT,
+    );
+    let diag3_centre_w = solve_wedge(
+        w3,
+        resp,
+        &[diag_design_sc.clone()],
+        GeomModel::True,
+        DEFAULT_EXPOSURE,
+        DEFAULT_CHROMA_WEIGHT,
+    );
+
+    let g0_12_ev = evaluate_wedge(w12, resp, &e8_centre_weights[0], &design_sc, DEFAULT_EXPOSURE);
+    let diag12_ev = evaluate_wedge(w12, resp, &diag12_centre_w, &diag_design_sc, DEFAULT_EXPOSURE);
+    let diag3_ev = evaluate_wedge(w3, resp, &diag3_centre_w, &diag_design_sc, DEFAULT_EXPOSURE);
+
+    writeln!(
+        md,
+        "### E9.2 Brightness Headroom & Design-Pose Accuracy (chroma_weight = 1.0, exposure = 0.60)"
+    )
+    .unwrap();
+    writeln!(md).unwrap();
+    writeln!(
+        md,
+        "| Wedge / Lamp | mean |gt| | mean |gr| | mean max_j luma | median dE | p90 dE | mean dL | mean dC |"
+    )
+    .unwrap();
+    writeln!(md, "|---|---:|---:|---:|---:|---:|---:|---:|").unwrap();
+    for (name, wg, sc, ev) in [
+        ("G0 12 o'clock", w12, &design_sc, &g0_12_ev),
+        ("a* 12 o'clock", w12, &diag_design_sc, &diag12_ev),
+        ("a* 3 o'clock", w3, &diag_design_sc, &diag3_ev),
+    ] {
+        writeln!(
+            md,
+            "| {} | {:.4} | {:.4} | {:.4} | {:.2} | {:.2} | {:+.2} | {:+.2} |",
+            name,
+            mean_abs_gt_wedge(wg, sc),
+            mean_abs_gr_wedge(wg, sc),
+            mean_headroom(wg, sc),
+            ev.median_de,
+            ev.p90_de,
+            ev.mean_dl,
+            ev.mean_dc
+        )
+        .unwrap();
+    }
+    writeln!(md).unwrap();
+
+    // E9.3: 3D suitability (mean |gt(left) - gt(right)| between hx = -32 and +32 mm)
+    let mean_eye_gt_diff = |wedge: &WedgeGrid, lamp_scene: [f64; 3]| -> (f64, f64, f64) {
+        let sc_l = general_pose_scene(lamp_scene, -32.0, 0.0, 0.0);
+        let sc_r = general_pose_scene(lamp_scene, 32.0, 0.0, 0.0);
+        let diffs: Vec<f64> = wedge
+            .points
+            .iter()
+            .map(|pt| (g_at(&sc_l, pt.x, pt.y).0 - g_at(&sc_r, pt.x, pt.y).0).abs())
+            .collect();
+        let mean = diffs.iter().sum::<f64>() / diffs.len() as f64;
+        let lo = diffs.iter().copied().fold(f64::INFINITY, f64::min);
+        let hi = diffs.iter().copied().fold(0.0_f64, f64::max);
+        (mean, lo, hi)
+    };
+
+    writeln!(
+        md,
+        "### E9.3 3D Parallax Suitability: |gt(hx = -32 mm) - gt(hx = +32 mm)|"
+    )
+    .unwrap();
+    writeln!(md).unwrap();
+    writeln!(md, "| Wedge / Lamp | mean |delta gt| | min | max |").unwrap();
+    writeln!(md, "|---|---:|---:|---:|").unwrap();
+    for (name, wg, lamp) in [
+        ("G0 12 o'clock", w12, LAMP_MM),
+        ("a* 12 o'clock", w12, diag_lamp_scene),
+        ("a* 3 o'clock", w3, diag_lamp_scene),
+    ] {
+        let (mean, lo, hi) = mean_eye_gt_diff(wg, lamp);
+        writeln!(md, "| {} | {:.4} | {:.4} | {:.4} |", name, mean, lo, hi).unwrap();
+    }
+    writeln!(md).unwrap();
+
+    // E9.4: Flat colour at a* 3 o'clock vs G1 (from E8)
+    let diag3_sc_l = general_pose_scene(diag_lamp_scene, -32.0, 0.0, 0.0);
+    let diag3_sc_r = general_pose_scene(diag_lamp_scene, 32.0, 0.0, 0.0);
+    let diag3_bino_w = solve_wedge(
+        w3,
+        resp,
+        &[diag3_sc_l.clone(), diag3_sc_r.clone()],
+        GeomModel::True,
+        DEFAULT_EXPOSURE,
+        DEFAULT_CHROMA_WEIGHT,
+    );
+
+    // Save e9_eyes.png: a* 3 o'clock, 2-view solve, left / centre / right side by side
+    let diag3_bino_l = evaluate_wedge(w3, resp, &diag3_bino_w, &diag3_sc_l, DEFAULT_EXPOSURE);
+    let diag3_bino_c = evaluate_wedge(w3, resp, &diag3_bino_w, &diag_design_sc, DEFAULT_EXPOSURE);
+    let diag3_bino_r = evaluate_wedge(w3, resp, &diag3_bino_w, &diag3_sc_r, DEFAULT_EXPOSURE);
+    let e9_img_l = render_achieved(w3, &diag3_bino_l.achieved, DEFAULT_EXPOSURE);
+    let e9_img_c = render_achieved(w3, &diag3_bino_c.achieved, DEFAULT_EXPOSURE);
+    let e9_img_r = render_achieved(w3, &diag3_bino_r.achieved, DEFAULT_EXPOSURE);
+    build_contact_sheet(&[&e9_img_l, &e9_img_c, &e9_img_r], 6)
+        .save(out.join("e9_eyes.png"))
+        .unwrap();
+
+    writeln!(
+        md,
+        "### E9.4 Flat Colour at a* 3 o'clock vs G1 (3 o'clock, E8)"
+    )
+    .unwrap();
+    writeln!(md).unwrap();
+    writeln!(
+        md,
+        "| Solve / View | a* med dE | a* p90 dE | a* mean dC | G1 med dE | G1 p90 dE | G1 mean dC |"
+    )
+    .unwrap();
+    writeln!(md, "|---|---:|---:|---:|---:|---:|---:|").unwrap();
+
+    let e9_comp_rows: Vec<(&str, bool, f64, f64, f64)> = vec![
+        ("(a) centre @ left (-32 mm)", false, -32.0, 0.0, 0.0),
+        ("(a) centre @ right (+32 mm)", false, 32.0, 0.0, 0.0),
+        ("(b) 2-view @ left (-32 mm)", true, -32.0, 0.0, 0.0),
+        ("(b) 2-view @ centre (0 mm)", true, 0.0, 0.0, 0.0),
+        ("(b) 2-view @ right (+32 mm)", true, 32.0, 0.0, 0.0),
+        ("(a) centre @ delta -5 deg", false, 0.0, 0.0, -5.0),
+        ("(a) centre @ delta -2 deg", false, 0.0, 0.0, -2.0),
+        ("(a) centre @ delta +2 deg", false, 0.0, 0.0, 2.0),
+        ("(a) centre @ delta +5 deg", false, 0.0, 0.0, 5.0),
+        ("(a) centre @ hy -20 mm", false, 0.0, -20.0, 0.0),
+        ("(a) centre @ hy +20 mm", false, 0.0, 20.0, 0.0),
+    ];
+
+    for &(label, is_bino, hx, hy, delta_deg) in &e9_comp_rows {
+        let sc_a = general_pose_scene(diag_lamp_scene, hx, hy, delta_deg);
+        let sc_g1 = general_pose_scene(g1_lamp_scene, hx, hy, delta_deg);
+        let w_a = if is_bino { &diag3_bino_w } else { &diag3_centre_w };
+        let w_g1 = if is_bino { &e8_bino_weights[1] } else { &e8_centre_weights[1] };
+        let ev_a = evaluate_wedge(w3, resp, w_a, &sc_a, DEFAULT_EXPOSURE);
+        let ev_g1 = evaluate_wedge(w3, resp, w_g1, &sc_g1, DEFAULT_EXPOSURE);
+        writeln!(
+            md,
+            "| {} | {:.2} | {:.2} | {:+.2} | {:.2} | {:.2} | {:+.2} |",
+            label,
+            ev_a.median_de,
+            ev_a.p90_de,
+            ev_a.mean_dc,
+            ev_g1.median_de,
+            ev_g1.p90_de,
+            ev_g1.mean_dc
+        )
+        .unwrap();
+    }
+    writeln!(md).unwrap();
+
     // Verify no U+00B7 slipped into summary.md
     assert!(!md.contains('\u{00B7}'), "summary.md must not contain U+00B7");
 
