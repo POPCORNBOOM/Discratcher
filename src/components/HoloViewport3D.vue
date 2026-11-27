@@ -12,6 +12,7 @@
       'resize-ns': !planeDragging && !hoveredMarker && frameCursor === 'ns',
     }"
     @pointerdown.capture="routeOrbitButtons"
+    @wheel.capture="onTrackpadWheel"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
@@ -1077,6 +1078,39 @@ function pickImageId(e: PointerEvent): string | null {
  */
 function routeOrbitButtons(e: PointerEvent) {
   if (orbit) orbit.mouseButtons.LEFT = e.button === 0 && e.altKey ? MOUSE.ROTATE : null
+}
+
+/** When the last scroll came from fingers rather than a wheel, so a gesture is not split midway. */
+let fingersUntil = 0
+
+/**
+ * Whether a scroll comes from a trackpad or a Magic Mouse: smooth, often sideways, its legacy
+ * delta not in a wheel's whole notches of 120. A pinch (ctrlKey) is left to the zoom.
+ */
+function fromFingers(e: WheelEvent): boolean {
+  const now = performance.now()
+  if (now < fingersUntil) return true
+  const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY
+  const fingers = e.deltaMode === 0 && (e.deltaX !== 0 || (legacy !== undefined ? legacy % 120 !== 0 : !Number.isInteger(e.deltaY)))
+  if (fingers) fingersUntil = now + 300
+  return fingers
+}
+
+/**
+ * Two fingers as Blender has them on a Mac: swipe to turn the view, ⇧ and swipe to pan; a pinch
+ * zooms and a mouse wheel still zooms, both left to the view's own controls.
+ */
+function onTrackpadWheel(e: WheelEvent) {
+  if (!orbit || !camera || e.ctrlKey || !fromFingers(e)) return
+  e.preventDefault()
+  e.stopPropagation()
+  const h = Math.max(1, host.value?.clientHeight ?? 1)
+  if (e.shiftKey) {
+    orbit.pan(-e.deltaX, -e.deltaY)
+  } else {
+    orbit.rotateLeft((2 * Math.PI * e.deltaX) / h)
+    orbit.rotateUp((2 * Math.PI * e.deltaY) / h)
+  }
 }
 
 function wrapRotationDeg(deg: number): number {

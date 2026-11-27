@@ -720,7 +720,8 @@ import {
   mdiImagePlusOutline,
   mdiLayersOutline,
   mdiLightbulbOutline,
-  mdiMouse,
+  mdiGesturePinch,
+  mdiGestureSwipe,
   mdiMouseLeftClickOutline,
   mdiMouseRightClickOutline,
   mdiMouseScrollWheel,
@@ -973,9 +974,9 @@ const previewDragging = ref(false)
 /** What the mouse does in the edit view, as the preview lists its own. */
 const editGestures = computed(() => [
   { icon: mdiMouseLeftClickOutline, text: t('holo.gesturePick') },
-  { icon: mdiMouse, text: t('holo.gestureOrbit') },
+  { icon: mdiGestureSwipe, text: t('holo.gestureOrbit') },
   { icon: mdiMouseRightClickOutline, text: t('holo.gesturePan') },
-  { icon: mdiMouseScrollWheel, text: t('holo.gestureZoom') },
+  { icon: mdiGesturePinch, text: t('holo.gestureZoom') },
   { icon: mdiAppleKeyboardOption, text: t('holo.gestureOption') },
 ])
 const previewGestures = computed(() =>
