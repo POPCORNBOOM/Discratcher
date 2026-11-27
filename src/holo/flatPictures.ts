@@ -16,7 +16,6 @@ import {
   type Texture,
 } from 'three'
 import { layerExtent } from '../layers'
-import { CROP_GLSL, cropUniforms } from './cropGlsl'
 import type { HoloImage, HoloPosition } from './scene'
 
 const VERTEX = `
@@ -31,13 +30,14 @@ void main() {
 `
 const FRAGMENT = `
 uniform sampler2D map;
-uniform float gain, shift, invert, colour, crop, side, axis, inner, outer, opacity, picked;
+uniform sampler2D cropMap;
+uniform float gain, shift, invert, colour, hasCrop, inner, outer, opacity, picked;
 varying vec2 vUv;
 varying vec2 vAt;
-${CROP_GLSL}
 void main() {
   float r = length(vAt);
-  bool kept = r >= inner && r <= outer && inCrop(vAt, crop, side, axis);
+  vec2 cuv = vec2(vAt.x, -vAt.y) / max(2.0 * outer, 1e-4) + 0.5;
+  bool kept = r >= inner && r <= outer && (hasCrop < 0.5 || texture2D(cropMap, cuv).r >= 0.5);
   if (!kept && picked < 0.5) discard;
   vec4 t = texture2D(map, vUv);
   vec3 base = colour > 0.5 ? t.rgb * 255.0 : vec3(dot(t.rgb, vec3(0.299, 0.587, 0.114)) * 255.0);
@@ -66,6 +66,8 @@ export interface FlatPictureState {
   positionId: string
   /** Each picture's thumbnail, a data URL, by path. */
   thumbnails: Readonly<Record<string, string>>
+  /** Position crop mask lookup. */
+  cropFor: (positionId: string) => { texture: Texture; hasCrop: boolean }
   selectedId: string | null
   /** Picture shown unclipped at full bounds when picked. */
   pickedId: string | null
@@ -111,9 +113,9 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
           transparent: true,
           depthWrite: false,
           uniforms: {
-            map: { value: null }, toGroup: { value: new Matrix4() },
+            map: { value: null }, cropMap: { value: st.cropFor(img.positionId).texture }, toGroup: { value: new Matrix4() },
             gain: { value: 1 }, shift: { value: 0 }, invert: { value: 0 }, colour: { value: 0 },
-            crop: { value: Math.PI / 2 }, side: { value: 0 }, axis: { value: 0 }, inner: { value: 0 }, outer: { value: 0 }, opacity: { value: 1 }, picked: { value: 0 },
+            hasCrop: { value: 0 }, inner: { value: 0 }, outer: { value: 0 }, opacity: { value: 1 }, picked: { value: 0 },
           },
         })
         const mesh = new Mesh(plane, material)
@@ -146,18 +148,16 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
       e.mesh.updateMatrix()
       e.mesh.visible = !!e.texture && (!st.only || st.only === img.id)
       e.outline.visible = img.id === st.selectedId
-      const pos = st.positions.find((q) => q.id === img.positionId)
+      const crop = st.cropFor(img.positionId)
       const u = e.mesh.material.uniforms
       u.map.value = e.texture
+      u.cropMap.value = crop.texture
+      u.hasCrop.value = crop.hasCrop ? 1 : 0
       u.toGroup.value.copy(e.mesh.matrix)
       u.gain.value = contrastGain(img.contrast)
       u.shift.value = Math.min(100, Math.max(-100, img.brightness)) * 2.55
       u.invert.value = img.invert ? 1 : 0
       u.colour.value = img.colour ? 1 : 0
-      const c = cropUniforms(pos)
-      u.crop.value = c.crop
-      u.side.value = c.side
-      u.axis.value = c.axis
       u.inner.value = st.innerRadiusMm
       u.outer.value = st.outerRadiusMm
       u.opacity.value = img.positionId === st.positionId ? 1 : 0.4

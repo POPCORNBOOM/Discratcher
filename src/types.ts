@@ -83,7 +83,7 @@ export interface CarveJobConfig {
   servoSafeDither: boolean; maxDarkDutyCycle: number
 }
 export interface ArtworkAnalysis {
-  width: number; height: number; darkRatio: number; suggestInvert: boolean
+  width: number; height: number; darkRatio: number; suggestInvert: boolean; hasAlpha?: boolean
   maxBlackRunPx: number; thumbnail: string
 }
 export interface CarveProgress { percent: number; mbPerS: number; maxSectorDarkRatio: number }

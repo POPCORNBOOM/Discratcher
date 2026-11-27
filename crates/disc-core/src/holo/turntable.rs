@@ -141,34 +141,30 @@ fn position_options(pos: &Position, mode: model3d::Mode, opts: &Options) -> Opti
 }
 
 /// Pick the codebook option (or plain data last) with the lowest peak rendered luminance over
-/// `poses` across `pos`'s kept crop sectors.
-fn transform_background(pos: &Position, poses: &[(V3, V3)], resp: &Responses, preset: &DiscGeometryPreset) -> (usize, f64) {
+/// `poses` across `crop`'s kept region on the written ring.
+fn transform_background(crop: &flat::PositionCrop<'_>, poses: &[(V3, V3)], resp: &Responses, preset: &DiscGeometryPreset) -> (usize, f64) {
     let k = resp.options;
     let plain = k - 1;
-    let phi_rad = pos.phi_deg.to_radians();
-    let crop_rad = pos.crop_deg.min(90.0).to_radians();
-    let axis = pos.crop_offset_deg.to_radians();
-    // The kept ends of the axis, as angles clockwise from 12 o'clock.
-    let ends: &[f64] = match pos.crop_side {
-        model3d::CropSide::Both => &[0.0, std::f64::consts::PI],
-        model3d::CropSide::Up => &[0.0],
-        model3d::CropSide::Down => &[std::f64::consts::PI],
-    };
     let luma = |p: [f32; 3]| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
-
-    const NR: usize = 5;
-    const NA: usize = 7;
-    let mut pts = Vec::with_capacity(NR * NA * 2);
-    for ir in 0..NR {
-        let r = preset.inner_radius_mm + (preset.outer_radius_mm - preset.inner_radius_mm) * (ir as f64 + 0.5) / NR as f64;
-        for ia in 0..NA {
-            let off = -crop_rad + 2.0 * crop_rad * ia as f64 / (NA - 1) as f64;
-            for end in ends {
-                // On the solve grid 12 o'clock is -y, as in `flat::crop_axis`.
-                let (so, co) = (axis + end + off).sin_cos();
-                pts.push(turn([r * so, -r * co, 0.0], phi_rad));
+    let sample_grid = |grid: usize| -> Vec<V3> {
+        let mut pts = Vec::new();
+        for iy in 0..grid {
+            let y = ((iy as f64 + 0.5) / grid as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
+            for ix in 0..grid {
+                let x = ((ix as f64 + 0.5) / grid as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
+                if flat::on_ring(x, y, preset) && crop.kept(x, y) {
+                    pts.push([x, y, 0.0]);
+                }
             }
         }
+        pts
+    };
+    let mut pts = sample_grid(28);
+    if pts.is_empty() {
+        pts = sample_grid(64);
+    }
+    if pts.is_empty() {
+        return (0, 0.0);
     }
 
     let mut max_y = vec![0.0f64; k];
@@ -260,7 +256,7 @@ pub(crate) fn positions(scene: &Scene) -> Vec<Position> {
     if !scene.positions.is_empty() {
         return scene.positions.clone();
     }
-    vec![Position { id: String::new(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, crop_side: Default::default(), crop_offset_deg: 0.0, neutral: None, order: vec![] }]
+    vec![Position { id: String::new(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, crop_side: Default::default(), crop_offset_deg: 0.0, crops: None, neutral: None, order: vec![] }]
 }
 
 /// Position `at`'s models and pictures, top first: as its `order` lists them, then any it leaves
@@ -600,6 +596,10 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
     let opts = Options { grid: opts.grid.clamp(64, 1024), ..opts.clone() };
     let lamp = scene.lamp_mm.unwrap_or(LAMP_MM);
     let positions = positions(scene);
+    let pos_crops: Vec<flat::PositionCrop> = positions
+        .iter()
+        .map(|p| flat::PositionCrop::load(p, preset.outer_radius_mm, Some(1024)))
+        .collect::<Result<_, _>>()?;
     let groups = groups(scene, &positions);
     // Pictures are looked at the solve grid's size.
     let pictures = flat::pictures(scene, &positions, Some(1024))?;
@@ -647,7 +647,7 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
         let y = (((c / n) as f64 + 0.5) / n as f64 - 0.5) * 2.0 * preset.outer_radius_mm;
         (x, y)
     };
-    let kept = |at: usize, x: f64, y: f64| flat::kept(x, y, &positions[at]);
+    let kept = |at: usize, x: f64, y: f64| pos_crops[at].kept(x, y);
     enum Claim {
         Group(usize),
         Picture(usize),
@@ -728,7 +728,7 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
             continue;
         };
         let poses = transform_poses(&position_options(pos, g.mode, &opts), lamp, g.shape, pos.phi_deg.to_radians());
-        let (t_bg, _) = transform_background(pos, &poses, resp, preset);
+        let (t_bg, _) = transform_background(&pos_crops[at], &poses, resp, preset);
         if t_bg == bg {
             continue;
         }
@@ -816,6 +816,7 @@ mod tests {
             crop_deg,
             crop_side: Default::default(),
             crop_offset_deg: 0.0,
+            crops: None,
             neutral: None,
             order: vec![],
         }
@@ -1189,6 +1190,45 @@ mod tests {
         };
         assert_eq!(solve(&both(90.0), &opts, &shared.0, &shared.1, &preset).unwrap().overlapping, ["0", "1"]);
         assert!(solve(&both(30.0), &opts, &shared.0, &shared.1, &preset).unwrap().overlapping.is_empty());
+
+        // Circle crop in `Position.crops` restricts overlapping objects just like sector crops.
+        let circled = Scene {
+            version: model3d::SCENE_VERSION,
+            images: vec![],
+            objects: vec![star("0", 0.0, 41.0), star("1", 0.0, 41.0)],
+            lamp_mm: None,
+            positions: vec![
+                Position {
+                    crops: Some(vec![model3d::Crop::Circle {
+                        id: "c0".into(),
+                        name: String::new(),
+                        visible: true,
+                        x: 0.0,
+                        y: -0.35,
+                        size: 0.25,
+                        stretch_x: 1.0,
+                        stretch_y: 1.0,
+                        rotation_deg: 0.0,
+                    }]),
+                    ..pos("0", 0.0, 90.0)
+                },
+                Position {
+                    crops: Some(vec![model3d::Crop::Circle {
+                        id: "c1".into(),
+                        name: String::new(),
+                        visible: true,
+                        x: 0.0,
+                        y: 0.35,
+                        size: 0.25,
+                        stretch_x: 1.0,
+                        stretch_y: 1.0,
+                        rotation_deg: 0.0,
+                    }]),
+                    ..pos("1", 90.0, 90.0)
+                },
+            ],
+        };
+        assert!(solve(&circled, &opts, &shared.0, &shared.1, &preset).unwrap().overlapping.is_empty());
     }
 
     #[test]
@@ -1296,7 +1336,8 @@ mod tests {
         // Unlit cell inside the kept sector uses the darkest transform background, darker than 0xA7.
         let bg_a7 = cb.entries.iter().position(|e| e.bytes.iter().all(|&b| b == design::BACKGROUND_BYTE)).unwrap();
         let poses = transform_poses(&opts, lamp, tilt, 0.0);
-        let (t_bg, t_bg_max) = transform_background(&p0, &poses, resp, &preset);
+        let crop0 = flat::PositionCrop::load(&p0, preset.outer_radius_mm, None).unwrap();
+        let (t_bg, t_bg_max) = transform_background(&crop0, &poses, resp, &preset);
         let mut a7_max = 0.0f64;
         let ro = preset.outer_radius_mm;
         for &(eye, lamp) in &poses {
@@ -1801,6 +1842,7 @@ mod frames_study {
             crop_deg: 90.0,
             crop_side: Default::default(),
             crop_offset_deg: 0.0,
+            crops: None,
             neutral: None,
             order: vec![],
         };

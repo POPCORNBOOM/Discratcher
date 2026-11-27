@@ -1,5 +1,5 @@
-import { readLayer } from '../layers'
-import type { DiscGeometryPreset, Layer } from '../types'
+import { fileName, readLayer } from '../layers'
+import type { ArtworkAnalysis, DiscGeometryPreset, Layer } from '../types'
 import {
   DEFAULT_DATA_INNER_MM,
   DEFAULT_DATA_OUTER_MM,
@@ -61,20 +61,114 @@ export interface HoloSceneObject {
 export type CropSide = 'both' | 'up' | 'down'
 export const CROP_SIDES: readonly CropSide[] = ['up', 'down', 'both']
 /** The crop axis's offset turns at most this far either way, degrees. */
-export const MAX_CROP_OFFSET_DEG = 90
+export const MAX_CROP_OFFSET_DEG = 180
 
-/** One way the disc is turned to be looked at, with its own models and pictures. */
+export type MaskChannel = 'luma' | 'alpha'
+export type CropKind = 'sector' | 'polygon' | 'circle' | 'mask'
+
+export interface HoloCropBase {
+  id: string
+  name: string
+  visible: boolean
+}
+
+export interface HoloSectorCrop extends HoloCropBase {
+  kind: 'sector'
+  /** Half-angle kept either side of the crop axis, degrees. */
+  deg: number
+  side: CropSide
+  offsetDeg: number
+}
+
+export interface HoloCircleCrop extends HoloCropBase {
+  kind: 'circle'
+  /** Centre as a share of the disc diameter (`-0.5..0.5`), y down. */
+  x: number
+  y: number
+  /** Diameter as a share of the disc diameter. */
+  size: number
+  stretchX: number
+  stretchY: number
+  rotationDeg: number
+}
+
+export interface HoloPolygonCrop extends HoloCropBase {
+  kind: 'polygon'
+  sides: number
+  x: number
+  y: number
+  size: number
+  stretchX: number
+  stretchY: number
+  rotationDeg: number
+}
+
+export interface HoloMaskCrop extends HoloCropBase {
+  kind: 'mask'
+  path: string
+  width: number
+  height: number
+  x: number
+  y: number
+  size: number
+  stretchX: number
+  stretchY: number
+  rotationDeg: number
+  channel: MaskChannel
+  invert: boolean
+}
+
+export type HoloCrop = HoloSectorCrop | HoloCircleCrop | HoloPolygonCrop | HoloMaskCrop
+export type HoloShapeCrop = HoloCircleCrop | HoloPolygonCrop | HoloMaskCrop
+
+export function makeCropId(): string {
+  return `crop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+export function makeSectorCrop(deg = DEFAULT_CROP_DEG, side: CropSide = 'both', offsetDeg = 0): HoloSectorCrop {
+  return { id: makeCropId(), name: '', visible: true, kind: 'sector', deg, side, offsetDeg }
+}
+
+export function makeCircleCrop(): HoloCircleCrop {
+  return { id: makeCropId(), name: '', visible: true, kind: 'circle', x: 0, y: -0.35, size: 0.34, stretchX: 1, stretchY: 1, rotationDeg: 0 }
+}
+
+export function makePolygonCrop(sides = 6): HoloPolygonCrop {
+  return { id: makeCropId(), name: '', visible: true, kind: 'polygon', sides: Math.min(12, Math.max(3, Math.round(sides))), x: 0, y: -0.35, size: 0.36, stretchX: 1, stretchY: 1, rotationDeg: 0 }
+}
+
+export function makeMaskCrop(file: string, a: ArtworkAnalysis): HoloMaskCrop {
+  return {
+    id: makeCropId(),
+    name: fileName(file),
+    visible: true,
+    kind: 'mask',
+    path: file,
+    width: Math.max(1, a.width),
+    height: Math.max(1, a.height),
+    x: 0,
+    y: 0,
+    size: 1,
+    stretchX: 1,
+    stretchY: 1,
+    rotationDeg: 0,
+    channel: a.hasAlpha ? 'alpha' : 'luma',
+    invert: false,
+  }
+}
+
+export function cloneCrop(crop: HoloCrop, freshId = false): HoloCrop {
+  return { ...crop, ...(freshId ? { id: makeCropId() } : {}) }
+}
+
+/** One way the disc is turned to be looked at, with its own models, pictures, and crops. */
 export interface HoloPosition {
   id: string
   name: string
   /** Which angle of the disc is at the top, clockwise in degrees. */
   phiDeg: number
-  /** Half-angle kept either side of the crop axis, degrees; 90 with both ends kept means no crop. */
-  cropDeg: number
-  /** Which ends of the crop axis keep their sector. */
-  cropSide: CropSide
-  /** The crop axis turned from 12 o'clock, clockwise as seen, degrees. */
-  cropOffsetDeg: number
+  /** Crop shapes active on this position; empty keeps the whole ring, multiple unite. */
+  crops: HoloCrop[]
   /** How hard every view is held white rather than sharper and in colour; absent takes each model's mode's default. */
   neutral?: number
   /** Its models' and pictures' ids, top first: where two want the same disc, the higher wins. */
@@ -153,7 +247,7 @@ export function cloneScene(scene: HoloScene): HoloScene {
   return {
     version: SCENE_VERSION,
     ...(scene.lampMm ? { lampMm: [...scene.lampMm] as Vec3 } : {}),
-    positions: scene.positions.map((p) => ({ ...p, order: [...p.order] })),
+    positions: scene.positions.map((p) => ({ ...p, crops: p.crops.map((c) => cloneCrop(c)), order: [...p.order] })),
     objects: scene.objects.map((o) => ({
       ...o,
       positionMm: [...o.positionMm] as Vec3,
@@ -170,8 +264,8 @@ export function emptyScene(): HoloScene {
   return { version: SCENE_VERSION, positions: [makePosition(0)], objects: [], images: [] }
 }
 
-export function makePosition(phiDeg: number, cropDeg = DEFAULT_CROP_DEG): HoloPosition {
-  return { id: makeObjectId(), name: '', phiDeg, cropDeg, cropSide: 'both', cropOffsetDeg: 0, order: [] }
+export function makePosition(phiDeg: number, crops: HoloCrop[] = [makeSectorCrop(DEFAULT_CROP_DEG, 'both', 0)]): HoloPosition {
+  return { id: makeObjectId(), name: '', phiDeg, crops: crops.map((c) => cloneCrop(c)), order: [] }
 }
 
 /** A model or a picture in a position's list. */
@@ -294,6 +388,77 @@ const asMode = (v: unknown): HoloMode => (v === 'transform' ? 'transform' : 'rea
 const asParallax = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(6, Math.max(1, round1(v))) : DEFAULT_PARALLAX)
 const asTilt = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(30, Math.max(0, v)) : 0)
 
+function asCrop(raw: unknown): HoloCrop | null {
+  if (!raw || typeof raw !== 'object') return null
+  const c = raw as Record<string, unknown>
+  const num = (v: unknown, d: number, lo: number, hi: number) =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d
+  const id = typeof c.id === 'string' && c.id ? c.id : makeCropId()
+  const name = typeof c.name === 'string' ? c.name : ''
+  const visible = typeof c.visible === 'boolean' ? c.visible : true
+  if (c.kind === 'sector') {
+    const side: CropSide = CROP_SIDES.includes(c.side as CropSide) ? (c.side as CropSide) : 'both'
+    return {
+      id,
+      name,
+      visible,
+      kind: 'sector',
+      deg: num(c.deg, DEFAULT_CROP_DEG, 5, side === 'both' ? 90 : 180),
+      side,
+      offsetDeg: num(c.offsetDeg, 0, -MAX_CROP_OFFSET_DEG, MAX_CROP_OFFSET_DEG),
+    }
+  }
+  if (c.kind === 'circle') {
+    return {
+      id,
+      name,
+      visible,
+      kind: 'circle',
+      x: num(c.x, 0, -1, 1),
+      y: num(c.y, -0.35, -1, 1),
+      size: num(c.size, 0.34, 0.02, 3),
+      stretchX: num(c.stretchX, 1, 0.1, 4),
+      stretchY: num(c.stretchY, 1, 0.1, 4),
+      rotationDeg: num(c.rotationDeg, 0, -180, 180),
+    }
+  }
+  if (c.kind === 'polygon') {
+    return {
+      id,
+      name,
+      visible,
+      kind: 'polygon',
+      sides: Math.round(num(c.sides, 6, 3, 12)),
+      x: num(c.x, 0, -1, 1),
+      y: num(c.y, -0.35, -1, 1),
+      size: num(c.size, 0.36, 0.02, 3),
+      stretchX: num(c.stretchX, 1, 0.1, 4),
+      stretchY: num(c.stretchY, 1, 0.1, 4),
+      rotationDeg: num(c.rotationDeg, 0, -180, 180),
+    }
+  }
+  if (c.kind === 'mask' && typeof c.path === 'string' && c.path.trim()) {
+    return {
+      id,
+      name: name || fileName(c.path),
+      visible,
+      kind: 'mask',
+      path: c.path,
+      width: Math.round(num(c.width, 1, 1, 65536)),
+      height: Math.round(num(c.height, 1, 1, 65536)),
+      x: num(c.x, 0, -1, 1),
+      y: num(c.y, 0, -1, 1),
+      size: num(c.size, 1, 0.02, 3),
+      stretchX: num(c.stretchX, 1, 0.1, 4),
+      stretchY: num(c.stretchY, 1, 0.1, 4),
+      rotationDeg: num(c.rotationDeg, 0, -180, 180),
+      channel: c.channel === 'alpha' ? 'alpha' : 'luma',
+      invert: !!c.invert,
+    }
+  }
+  return null
+}
+
 /** Parse and validate a versioned scene JSON payload, bringing older versions up to date. */
 export function validateScene(raw: unknown): HoloScene {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid scene payload')
@@ -308,21 +473,27 @@ export function validateScene(raw: unknown): HoloScene {
   for (const item of Array.isArray(rec.positions) ? rec.positions : []) {
     const q = item as Record<string, unknown> | null
     if (q && typeof q.id === 'string' && q.id && typeof q.phiDeg === 'number' && Number.isFinite(q.phiDeg)) {
-      const cropDeg =
-        typeof q.cropDeg === 'number' && Number.isFinite(q.cropDeg)
-          ? Math.min(90, Math.max(5, q.cropDeg))
-          : DEFAULT_CROP_DEG
+      let crops: HoloCrop[]
+      if (Array.isArray(q.crops)) {
+        crops = q.crops.map(asCrop).filter((c): c is HoloCrop => c !== null)
+      } else {
+        const cropDeg =
+          typeof q.cropDeg === 'number' && Number.isFinite(q.cropDeg)
+            ? Math.min(90, Math.max(5, q.cropDeg))
+            : DEFAULT_CROP_DEG
+        const cropSide = CROP_SIDES.includes(q.cropSide as CropSide) ? (q.cropSide as CropSide) : 'both'
+        const cropOffsetDeg =
+          typeof q.cropOffsetDeg === 'number' && Number.isFinite(q.cropOffsetDeg)
+            ? Math.min(MAX_CROP_OFFSET_DEG, Math.max(-MAX_CROP_OFFSET_DEG, q.cropOffsetDeg))
+            : 0
+        crops = cropSide === 'both' && cropDeg >= 90 ? [] : [makeSectorCrop(cropDeg, cropSide, cropOffsetDeg)]
+      }
       legacy.set(q.id, { mode: asMode(q.mode), parallax: asParallax(q.parallax), tiltDeg: asTilt(q.tiltDeg) })
       positions.push({
         id: q.id,
         name: typeof q.name === 'string' ? q.name : '',
         phiDeg: wrapDeg(q.phiDeg),
-        cropDeg,
-        cropSide: CROP_SIDES.includes(q.cropSide as CropSide) ? (q.cropSide as CropSide) : 'both',
-        cropOffsetDeg:
-          typeof q.cropOffsetDeg === 'number' && Number.isFinite(q.cropOffsetDeg)
-            ? Math.min(MAX_CROP_OFFSET_DEG, Math.max(-MAX_CROP_OFFSET_DEG, q.cropOffsetDeg))
-            : 0,
+        crops,
         ...(typeof q.neutral === 'number' && Number.isFinite(q.neutral) ? { neutral: Math.min(3, Math.max(0, q.neutral)) } : {}),
         order: Array.isArray(q.order) ? q.order.filter((x): x is string => typeof x === 'string') : [],
       })

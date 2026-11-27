@@ -118,9 +118,6 @@
             </div>
             <div v-if="manyPicked" class="small muted">{{ t('holo.pickedMany', { n: pickedIds.length }) }}</div>
             <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" :disabled="manyPicked" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
-            <UiSlider :model-value="position.cropDeg" :label="t('holo.crop')" :min="5" :max="90" :step="1" :format="cropWords" @pointerdown="beginControlEdit" @update:model-value="setCrop" />
-            <UiSegmented :model-value="position.cropSide" :options="cropSideOptions" @update:model-value="setCropSide($event as CropSide)" />
-            <UiSlider :model-value="position.cropOffsetDeg" :label="t('holo.cropOffset')" :min="-MAX_CROP_OFFSET_DEG" :max="MAX_CROP_OFFSET_DEG" :step="1" :format="degInt" @pointerdown="beginControlEdit" @update:model-value="setCropOffset" />
             <UiSlider
               :model-value="neutralNow"
               :label="t('holo.chroma')"
@@ -135,6 +132,301 @@
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
             </div>
+          </UiSection>
+
+          <!-- Shapes restricting what part of the disc belongs to this position. -->
+          <UiSection name="crops" :icon="mdiContentCut" :title="t('holo.crops')">
+            <div v-if="manyPicked" class="small muted">{{ t('holo.pickedMany', { n: pickedIds.length }) }}</div>
+            <div v-if="position.crops.length" class="obj-list" role="listbox" :aria-label="t('holo.crops')">
+              <div
+                v-for="crop in position.crops"
+                :key="crop.id"
+                class="obj-row"
+                role="option"
+                tabindex="0"
+                :aria-selected="selectedCropId === crop.id"
+                :class="{ on: selectedCropId === crop.id, hidden: !crop.visible }"
+                @click="chooseCrop(crop.id)"
+                @keydown.enter.prevent="chooseCrop(crop.id)"
+                @keydown.space.prevent="chooseCrop(crop.id)"
+              >
+                <img v-if="crop.kind === 'mask' && pictures[crop.path]" class="thumb" :src="pictures[crop.path].thumbnail" alt="" />
+                <span v-else class="thumb"><UiIcon :path="cropIcon(crop.kind)" :size="16" class="muted" /></span>
+                <span class="grow ellipsis" :data-tooltip="cropLabel(crop)" data-tooltip-overflow>{{ cropLabel(crop) }}</span>
+                <span class="obj-tools">
+                  <UiButton
+                    icon-only
+                    variant="ghost"
+                    :icon="crop.visible ? mdiEyeOutline : mdiEyeOffOutline"
+                    :aria-label="crop.visible ? t('holo.hide') : t('holo.show')"
+                    :data-tooltip="crop.visible ? t('holo.hide') : t('holo.show')"
+                    @click.stop="toggleCropVisibility(crop.id)"
+                  />
+                  <UiButton
+                    icon-only
+                    variant="ghost"
+                    :icon="mdiContentCopy"
+                    :aria-label="t('carve.duplicate')"
+                    :data-tooltip="t('carve.duplicate')"
+                    @click.stop="duplicateCrop(crop.id)"
+                  />
+                  <UiButton
+                    icon-only
+                    variant="ghost"
+                    :icon="mdiTrashCanOutline"
+                    :aria-label="t('holo.delete')"
+                    :data-tooltip="t('holo.delete')"
+                    @click.stop="removeCrop(crop.id)"
+                  />
+                </span>
+              </div>
+            </div>
+            <div v-else class="small muted">{{ t('holo.cropEmpty') }}</div>
+            <div class="crop-add-grid">
+              <UiButton variant="ghost" :icon="mdiCircleSlice2" @click="addSectorCrop">{{ t('holo.cropKind.sector') }}</UiButton>
+              <UiButton variant="ghost" :icon="mdiPentagonOutline" @click="addPolygonCrop">{{ t('holo.cropKind.polygon') }}</UiButton>
+              <UiButton variant="ghost" :icon="mdiCircleOutline" @click="addCircleCrop">{{ t('holo.cropKind.circle') }}</UiButton>
+              <UiButton variant="ghost" :icon="mdiImageFilterBlackWhite" @click="addMaskCrop">{{ t('holo.cropKind.mask') }}</UiButton>
+            </div>
+
+            <section v-if="selectedCrop" class="section">
+              <div class="title row">
+                <span class="grow ellipsis">{{ cropLabel(selectedCrop) }}</span>
+                <a class="action-link" role="button" tabindex="0" @click="resetSelectedCrop" @keydown.enter="resetSelectedCrop">{{ t('holo.reset') }}</a>
+              </div>
+              <template v-if="selectedCrop.kind === 'sector'">
+                <UiSegmented :model-value="selectedCrop.side" :options="cropSideOptions" @update:model-value="setSectorSide($event as CropSide)" />
+                <UiSlider
+                  :model-value="selectedCrop.deg"
+                  :label="t('holo.crop')"
+                  :min="5"
+                  :max="selectedCrop.side === 'both' ? 90 : 180"
+                  :step="1"
+                  :format="sectorDegWords"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="setSectorDeg"
+                />
+                <UiSlider
+                  :model-value="selectedCrop.offsetDeg"
+                  :label="t('holo.cropOffset')"
+                  :min="-MAX_CROP_OFFSET_DEG"
+                  :max="MAX_CROP_OFFSET_DEG"
+                  :step="1"
+                  :format="degInt"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="setSectorOffset"
+                />
+              </template>
+              <template v-else-if="selectedCrop.kind === 'polygon'">
+                <UiSlider
+                  :model-value="selectedCrop.sides"
+                  :label="t('holo.cropSides')"
+                  :min="3"
+                  :max="12"
+                  :step="1"
+                  :format="(v) => String(Math.round(v))"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="setPolygonSides"
+                />
+                <UiSlider
+                  :model-value="selectedCrop.x * 100"
+                  :label="t('carve.x')"
+                  :min="-50"
+                  :max="50"
+                  :step="0.5"
+                  :format="pctOffset"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('x', Math.round((v / 100) * 1000) / 1000)"
+                />
+                <UiSlider
+                  :model-value="selectedCrop.y * 100"
+                  :label="t('carve.y')"
+                  :min="-50"
+                  :max="50"
+                  :step="0.5"
+                  :format="pctOffset"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('y', Math.round((v / 100) * 1000) / 1000)"
+                />
+                <UiSlider
+                  :model-value="selectedCrop.size * 100"
+                  :label="t('carve.size')"
+                  :min="5"
+                  :max="150"
+                  :step="1"
+                  :format="pctInt"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('size', Math.round((v / 100) * 1000) / 1000)"
+                />
+                <UiSlider
+                  :model-value="selectedCrop.rotationDeg"
+                  :label="t('carve.rotate')"
+                  :min="-180"
+                  :max="180"
+                  :step="0.5"
+                  :format="deg"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('rotationDeg', round1(v))"
+                />
+                <UiAdvanced :label="t('holo.cropStretch')">
+                  <UiSlider
+                    :model-value="selectedCrop.stretchX * 100"
+                    :label="t('carve.stretchX')"
+                    :min="10"
+                    :max="400"
+                    :step="1"
+                    :format="pctInt"
+                    @pointerdown="beginControlEdit"
+                    @update:model-value="(v) => setShapeField('stretchX', Math.round((v / 100) * 1000) / 1000)"
+                  />
+                  <UiSlider
+                    :model-value="selectedCrop.stretchY * 100"
+                    :label="t('carve.stretchY')"
+                    :min="10"
+                    :max="400"
+                    :step="1"
+                    :format="pctInt"
+                    @pointerdown="beginControlEdit"
+                    @update:model-value="(v) => setShapeField('stretchY', Math.round((v / 100) * 1000) / 1000)"
+                  />
+                </UiAdvanced>
+              </template>
+              <template v-else-if="selectedCrop.kind === 'circle'">
+                <UiSlider
+                  :model-value="selectedCrop.x * 100"
+                  :label="t('carve.x')"
+                  :min="-50"
+                  :max="50"
+                  :step="0.5"
+                  :format="pctOffset"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('x', Math.round((v / 100) * 1000) / 1000)"
+                />
+                <UiSlider
+                  :model-value="selectedCrop.y * 100"
+                  :label="t('carve.y')"
+                  :min="-50"
+                  :max="50"
+                  :step="0.5"
+                  :format="pctOffset"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('y', Math.round((v / 100) * 1000) / 1000)"
+                />
+                <UiSlider
+                  :model-value="selectedCrop.size * 100"
+                  :label="t('carve.size')"
+                  :min="5"
+                  :max="150"
+                  :step="1"
+                  :format="pctInt"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('size', Math.round((v / 100) * 1000) / 1000)"
+                />
+                <UiAdvanced :label="t('holo.cropStretch')">
+                  <UiSlider
+                    :model-value="selectedCrop.stretchX * 100"
+                    :label="t('carve.stretchX')"
+                    :min="10"
+                    :max="400"
+                    :step="1"
+                    :format="pctInt"
+                    @pointerdown="beginControlEdit"
+                    @update:model-value="(v) => setShapeField('stretchX', Math.round((v / 100) * 1000) / 1000)"
+                  />
+                  <UiSlider
+                    :model-value="selectedCrop.stretchY * 100"
+                    :label="t('carve.stretchY')"
+                    :min="10"
+                    :max="400"
+                    :step="1"
+                    :format="pctInt"
+                    @pointerdown="beginControlEdit"
+                    @update:model-value="(v) => setShapeField('stretchY', Math.round((v / 100) * 1000) / 1000)"
+                  />
+                  <UiSlider
+                    :model-value="selectedCrop.rotationDeg"
+                    :label="t('carve.rotate')"
+                    :min="-180"
+                    :max="180"
+                    :step="0.5"
+                    :format="deg"
+                    @pointerdown="beginControlEdit"
+                    @update:model-value="(v) => setShapeField('rotationDeg', round1(v))"
+                  />
+                </UiAdvanced>
+              </template>
+              <template v-else-if="selectedCrop.kind === 'mask'">
+                <UiButton variant="soft" :icon="mdiImageOutline" @click="replaceSelectedMaskImage">{{ t('carve.choose') }}</UiButton>
+                <UiSegmented
+                  :model-value="selectedCrop.channel"
+                  :options="maskChannelOptions"
+                  @update:model-value="setMaskChannel($event as MaskChannel)"
+                />
+                <UiSwitch :model-value="selectedCrop.invert" @update:model-value="setMaskInvert">{{ t('carve.invert') }}</UiSwitch>
+                <UiSlider
+                  :model-value="selectedCrop.x * 100"
+                  :label="t('carve.x')"
+                  :min="-50"
+                  :max="50"
+                  :step="0.5"
+                  :format="pctOffset"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('x', Math.round((v / 100) * 1000) / 1000)"
+                />
+                <UiSlider
+                  :model-value="selectedCrop.y * 100"
+                  :label="t('carve.y')"
+                  :min="-50"
+                  :max="50"
+                  :step="0.5"
+                  :format="pctOffset"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('y', Math.round((v / 100) * 1000) / 1000)"
+                />
+                <UiSlider
+                  :model-value="selectedCrop.size * 100"
+                  :label="t('carve.size')"
+                  :min="5"
+                  :max="300"
+                  :step="1"
+                  :format="pctInt"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('size', Math.round((v / 100) * 1000) / 1000)"
+                />
+                <UiSlider
+                  :model-value="selectedCrop.rotationDeg"
+                  :label="t('carve.rotate')"
+                  :min="-180"
+                  :max="180"
+                  :step="0.5"
+                  :format="deg"
+                  @pointerdown="beginControlEdit"
+                  @update:model-value="(v) => setShapeField('rotationDeg', round1(v))"
+                />
+                <UiAdvanced :label="t('holo.cropStretch')">
+                  <UiSlider
+                    :model-value="selectedCrop.stretchX * 100"
+                    :label="t('carve.stretchX')"
+                    :min="10"
+                    :max="400"
+                    :step="1"
+                    :format="pctInt"
+                    @pointerdown="beginControlEdit"
+                    @update:model-value="(v) => setShapeField('stretchX', Math.round((v / 100) * 1000) / 1000)"
+                  />
+                  <UiSlider
+                    :model-value="selectedCrop.stretchY * 100"
+                    :label="t('carve.stretchY')"
+                    :min="10"
+                    :max="400"
+                    :step="1"
+                    :format="pctInt"
+                    @pointerdown="beginControlEdit"
+                    @update:model-value="(v) => setShapeField('stretchY', Math.round((v / 100) * 1000) / 1000)"
+                  />
+                </UiAdvanced>
+              </template>
+            </section>
           </UiSection>
 
           <!-- What the position shows, top first: where two want the same disc, the higher wins. -->
@@ -587,7 +879,7 @@
             icon-only
             variant="ghost"
             :icon="mdiContentCopy"
-            :disabled="!selectedObj && !selectedImage"
+            :disabled="!selectedObj && !selectedImage && !selectedCrop"
             :aria-label="t('holo.duplicate')"
             :data-tooltip="`${t('holo.duplicate')} (${modKey}D)`"
             @click="duplicateSelected"
@@ -596,7 +888,7 @@
             icon-only
             variant="ghost"
             :icon="mdiTrashCanOutline"
-            :disabled="!selectedObj && !selectedImage"
+            :disabled="!selectedObj && !selectedImage && !selectedCrop"
             :aria-label="t('holo.delete')"
             :data-tooltip="t('holo.delete')"
             @click="deleteSelected"
@@ -648,11 +940,13 @@
           :images="scene.images"
           :thumbnails="thumbnails"
           :selected-image-id="selectedImageId"
+          :selected-crop-id="selectedCropId"
           :isolate="isolate"
           :zones="zones"
           @select="selectObject"
           @select-image="choosePicture"
           @image-transform="onImageTransform"
+          @crop-transform="onCropTransform"
           @position="goToPosition"
           @transform-start="onTransformStart"
           @transform-change="onTransformChange"
@@ -766,9 +1060,12 @@ import {
   mdiArrowDown,
   mdiArrowUp,
   mdiAxisArrow,
+  mdiCircleOutline,
+  mdiCircleSlice2,
   mdiClose,
   mdiCloseBoxOutline,
   mdiContentCopy,
+  mdiContentCut,
   mdiContentSaveOutline,
   mdiCrosshairsGps,
   mdiCubeOutline,
@@ -784,6 +1081,7 @@ import {
   mdiFolderOutline,
   mdiFolderSearchOutline,
   mdiGrid,
+  mdiImageFilterBlackWhite,
   mdiImageFilterCenterFocus,
   mdiImageOutline,
   mdiImagePlusOutline,
@@ -793,6 +1091,7 @@ import {
   mdiMouseLeftClickOutline,
   mdiMouseRightClickOutline,
   mdiMouseScrollWheel,
+  mdiPentagonOutline,
   mdiPlus,
   mdiShieldCheckOutline,
   mdiRedo,
@@ -853,6 +1152,7 @@ import {
 } from '../holo/motion'
 import { decodeDisplayMesh, type DisplayMeshData } from '../holo/sampleMesh'
 import {
+  cloneCrop,
   cloneScene,
   defaultInkStyle,
   defaultObjectPlacement,
@@ -861,25 +1161,36 @@ import {
   fileBaseName,
   formatDepthWords,
   freePhi,
+  makeCircleCrop,
+  makeCropId,
+  makeMaskCrop,
   makeObjectId,
+  makePolygonCrop,
   makePosition,
+  makeSectorCrop,
   wrapDeg,
   round1,
   SCENE_VERSION,
   validateScene,
+  type CropKind,
+  type CropSide,
+  type HoloCrop,
   type HoloInkStyle,
   DEFAULT_PARALLAX,
   type HoloItem,
+  type HoloMaskCrop,
   type HoloMode,
   type HoloPosition,
+  type HoloShapeCrop,
   normalizeOrder,
   positionItems,
   type HoloScene,
   type HoloSceneObject,
+  type MaskChannel,
   CROP_SIDES,
   MAX_CROP_OFFSET_DEG,
-  type CropSide,
 } from '../holo/scene'
+import { hasActiveCrop } from '../holo/cropGlsl'
 import { t } from '../i18n'
 import { notifyError, notifySuccess } from '../notices'
 import { useProcess, type StepContext } from '../stores/process'
@@ -957,7 +1268,7 @@ const scene = ref<HoloScene>(emptyScene())
 const selectedId = ref<string | null>(null)
 /** The settings group open in the side panel. */
 const openGroup = ref('positions')
-// Picking a model in the view opens its settings.
+// Picking a model or crop in the list opens its settings group.
 watch(selectedId, (id) => { if (id) openGroup.value = 'models' })
 const MAX_POSITIONS = 24
 const positionId = ref(scene.value.positions[0].id)
@@ -1137,6 +1448,9 @@ function undo() {
   if (selectedId.value && selectedId.value !== LAMP_ID && !scene.value.objects.some((o) => o.id === selectedId.value)) {
     selectedId.value = scene.value.objects[0]?.id ?? null
   }
+  if (selectedCropId.value && !position.value.crops.some((c) => c.id === selectedCropId.value)) {
+    selectedCropId.value = null
+  }
   void ensureMeshesLoaded(scene.value.objects)
 }
 
@@ -1147,6 +1461,9 @@ function redo() {
   scene.value = next
   if (selectedId.value && selectedId.value !== LAMP_ID && !scene.value.objects.some((o) => o.id === selectedId.value)) {
     selectedId.value = scene.value.objects[0]?.id ?? null
+  }
+  if (selectedCropId.value && !position.value.crops.some((c) => c.id === selectedCropId.value)) {
+    selectedCropId.value = null
   }
   void ensureMeshesLoaded(scene.value.objects)
 }
@@ -1219,21 +1536,37 @@ async function addSample() {
 
 function selectObject(id: string | null) {
   chooseModel(id)
-  if (!id) selectedImageId.value = null
+  if (!id) {
+    selectedImageId.value = null
+    selectedCropId.value = null
+  }
   const obj = scene.value.objects.find((o) => o.id === id)
   if (obj && obj.positionId !== positionId.value) goToPosition(obj.positionId)
 }
 
 // ---- The position's list: models and pictures, top first ----
 const items = computed(() => positionItems(scene.value, position.value))
-/** One thing is selected at a time, a model or a picture. */
+/** One thing is selected at a time: a model, a picture, or a crop shape. */
 function chooseModel(id: string | null) {
   selectedId.value = id
-  if (id) selectedImageId.value = null
+  if (id) {
+    selectedImageId.value = null
+    selectedCropId.value = null
+  }
 }
 function choosePicture(id: string | null) {
   selectedImageId.value = id
-  if (id) selectedId.value = null
+  if (id) {
+    selectedId.value = null
+    selectedCropId.value = null
+  }
+}
+function chooseCrop(id: string | null) {
+  selectedCropId.value = id
+  if (id) {
+    selectedId.value = null
+    selectedImageId.value = null
+  }
 }
 const isPicked = (x: HoloItem) => (x.kind === 'model' ? selectedId.value : selectedImageId.value) === x.item.id
 function pickItem(x: HoloItem) {
@@ -1299,6 +1632,9 @@ function showPosition(id: string) {
   if (selected && selected.positionId !== id) selectedId.value = null
   const selectedImg = scene.value.images.find((i) => i.id === selectedImageId.value)
   if (selectedImg && selectedImg.positionId !== id) selectedImageId.value = null
+  if (selectedCropId.value && !position.value.crops.some((c) => c.id === selectedCropId.value)) {
+    selectedCropId.value = null
+  }
   lookTurn.value = position.value.phiDeg
 }
 
@@ -1325,17 +1661,223 @@ function setPhi(deg: number) {
   lookTurn.value = position.value.phiDeg
 }
 
-function setCrop(deg: number) {
-  for (const q of pickedPositions.value) q.cropDeg = Math.min(90, Math.max(5, Math.round(deg)))
-}
-function setCropSide(side: CropSide) {
-  pushHistory()
-  for (const q of pickedPositions.value) q.cropSide = side
-}
-function setCropOffset(deg: number) {
-  for (const q of pickedPositions.value) q.cropOffsetDeg = Math.min(MAX_CROP_OFFSET_DEG, Math.max(-MAX_CROP_OFFSET_DEG, Math.round(deg)))
-}
+// ---- Multi-shape crops ----
+const selectedCropId = ref<string | null>(null)
+const selectedCrop = computed(() => position.value.crops.find((c) => c.id === selectedCropId.value) ?? null)
+watch(selectedCropId, (id) => { if (id) openGroup.value = 'crops' })
+
 const cropSideOptions = computed(() => CROP_SIDES.map((v) => ({ value: v, label: t(`holo.cropSide.${v}`) })))
+const maskChannelOptions = computed(() => [
+  { value: 'alpha', label: t('holo.maskAlpha') },
+  { value: 'luma', label: t('holo.maskLuma') },
+])
+
+function cropIcon(kind: CropKind): string {
+  if (kind === 'sector') return mdiCircleSlice2
+  if (kind === 'polygon') return mdiPentagonOutline
+  if (kind === 'circle') return mdiCircleOutline
+  return mdiImageFilterBlackWhite
+}
+
+const pctOffset = (v: number) => (v > 0 ? `+${v.toFixed(1)}%` : `${v.toFixed(1)}%`)
+const pctInt = (v: number) => `${Math.round(v)}%`
+const sectorDegWords = (deg: number) => (deg >= 90 && selectedCrop.value?.kind === 'sector' && selectedCrop.value.side === 'both' ? t('holo.cropNone') : t('holo.cropRange', { n: Math.round(deg) }))
+
+function cropLabel(crop: HoloCrop): string {
+  if (crop.kind === 'sector') {
+    const side = t(`holo.cropSide.${crop.side}`)
+    const span = crop.side === 'both' && crop.deg >= 90 ? t('holo.cropNone') : t('holo.cropRange', { n: Math.round(crop.deg) })
+    return `${t('holo.cropKind.sector')} ${side} ${span}`
+  }
+  if (crop.kind === 'polygon') {
+    return `${t('holo.cropKind.polygon')} (${crop.sides})`
+  }
+  if (crop.kind === 'circle') {
+    return t('holo.cropKind.circle')
+  }
+  return crop.name || t('holo.cropKind.mask')
+}
+
+function syncPickedCrops() {
+  if (!manyPicked.value) return
+  const lead = position.value
+  for (const q of pickedPositions.value) {
+    if (q.id === lead.id) continue
+    const used = new Set<string>()
+    q.crops = lead.crops.map((c, idx) => {
+      const existingId = q.crops[idx]?.id
+      const id = existingId && !used.has(existingId) ? existingId : makeCropId()
+      used.add(id)
+      return { ...cloneCrop(c), id }
+    })
+  }
+}
+
+function addCrop(crop: HoloCrop) {
+  pushHistory()
+  position.value.crops.push(crop)
+  syncPickedCrops()
+  chooseCrop(crop.id)
+  openGroup.value = 'crops'
+}
+
+function addSectorCrop() {
+  addCrop(makeSectorCrop())
+}
+
+function addPolygonCrop() {
+  addCrop(makePolygonCrop())
+}
+
+function addCircleCrop() {
+  addCrop(makeCircleCrop())
+}
+
+async function addMaskCrop() {
+  const file = await pickImage()
+  if (!file) return
+  try {
+    const a = await call<ArtworkAnalysis>('analyze_artwork', { imagePath: file })
+    pictures.value[file] = a
+    addCrop(makeMaskCrop(file, a))
+  } catch (e) {
+    notifyError(String(e))
+  }
+}
+
+async function replaceSelectedMaskImage() {
+  const c = selectedCrop.value
+  if (!c || c.kind !== 'mask') return
+  const file = await pickImage()
+  if (!file) return
+  try {
+    const a = await call<ArtworkAnalysis>('analyze_artwork', { imagePath: file })
+    pictures.value[file] = a
+    pushHistory()
+    c.path = file
+    c.name = fileBaseName(file)
+    c.width = Math.max(1, a.width)
+    c.height = Math.max(1, a.height)
+    c.channel = a.hasAlpha ? 'alpha' : 'luma'
+    syncPickedCrops()
+  } catch (e) {
+    notifyError(String(e))
+  }
+}
+
+function toggleCropVisibility(id: string) {
+  const c = position.value.crops.find((x) => x.id === id)
+  if (!c) return
+  pushHistory()
+  c.visible = !c.visible
+  syncPickedCrops()
+}
+
+function duplicateCrop(id: string) {
+  const at = position.value.crops.findIndex((c) => c.id === id)
+  if (at < 0) return
+  pushHistory()
+  const copy = cloneCrop(position.value.crops[at], true)
+  if (copy.kind !== 'sector') {
+    copy.x = Math.round(Math.min(0.45, copy.x + 0.04) * 1000) / 1000
+    copy.y = Math.round(Math.min(0.45, copy.y + 0.04) * 1000) / 1000
+  } else {
+    copy.offsetDeg = Math.round((((copy.offsetDeg + 15 + 180) % 360) - 180))
+  }
+  position.value.crops.splice(at + 1, 0, copy)
+  syncPickedCrops()
+  chooseCrop(copy.id)
+}
+
+function removeCrop(id: string) {
+  const at = position.value.crops.findIndex((c) => c.id === id)
+  if (at < 0) return
+  pushHistory()
+  position.value.crops.splice(at, 1)
+  syncPickedCrops()
+  if (selectedCropId.value === id) {
+    selectedCropId.value = position.value.crops[Math.min(at, position.value.crops.length - 1)]?.id ?? null
+  }
+}
+
+function resetSelectedCrop() {
+  const c = selectedCrop.value
+  if (!c) return
+  pushHistory()
+  if (c.kind === 'sector') {
+    c.deg = 30
+    c.side = 'both'
+    c.offsetDeg = 0
+  } else if (c.kind === 'circle') {
+    Object.assign(c, { x: 0, y: -0.35, size: 0.34, stretchX: 1, stretchY: 1, rotationDeg: 0 })
+  } else if (c.kind === 'polygon') {
+    Object.assign(c, { sides: 6, x: 0, y: -0.35, size: 0.36, stretchX: 1, stretchY: 1, rotationDeg: 0 })
+  } else {
+    Object.assign(c, { x: 0, y: 0, size: 1, stretchX: 1, stretchY: 1, rotationDeg: 0, invert: false })
+  }
+  syncPickedCrops()
+}
+
+function setSectorSide(side: CropSide) {
+  const c = selectedCrop.value
+  if (!c || c.kind !== 'sector' || c.side === side) return
+  pushHistory()
+  c.side = side
+  if (side === 'both' && c.deg > 90) c.deg = 90
+  syncPickedCrops()
+}
+
+function setSectorDeg(deg: number) {
+  const c = selectedCrop.value
+  if (!c || c.kind !== 'sector') return
+  const max = c.side === 'both' ? 90 : 180
+  c.deg = Math.min(max, Math.max(5, Math.round(deg)))
+  syncPickedCrops()
+}
+
+function setSectorOffset(deg: number) {
+  const c = selectedCrop.value
+  if (!c || c.kind !== 'sector') return
+  c.offsetDeg = Math.min(MAX_CROP_OFFSET_DEG, Math.max(-MAX_CROP_OFFSET_DEG, Math.round(deg)))
+  syncPickedCrops()
+}
+
+function setPolygonSides(sides: number) {
+  const c = selectedCrop.value
+  if (!c || c.kind !== 'polygon') return
+  c.sides = Math.min(12, Math.max(3, Math.round(sides)))
+  syncPickedCrops()
+}
+
+function setMaskChannel(channel: MaskChannel) {
+  const c = selectedCrop.value
+  if (!c || c.kind !== 'mask' || c.channel === channel) return
+  pushHistory()
+  c.channel = channel
+  syncPickedCrops()
+}
+
+function setMaskInvert(invert: boolean) {
+  const c = selectedCrop.value
+  if (!c || c.kind !== 'mask' || c.invert === invert) return
+  pushHistory()
+  c.invert = invert
+  syncPickedCrops()
+}
+
+function setShapeField<K extends 'x' | 'y' | 'size' | 'stretchX' | 'stretchY' | 'rotationDeg'>(key: K, value: HoloShapeCrop[K]) {
+  const c = selectedCrop.value
+  if (!c || c.kind === 'sector') return
+  c[key] = value
+  syncPickedCrops()
+}
+
+function onCropTransform(p: { id: string; x: number; y: number; size: number; stretchX: number; stretchY: number; rotationDeg: number }) {
+  const c = position.value.crops.find((x) => x.id === p.id && x.kind !== 'sector')
+  if (!c || c.kind === 'sector') return
+  Object.assign(c, { x: p.x, y: p.y, size: p.size, stretchX: p.stretchX, stretchY: p.stretchY, rotationDeg: p.rotationDeg })
+  syncPickedCrops()
+}
 
 /** How flat pictures are dithered: the carve page's burn safety settings. */
 function carveTone() {
@@ -1354,11 +1896,20 @@ const zones = computed<ZoneKind>(() => {
   if (selectedObj.value) return 'depth'
   return 'none'
 })
-const isCropped = computed(() => !(position.value.cropSide === 'both' && position.value.cropDeg >= 90))
+const isCropped = computed(() => hasActiveCrop(position.value))
 /** Thumbnails and tone hints, by path. */
 const pictures = ref<Record<string, ArtworkAnalysis>>({})
 const thumbnails = computed(() => Object.fromEntries(Object.entries(pictures.value).map(([p, a]) => [p, a.thumbnail])))
-watch(() => [...new Set(scene.value.images.map((i) => i.path))].join('\n'), async (joined) => {
+const allImagePaths = computed(() => {
+  const paths = scene.value.images.map((i) => i.path)
+  for (const q of scene.value.positions) {
+    for (const c of q.crops) {
+      if (c.kind === 'mask') paths.push(c.path)
+    }
+  }
+  return [...new Set(paths)]
+})
+watch(() => allImagePaths.value.join('\n'), async (joined) => {
   for (const path of joined ? joined.split('\n') : []) {
     if (pictures.value[path]) continue
     try {
@@ -1550,9 +2101,7 @@ watch(
   { immediate: true },
 )
 
-const cropWords = (deg: number) => (deg >= 90 && position.value.cropSide === 'both' ? t('holo.cropNone') : t('holo.cropRange', { n: Math.round(deg) }))
-
-// Undo, open and removal can leave the current position behind.
+// Keep Undo/Redo stack, `crop` wording, and delete/duplicate helpers aligned with `selectedCrop`.
 watch(() => scene.value.positions.map((q) => q.id).join(), () => {
   if (!scene.value.positions.some((q) => q.id === positionId.value)) goToPosition(scene.value.positions[0].id)
 })
@@ -1575,14 +2124,16 @@ function deleteObject(id: string) {
   }
 }
 
-/** Whatever is selected, a model or a picture. */
+/** Whatever is selected: a model, a picture, or a crop shape. */
 function deleteSelected() {
   if (selectedObj.value) deleteObject(selectedObj.value.id)
   else if (selectedImage.value) removeImage(selectedImage.value.id)
+  else if (selectedCrop.value) removeCrop(selectedCrop.value.id)
 }
 
 function duplicateSelected() {
   if (selectedImage.value) return duplicateImage(selectedImage.value.id)
+  if (selectedCrop.value) return duplicateCrop(selectedCrop.value.id)
   const src = selectedObj.value
   if (!src) return
   pushHistory()
@@ -1772,6 +2323,7 @@ function closeDesign() {
   pickedRaw.value = []
   selectedId.value = null
   selectedImageId.value = null
+  selectedCropId.value = null
   designDir.value = null
   missingFiles.value = []
   expViews.value = []
@@ -1950,6 +2502,15 @@ async function commitSaveDesign(dir: string, rememberLocation?: string): Promise
     // Only the paths change: they now point at the copies inside the folder.
     for (const o of scene.value.objects) o.path = saved.objects.find((x) => x.id === o.id)?.path ?? o.path
     for (const i of scene.value.images) i.path = saved.images.find((x) => x.id === i.id)?.path ?? i.path
+    for (const q of scene.value.positions) {
+      const sq = saved.positions.find((x) => x.id === q.id)
+      if (!sq) continue
+      for (const c of q.crops) {
+        if (c.kind !== 'mask') continue
+        const sc = sq.crops.find((x): x is HoloMaskCrop => x.kind === 'mask' && x.id === c.id)
+        if (sc) c.path = sc.path
+      }
+    }
     await ensureMeshesLoaded(scene.value.objects)
     designDir.value = dir
     if (rememberLocation) rememberDesignLocation(rememberLocation)
@@ -2054,6 +2615,7 @@ function newDesign(tpl: DesignTemplate) {
   lookTurn.value = fresh.positions[0].phiDeg
   selectedId.value = null
   selectedImageId.value = null
+  selectedCropId.value = null
   designDir.value = null
   missingFiles.value = []
   expViews.value = []
@@ -2064,8 +2626,14 @@ function newDesign(tpl: DesignTemplate) {
 
 async function applyLoadedScene(loaded: HoloScene, dir: string | null) {
   const missing = await ensureMeshesLoaded(loaded.objects)
-  // A picture is there if it can be read.
-  for (const path of new Set(loaded.images.map((i) => i.path))) {
+  const imagePaths = new Set<string>(loaded.images.map((i) => i.path))
+  for (const q of loaded.positions) {
+    for (const c of q.crops) {
+      if (c.kind === 'mask') imagePaths.add(c.path)
+    }
+  }
+  // A picture or crop mask is there if it can be read.
+  for (const path of imagePaths) {
     try {
       pictures.value[path] = await call<ArtworkAnalysis>('analyze_artwork', { imagePath: path })
     } catch {
@@ -2075,12 +2643,17 @@ async function applyLoadedScene(loaded: HoloScene, dir: string | null) {
   const missingSet = new Set(missing)
   const kept = loaded.objects.filter((o) => !missingSet.has(o.path))
   const images = loaded.images.filter((i) => !missingSet.has(i.path))
+  const positions = loaded.positions.map((q) => ({
+    ...q,
+    crops: q.crops.filter((c) => c.kind !== 'mask' || !missingSet.has(c.path)),
+  }))
   missingFiles.value = missing.map((p) => fileName(p))
-  scene.value = { version: SCENE_VERSION, positions: loaded.positions, objects: kept, images, ...(loaded.lampMm ? { lampMm: loaded.lampMm } : {}) }
-  positionId.value = loaded.positions[0].id
-  lookTurn.value = loaded.positions[0].phiDeg
+  scene.value = { version: SCENE_VERSION, positions, objects: kept, images, ...(loaded.lampMm ? { lampMm: loaded.lampMm } : {}) }
+  positionId.value = positions[0].id
+  lookTurn.value = positions[0].phiDeg
   selectedId.value = kept.find((o) => o.positionId === positionId.value)?.id ?? null
   selectedImageId.value = null
+  selectedCropId.value = null
   designDir.value = dir
   expViews.value = []
   undoStack.value = []
@@ -2434,7 +3007,7 @@ function onKeyDown(e: KeyboardEvent) {
     else if (key === 'e') { gizmoMode.value = 'rotate'; e.preventDefault() }
     else if (key === 'r') { gizmoMode.value = 'scale'; e.preventDefault() }
     else if (key === 'f' && selectedObj.value) { viewportRef.value?.focusSelected(); e.preventDefault() }
-    else if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedObj.value || selectedImage.value)) {
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedObj.value || selectedImage.value || selectedCrop.value)) {
       deleteSelected()
       e.preventDefault()
     }
@@ -2526,6 +3099,7 @@ onBeforeUnmount(() => {
 .image-controls { display: flex; flex-direction: column; gap: var(--oc-space-md); }
 .add-row { display: flex; gap: var(--oc-space-2xs); }
 .add-row > * { flex: 1; }
+.crop-add-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--oc-space-2xs); }
 img.thumb { object-fit: cover; }
 .obj-row { display: flex; align-items: center; gap: var(--oc-space-sm); height: 40px; padding: 0 var(--oc-space-2xs) 0 var(--oc-space-xs); border-radius: var(--oc-radius-control); cursor: pointer; user-select: none; }
 .obj-row:hover { background: var(--oc-bg-hover); }

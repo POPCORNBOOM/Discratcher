@@ -69,12 +69,26 @@ pub fn save(dir: &Path, scene: &Scene) -> Result<Scene, String> {
     for i in &mut kept.images {
         i.layer.path = adopt(&i.layer.path)?;
     }
+    for p in &mut kept.positions {
+        for c in p.crops.iter_mut().flatten() {
+            if let Some(path) = c.mask_path_mut() {
+                *path = adopt(path)?;
+            }
+        }
+    }
     let mut on_disk = kept.clone();
     for o in &mut on_disk.objects {
         o.path = relative(&dir, &o.path);
     }
     for i in &mut on_disk.images {
         i.layer.path = relative(&dir, &i.layer.path);
+    }
+    for p in &mut on_disk.positions {
+        for c in p.crops.iter_mut().flatten() {
+            if let Some(path) = c.mask_path_mut() {
+                *path = relative(&dir, path);
+            }
+        }
     }
     let text = serde_json::to_vec_pretty(&on_disk).map_err(|e| e.to_string())?;
     let file = dir.join(DESIGN_FILE);
@@ -109,6 +123,17 @@ pub fn open(path: &Path) -> Result<(serde_json::Value, Option<PathBuf>), String>
             if let Some(p) = item.get("path").and_then(|p| p.as_str()) {
                 if p != BUILTIN_SAMPLE_PATH && !Path::new(p).is_absolute() {
                     item["path"] = dir.join(p).to_string_lossy().into_owned().into();
+                }
+            }
+        }
+    }
+    for pos in scene.get_mut("positions").and_then(|v| v.as_array_mut()).into_iter().flatten() {
+        for crop in pos.get_mut("crops").and_then(|v| v.as_array_mut()).into_iter().flatten() {
+            if crop.get("kind").and_then(|k| k.as_str()) == Some("mask") {
+                if let Some(p) = crop.get("path").and_then(|p| p.as_str()) {
+                    if !Path::new(p).is_absolute() {
+                        crop["path"] = dir.join(p).to_string_lossy().into_owned().into();
+                    }
                 }
             }
         }
@@ -239,7 +264,8 @@ fn prune_unused_assets(dir: &Path, scene: &Scene) {
         .objects
         .iter()
         .map(|o| o.path.as_str())
-        .chain(scene.images.iter().map(|i| i.layer.path.as_str()));
+        .chain(scene.images.iter().map(|i| i.layer.path.as_str()))
+        .chain(scene.positions.iter().filter_map(|p| p.crops.as_ref()).flatten().filter_map(|c| c.mask_path()));
     for p in refs {
         if p == BUILTIN_SAMPLE_PATH {
             continue;
@@ -389,7 +415,7 @@ mod tests {
     }
 
     fn scene(model: &str, picture: &str) -> Scene {
-        let pos = |id: &str| Position { id: id.into(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, crop_side: Default::default(), crop_offset_deg: 0.0, neutral: None, order: vec![] };
+        let pos = |id: &str| Position { id: id.into(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, crop_side: Default::default(), crop_offset_deg: 0.0, crops: None, neutral: None, order: vec![] };
         Scene {
             version: SCENE_VERSION,
             positions: vec![pos("a"), pos("b")],
@@ -573,5 +599,63 @@ mod tests {
         let list = forget_recent(&file, &a_str).unwrap();
         assert_eq!(list.len(), 1);
         assert!(moved.join(DESIGN_FILE).is_file(), "forgetting leaves the folder alone");
+    }
+
+    #[test]
+    fn mask_crop_assets_are_adopted_resolved_and_pruned() {
+        use crate::holo::model3d::{Crop, MaskChannel};
+
+        let outside = dir("mask-outside");
+        std::fs::write(outside.join("m1.png"), [10u8, 20, 30]).unwrap();
+        std::fs::write(outside.join("m2.png"), [40u8, 50, 60]).unwrap();
+        let mut s = scene(BUILTIN_SAMPLE_PATH, "");
+        s.images.clear();
+        s.objects.retain(|o| o.path == BUILTIN_SAMPLE_PATH);
+        let make_mask = |id: &str, path: &Path| Crop::Mask {
+            id: id.into(),
+            name: id.into(),
+            visible: true,
+            path: path.to_string_lossy().into(),
+            width: 8,
+            height: 8,
+            x: 0.0,
+            y: 0.0,
+            size: 1.0,
+            stretch_x: 1.0,
+            stretch_y: 1.0,
+            rotation_deg: 0.0,
+            channel: MaskChannel::Alpha,
+            invert: false,
+        };
+        s.positions[0].crops = Some(vec![make_mask("c1", &outside.join("m1.png")), make_mask("c2", &outside.join("m2.png"))]);
+
+        let design = dir("mask-design");
+        save(&design, &s).unwrap();
+        let design = design.canonicalize().unwrap();
+        assert!(design.join("assets/m1.png").exists());
+        assert!(design.join("assets/m2.png").exists());
+        let written: serde_json::Value = serde_json::from_slice(&std::fs::read(design.join(DESIGN_FILE)).unwrap()).unwrap();
+        assert_eq!(written["positions"][0]["crops"][0]["path"], "assets/m1.png");
+        assert_eq!(written["positions"][0]["crops"][1]["path"], "assets/m2.png");
+
+        // Moving the folder resolves mask paths cleanly.
+        let moved = dir("mask-moved").join("d");
+        std::fs::rename(&design, &moved).unwrap();
+        let (opened, _) = open(&moved).unwrap();
+        assert_eq!(std::fs::read(opened["positions"][0]["crops"][0]["path"].as_str().unwrap()).unwrap(), [10u8, 20, 30]);
+
+        // Removing a mask crop and re-saving from the moved folder prunes the unused mask file.
+        let mut reopened: Scene = serde_json::from_value(opened).unwrap();
+        if let Some(crops) = &mut reopened.positions[0].crops {
+            crops.retain(|c| c.mask_path().is_none_or(|p| p.ends_with("m1.png")));
+        }
+        let resaved = save(&moved, &reopened).unwrap();
+        assert!(resaved.positions[0].crops.as_ref().unwrap().len() == 1);
+        assert!(moved.join("assets/m1.png").exists());
+        assert!(!moved.join("assets/m2.png").exists());
+
+        for d in [outside, moved.parent().unwrap().to_path_buf()] {
+            std::fs::remove_dir_all(d).unwrap();
+        }
     }
 }

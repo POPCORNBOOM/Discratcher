@@ -1,6 +1,6 @@
 // What a new design starts from.
 import { mdiCircleOutline, mdiViewGridOutline } from '@mdi/js'
-import { emptyScene, makePosition, type HoloScene } from './scene'
+import { emptyScene, makePosition, makeSectorCrop, type HoloScene } from './scene'
 
 export interface DesignTemplate {
   id: string
@@ -14,7 +14,7 @@ export interface DesignTemplate {
 /** Twelve positions, one every 30°, each cropped to ±15° at its top: the twelve tile the disc. */
 function twelvePictures(): HoloScene {
   const scene = emptyScene()
-  scene.positions = Array.from({ length: 12 }, (_, i) => ({ ...makePosition(i * 30, 15), cropSide: 'up' as const }))
+  scene.positions = Array.from({ length: 12 }, (_, i) => makePosition(i * 30, [makeSectorCrop(15, 'up', 0)]))
   return scene
 }
 

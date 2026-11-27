@@ -183,9 +183,45 @@ impl Picture {
             top + (c as f32 + (e as f32 - c as f32) * fx - top) * fy
         };
         let (pa, pb, pc, pe) = (self.rgb[i], self.rgb[i + dx], self.rgb[i + dy], self.rgb[i + dy + dx]);
-        let rgb = [0, 1, 2].map(|ch| lerp_u8(pa[ch], pb[ch], pc[ch], pe[ch]));
-        let alpha = lerp_u8(self.alpha[i], self.alpha[i + dx], self.alpha[i + dy], self.alpha[i + dy + dx]);
+        let (rgb, alpha) = (
+            [0, 1, 2].map(|ch| lerp_u8(pa[ch], pb[ch], pc[ch], pe[ch])),
+            lerp_u8(self.alpha[i], self.alpha[i + dx], self.alpha[i + dy], self.alpha[i + dy + dx]),
+        );
         (rgb, alpha)
+    }
+
+    /// Luma and coverage, both 0 ..= 255, at `u`, `v` in [0, 1]. Edges clamp, as the GPU does.
+    #[inline]
+    pub fn sample_luma_alpha(&self, u: f64, v: f64) -> (f32, f32) {
+        self.bilinear(u, v)
+    }
+
+    /// Mask coverage 0 ..= 255 at `u`, `v` in [0, 1], evaluating the mask channel per texel
+    /// before bilinear filtering so transparent RGB placeholders never bleed across seams.
+    #[inline]
+    pub fn sample_mask(&self, u: f64, v: f64, alpha_channel: bool, invert: bool) -> f32 {
+        let (w, h) = (self.width, self.height);
+        let x = (u * w as f64 - 0.5).clamp(0.0, (w - 1) as f64);
+        let y = (v * h as f64 - 0.5).clamp(0.0, (h - 1) as f64);
+        let (ix, iy) = ((x as usize).min(w.saturating_sub(2)), (y as usize).min(h.saturating_sub(2)));
+        let (fx, fy) = ((x - ix as f64) as f32, (y - iy as f64) as f32);
+        let (dx, dy) = (usize::from(w > 1), if h > 1 { w } else { 0 });
+        let i = iy * w + ix;
+        let val = |idx: usize| -> f32 {
+            let a = self.alpha[idx] as f32;
+            if alpha_channel {
+                if invert { 255.0 - a } else { a }
+            } else if a <= 0.0 {
+                0.0
+            } else {
+                let l = self.luma[idx] as f32;
+                let base = if invert { 255.0 - l } else { l };
+                base * (a / 255.0)
+            }
+        };
+        let (a, b, c, e) = (val(i), val(i + dx), val(i + dy), val(i + dy + dx));
+        let top = a + (b - a) * fx;
+        top + (c + (e - c) * fx - top) * fy
     }
 }
 
@@ -379,6 +415,9 @@ pub struct ArtworkAnalysis {
     /// Share of pixels with luma below 128.
     pub dark_ratio: f64,
     pub suggest_invert: bool,
+    /// Whether the source image contains translucent or transparent pixels.
+    #[serde(default)]
+    pub has_alpha: bool,
     /// Longest horizontal run of solid black, a proxy for the wide lines that break tracking.
     pub max_black_run_px: u32,
     pub thumbnail: String,
@@ -391,11 +430,15 @@ pub fn analyze(path: &Path) -> Result<ArtworkAnalysis, String> {
     let (width, height) = img.dimensions();
     let rgba = img.to_rgba8();
     let mut dark = 0u64;
+    let mut has_alpha = false;
     let mut run = 0u32;
     let mut max_run = 0u32;
     for (x, _, p) in rgba.enumerate_pixels() {
         if x == 0 {
             run = 0;
+        }
+        if p.0[3] < 250 {
+            has_alpha = true;
         }
         let y = composite_luma(p.0);
         dark += (y < 128) as u64;
@@ -413,6 +456,7 @@ pub fn analyze(path: &Path) -> Result<ArtworkAnalysis, String> {
         height,
         dark_ratio,
         suggest_invert: dark_ratio > INVERT_SUGGEST_RATIO,
+        has_alpha,
         max_black_run_px: max_run,
         thumbnail: format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(&buf)),
     })

@@ -5,10 +5,11 @@
 //! `artwork`). That is the solve grid's frame too, so a picture on a position at 0° burns
 //! exactly as the same layer does on the carve page.
 
-use super::model3d::{CropSide, Position, Scene};
+use super::model3d::{Crop, CropSide, MaskChannel, Position, Scene};
 use super::turntable::{items, turn, Item};
-use crate::artwork::{Composition, Layer};
+use crate::artwork::{Composition, Layer, Picture as ArtworkPicture};
 use crate::preset::DiscGeometryPreset;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 /// Which picture owns each cell of the solve grid.
@@ -88,25 +89,172 @@ pub fn crop_axis(pos: &Position) -> [f64; 2] {
     [s, -c]
 }
 
-/// Whether the disc point (`x`, `y`), in mm on the solve grid, is inside `pos`'s crop: within
-/// `crop_deg` of the axis at the kept ends (`turntable::solve`'s test).
-#[inline]
-pub fn kept(x: f64, y: f64, pos: &Position) -> bool {
-    if pos.crop_deg >= 90.0 && pos.crop_side == CropSide::Both {
+fn kept_sector(nx: f64, ny: f64, deg: f64, side: CropSide, offset_deg: f64) -> bool {
+    if (side == CropSide::Both && deg >= 90.0) || deg >= 180.0 {
         return true;
     }
-    let at = turn([x, y, 0.0], -pos.phi_deg.to_radians());
-    let u = crop_axis(pos);
-    // Angle from the top end of the axis, 0 ..= π.
-    let from_top = (at[0] * u[1] - at[1] * u[0]).abs().atan2(at[0] * u[0] + at[1] * u[1]);
-    let crop = pos.crop_deg.min(90.0).to_radians();
-    let top = from_top <= crop;
-    let bottom = from_top >= std::f64::consts::PI - crop;
-    match pos.crop_side {
-        CropSide::Both => top || bottom,
-        CropSide::Up => top,
-        CropSide::Down => bottom,
+    if nx == 0.0 && ny == 0.0 {
+        return true;
     }
+    let (s, c) = offset_deg.to_radians().sin_cos();
+    let u = [s, -c];
+    let from_top = (nx * u[1] - ny * u[0]).abs().atan2(nx * u[0] + ny * u[1]);
+    match side {
+        CropSide::Both => {
+            let crop = deg.clamp(0.0, 90.0).to_radians();
+            from_top <= crop || from_top >= std::f64::consts::PI - crop
+        }
+        CropSide::Up => from_top <= deg.clamp(0.0, 180.0).to_radians(),
+        CropSide::Down => from_top >= std::f64::consts::PI - deg.clamp(0.0, 180.0).to_radians(),
+    }
+}
+
+fn kept_circle(nx: f64, ny: f64, cx: f64, cy: f64, size: f64, stretch_x: f64, stretch_y: f64, rotation_deg: f64) -> bool {
+    let rx = (0.5 * size * stretch_x.max(1e-4)).max(1e-6);
+    let ry = (0.5 * size * stretch_y.max(1e-4)).max(1e-6);
+    let (dx, dy) = (nx - cx, ny - cy);
+    let (sin, cos) = rotation_deg.to_radians().sin_cos();
+    let lx = (cos * dx + sin * dy) / rx;
+    let ly = (-sin * dx + cos * dy) / ry;
+    lx * lx + ly * ly <= 1.0
+}
+
+fn kept_polygon(nx: f64, ny: f64, sides: u32, cx: f64, cy: f64, size: f64, stretch_x: f64, stretch_y: f64, rotation_deg: f64) -> bool {
+    let rx = (0.5 * size * stretch_x.max(1e-4)).max(1e-6);
+    let ry = (0.5 * size * stretch_y.max(1e-4)).max(1e-6);
+    let (dx, dy) = (nx - cx, ny - cy);
+    let (sin, cos) = rotation_deg.to_radians().sin_cos();
+    let lx = (cos * dx + sin * dy) / rx;
+    let ly = (-sin * dx + cos * dy) / ry;
+    let r = lx.hypot(ly);
+    if r == 0.0 {
+        return true;
+    }
+    let n = sides.clamp(3, 12) as f64;
+    let sector = std::f64::consts::TAU / n;
+    // Polygon vertex 0 points to -ly (12 o'clock) when rotation_deg = 0.
+    let a = lx.atan2(-ly).rem_euclid(sector) - 0.5 * sector;
+    r * a.cos() <= (0.5 * sector).cos()
+}
+
+fn kept_mask(
+    nx: f64,
+    ny: f64,
+    pic: &ArtworkPicture,
+    width: u32,
+    height: u32,
+    cx: f64,
+    cy: f64,
+    size: f64,
+    stretch_x: f64,
+    stretch_y: f64,
+    rotation_deg: f64,
+    channel: MaskChannel,
+    invert: bool,
+) -> bool {
+    let long = width.max(height).max(1) as f64;
+    let w = (size * stretch_x.max(1e-4) * width.max(1) as f64 / long).max(1e-6);
+    let h = (size * stretch_y.max(1e-4) * height.max(1) as f64 / long).max(1e-6);
+    let (dx, dy) = (nx - cx, ny - cy);
+    let (sin, cos) = rotation_deg.to_radians().sin_cos();
+    let u = (cos * dx + sin * dy) / w + 0.5;
+    let v = (-sin * dx + cos * dy) / h + 0.5;
+    if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+        return false;
+    }
+    pic.sample_mask(u, v, channel == MaskChannel::Alpha, invert) >= 127.5
+}
+
+fn mask_picture(path: &str, max_edge: Option<u32>) -> Result<Arc<ArtworkPicture>, String> {
+    const KEEP: usize = 64;
+    static CACHE: Mutex<Vec<(String, Arc<ArtworkPicture>)>> = Mutex::new(Vec::new());
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let key = serde_json::to_string(&(path, &modified, max_edge)).map_err(|e| e.to_string())?;
+    if let Some(c) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|c| c.0 == key) {
+        return Ok(c.1.clone());
+    }
+    let p = Arc::new(ArtworkPicture::load(Path::new(path), max_edge)?);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if cache.len() >= KEEP {
+        cache.remove(0);
+    }
+    cache.push((key, p.clone()));
+    Ok(p)
+}
+
+/// Preloaded crop evaluator for a viewing position across solve-grid cells in mm.
+pub struct PositionCrop<'a> {
+    pos: &'a Position,
+    phi_rad: f64,
+    across: f64,
+    /// Decoded mask pictures indexed alongside `pos.crops` when present.
+    masks: Vec<Option<Arc<ArtworkPicture>>>,
+}
+
+impl<'a> PositionCrop<'a> {
+    /// Load any custom mask images referenced by visible crops on `pos`.
+    pub fn load(pos: &'a Position, outer_radius_mm: f64, max_edge: Option<u32>) -> Result<Self, String> {
+        let mut masks = Vec::new();
+        if let Some(crops) = &pos.crops {
+            masks.reserve(crops.len());
+            for c in crops {
+                if let Crop::Mask { visible: true, path, .. } = c {
+                    masks.push(Some(mask_picture(path, max_edge)?));
+                } else {
+                    masks.push(None);
+                }
+            }
+        }
+        Ok(Self {
+            pos,
+            phi_rad: pos.phi_deg.to_radians(),
+            across: (2.0 * outer_radius_mm).max(1e-6),
+            masks,
+        })
+    }
+
+    /// Whether the disc point (`x`, `y`), in mm on the solve grid, is kept by `pos`.
+    #[inline]
+    pub fn kept(&self, x: f64, y: f64) -> bool {
+        let at = turn([x, y, 0.0], -self.phi_rad);
+        match &self.pos.crops {
+            None => kept_sector(at[0], at[1], self.pos.crop_deg, self.pos.crop_side, self.pos.crop_offset_deg),
+            Some(crops) => {
+                let mut any_visible = false;
+                let (nx, ny) = (at[0] / self.across, at[1] / self.across);
+                for (i, c) in crops.iter().enumerate() {
+                    if !c.visible() {
+                        continue;
+                    }
+                    any_visible = true;
+                    let hit = match c {
+                        Crop::Sector { deg, side, offset_deg, .. } => kept_sector(nx, ny, *deg, *side, *offset_deg),
+                        Crop::Circle { x, y, size, stretch_x, stretch_y, rotation_deg, .. } => {
+                            kept_circle(nx, ny, *x, *y, *size, *stretch_x, *stretch_y, *rotation_deg)
+                        }
+                        Crop::Polygon { sides, x, y, size, stretch_x, stretch_y, rotation_deg, .. } => {
+                            kept_polygon(nx, ny, *sides, *x, *y, *size, *stretch_x, *stretch_y, *rotation_deg)
+                        }
+                        Crop::Mask { width, height, x, y, size, stretch_x, stretch_y, rotation_deg, channel, invert, .. } => {
+                            self.masks.get(i).and_then(|m| m.as_ref()).is_some_and(|pic| {
+                                kept_mask(nx, ny, pic, *width, *height, *x, *y, *size, *stretch_x, *stretch_y, *rotation_deg, *channel, *invert)
+                            })
+                        }
+                    };
+                    if hit {
+                        return true;
+                    }
+                }
+                !any_visible
+            }
+        }
+    }
+}
+
+/// Whether the disc point (`x`, `y`), in mm on the solve grid, is inside `pos`'s crop.
+#[inline]
+pub fn kept(x: f64, y: f64, pos: &Position) -> bool {
+    PositionCrop::load(pos, 58.0, Some(512)).is_ok_and(|c| c.kept(x, y))
 }
 
 /// Whether a grid point in mm lies on the written ring of the disc.
@@ -199,7 +347,7 @@ mod tests {
     }
 
     fn flat_pos(id: &str, phi_deg: f64, crop_deg: f64) -> Position {
-        Position { id: id.into(), name: String::new(), phi_deg, crop_deg, crop_side: Default::default(), crop_offset_deg: 0.0, neutral: None, order: vec![] }
+        Position { id: id.into(), name: String::new(), phi_deg, crop_deg, crop_side: Default::default(), crop_offset_deg: 0.0, crops: None, neutral: None, order: vec![] }
     }
 
     fn image(path: &str, position: &str) -> SceneImage {
@@ -347,5 +495,122 @@ mod tests {
             let old = super::super::model3d::scene_to_disc([x, y, 0.0]);
             assert_eq!(k(&both, (x, y)), old[0].abs().atan2(old[1].abs()) <= 30f64.to_radians());
         }
+    }
+
+    #[test]
+    fn multi_shape_crops_keep_union_and_evaluate_mask_channels() {
+        let d = dir("multishape");
+        let across = 2.0 * 58.0;
+
+        let empty_pos = Position { crops: Some(vec![]), ..flat_pos("0", 0.0, 10.0) };
+        assert!(kept(40.0, 0.0, &empty_pos));
+
+        let hidden_circle = Position {
+            crops: Some(vec![Crop::Circle {
+                id: "c1".into(),
+                name: String::new(),
+                visible: false,
+                x: 0.0,
+                y: -0.35,
+                size: 0.2,
+                stretch_x: 1.0,
+                stretch_y: 1.0,
+                rotation_deg: 0.0,
+            }]),
+            ..flat_pos("0", 0.0, 10.0)
+        };
+        assert!(kept(40.0, 0.0, &hidden_circle), "no visible crops means uncropped");
+
+        // Triangle at bottom (0, +0.35) + circle at right (+0.35, 0) union test.
+        let triangle_and_circle = Position {
+            crops: Some(vec![
+                Crop::Polygon {
+                    id: "tri".into(),
+                    name: String::new(),
+                    visible: true,
+                    sides: 3,
+                    x: 0.0,
+                    y: 0.35,
+                    size: 0.3,
+                    stretch_x: 1.0,
+                    stretch_y: 1.0,
+                    rotation_deg: 0.0,
+                },
+                Crop::Circle {
+                    id: "cir".into(),
+                    name: String::new(),
+                    visible: true,
+                    x: 0.35,
+                    y: 0.0,
+                    size: 0.24,
+                    stretch_x: 1.0,
+                    stretch_y: 1.0,
+                    rotation_deg: 0.0,
+                },
+            ]),
+            ..flat_pos("0", 0.0, 30.0)
+        };
+        let pc = PositionCrop::load(&triangle_and_circle, 58.0, None).unwrap();
+        assert!(pc.kept(0.0, 0.23 * across), "inside upper apex of triangle");
+        assert!(!pc.kept(0.11 * across, 0.23 * across), "outside slanted upper corner of triangle");
+        assert!(pc.kept(0.09 * across, 0.41 * across), "inside lower wing of triangle");
+        assert!(pc.kept(0.35 * across, 0.0), "inside circle on right");
+        assert!(!pc.kept(-0.35 * across, 0.0), "outside both shapes on left");
+
+        // RGBA alpha mask and opaque luma mask (with invert toggled).
+        let alpha_path = d.join("mask_alpha.png");
+        image::RgbaImage::from_fn(8, 8, |x, _| {
+            image::Rgba(if x < 4 { [255, 255, 255, 255] } else { [0, 0, 0, 0] })
+        })
+        .save(&alpha_path)
+        .unwrap();
+        let luma_path = d.join("mask_luma.png");
+        image::RgbaImage::from_fn(8, 8, |x, _| {
+            image::Rgba(if x < 4 { [255, 255, 255, 255] } else { [0, 0, 0, 255] })
+        })
+        .save(&luma_path)
+        .unwrap();
+
+        let make_mask_pos = |path: &std::path::Path, channel: MaskChannel, invert: bool| Position {
+            crops: Some(vec![Crop::Mask {
+                id: "m".into(),
+                name: "m".into(),
+                visible: true,
+                path: path.to_string_lossy().into(),
+                width: 8,
+                height: 8,
+                x: 0.0,
+                y: 0.0,
+                size: 1.0,
+                stretch_x: 1.0,
+                stretch_y: 1.0,
+                rotation_deg: 0.0,
+                channel,
+                invert,
+            }]),
+            ..flat_pos("0", 0.0, 30.0)
+        };
+
+        let alpha_pos = make_mask_pos(&alpha_path, MaskChannel::Alpha, false);
+        let alpha_pc = PositionCrop::load(&alpha_pos, 58.0, None).unwrap();
+        assert!(alpha_pc.kept(-0.25 * across, 0.0));
+        assert!(!alpha_pc.kept(0.25 * across, 0.0));
+
+        let alpha_inv_pos = make_mask_pos(&alpha_path, MaskChannel::Alpha, true);
+        let alpha_inv_pc = PositionCrop::load(&alpha_inv_pos, 58.0, None).unwrap();
+        assert!(!alpha_inv_pc.kept(-0.25 * across, 0.0));
+        assert!(alpha_inv_pc.kept(0.25 * across, 0.0));
+
+        let luma_pos = make_mask_pos(&luma_path, MaskChannel::Luma, false);
+        let luma_pc = PositionCrop::load(&luma_pos, 58.0, None).unwrap();
+        assert!(luma_pc.kept(-0.25 * across, 0.0));
+        assert!(!luma_pc.kept(0.25 * across, 0.0));
+
+        let luma_inv_pos = make_mask_pos(&luma_path, MaskChannel::Luma, true);
+        let luma_inv_pc = PositionCrop::load(&luma_inv_pos, 58.0, None).unwrap();
+        assert!(!luma_inv_pc.kept(-0.25 * across, 0.0));
+        assert!(luma_inv_pc.kept(0.25 * across, 0.0));
+
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }

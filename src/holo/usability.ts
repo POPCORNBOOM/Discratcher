@@ -1,7 +1,5 @@
-import { DoubleSide, ShaderMaterial, Vector3 } from 'three'
+import { DoubleSide, ShaderMaterial, Vector3, type Texture } from 'three'
 import { DEFAULT_DISTANCE_MM, DEFAULT_HEAD_SPAN_MM, LAMP_HELD_MM } from './constants'
-import { CROP_GLSL } from './cropGlsl'
-import { DEFAULT_CROP_DEG } from './scene'
 
 /** What the zones show: depth for models, colour for colour pictures, none for dead-only, crop for rim/sector only. */
 export type ZoneKind = 'depth' | 'colour' | 'none' | 'crop'
@@ -13,11 +11,11 @@ export const ZONE_KIND_VALUE: Record<ZoneKind, number> = { depth: 0, colour: 1, 
  * light cannot work it is hatched. When nothing is selected (`none`), only the optically unusable
  * area (where neither depth nor colour can work) is hatched and no violet overlay is drawn. When a
  * grey carved picture is selected (`crop`), only the crop border is shown. The current position's
- * crop (`cropGlsl`, in its frame turned by `phi`) is marked by a violet outline while the optical
+ * crop (`cropMap`, in its frame turned by `phi`) is marked by a violet outline while the optical
  * zones remain visible across the whole ring. `g_t` and `g_r` are the parts of light and view
  * direction along the track and radius, as in `holo::scene::g_at`.
  */
-export function zonesMaterial(): ShaderMaterial {
+export function zonesMaterial(initialCropMap: Texture | null = null): ShaderMaterial {
   return new ShaderMaterial({
     transparent: true,
     depthWrite: false,
@@ -27,12 +25,11 @@ export function zonesMaterial(): ShaderMaterial {
       distance: { value: DEFAULT_DISTANCE_MM },
       span: { value: DEFAULT_HEAD_SPAN_MM },
       phi: { value: 0 },
-      crop: { value: (DEFAULT_CROP_DEG * Math.PI) / 180 },
+      cropMap: { value: initialCropMap },
+      hasCrop: { value: 0 },
       kind: { value: ZONE_KIND_VALUE.none },
       inner: { value: 0 },
       outer: { value: 0 },
-      side: { value: 0 },
-      axis: { value: 0 },
     },
     vertexShader: `
       varying vec2 at;
@@ -40,9 +37,9 @@ export function zonesMaterial(): ShaderMaterial {
     `,
     fragmentShader: `
       varying vec2 at;
+      uniform sampler2D cropMap;
       uniform vec3 lamp;
-      uniform float distance, span, phi, crop, side, axis, kind, inner, outer;
-${CROP_GLSL}
+      uniform float distance, span, phi, hasCrop, kind, inner, outer;
       vec2 gAt(vec3 p, vec2 r, float eyeX) {
         vec3 g = normalize(lamp - p) + normalize(vec3(eyeX, 0.0, distance) - p);
         return vec2(-g.x * r.y + g.y * r.x, dot(g.xy, r));
@@ -71,16 +68,37 @@ ${CROP_GLSL}
         float br = grMax / 0.46;
         return gl.x * gr.x <= 0.0 ? 0.0 : agree * reach * effGt * exp(-0.5 * br * br);
       }
+      bool cropEdge(vec2 cuv, float px) {
+        float lo = 1.0;
+        float hi = 0.0;
+        vec2 d = vec2(px, 0.0);
+        vec2 e = vec2(0.0, px);
+        vec2 dg = vec2(px * 0.7071, px * 0.7071);
+        float s0 = texture2D(cropMap, cuv + d).r;
+        float s1 = texture2D(cropMap, cuv - d).r;
+        float s2 = texture2D(cropMap, cuv + e).r;
+        float s3 = texture2D(cropMap, cuv - e).r;
+        float s4 = texture2D(cropMap, cuv + dg).r;
+        float s5 = texture2D(cropMap, cuv - dg).r;
+        float s6 = texture2D(cropMap, cuv + vec2(dg.x, -dg.y)).r;
+        float s7 = texture2D(cropMap, cuv + vec2(-dg.x, dg.y)).r;
+        lo = min(min(min(s0, s1), min(s2, s3)), min(min(s4, s5), min(s6, s7)));
+        hi = max(max(max(s0, s1), max(s2, s3)), max(max(s4, s5), max(s6, s7)));
+        return lo < 0.5 && hi >= 0.5;
+      }
       void main() {
         float c = cos(phi), s = sin(phi);
         vec2 q = vec2(at.x * c - at.y * s, at.x * s + at.y * c);
         vec4 violet = vec4(0.565, 0.27, 0.976, 1.0);
-        bool kept = inCrop(q, crop, side, axis);
-        float rim = min(length(at) - inner, outer - length(at));
-        bool whole = side < 0.5 && crop >= 1.5707;
-        if (cropEdge(q, crop, side, axis) < 0.35 || (kept && !whole && rim < 0.7)) {
-          gl_FragColor = vec4(violet.rgb, 0.9);
-          return;
+        if (hasCrop > 0.5) {
+          float across = max(2.0 * outer, 1e-4);
+          vec2 cuv = vec2(q.x, -q.y) / across + 0.5;
+          float m = texture2D(cropMap, cuv).r;
+          float rim = min(length(at) - inner, outer - length(at));
+          if (cropEdge(cuv, 0.35 / across) || (m >= 0.5 && rim < 0.7)) {
+            gl_FragColor = vec4(violet.rgb, 0.9);
+            return;
+          }
         }
         if (kind > 2.5) discard;
         vec3 p = vec3(at, 0.0);

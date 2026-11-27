@@ -83,8 +83,8 @@ import {
   type PictureHandleKind,
 } from '../holo/pictureFrame'
 import type { DisplayMeshData } from '../holo/sampleMesh'
-import { round1, type HoloImage, type HoloPosition, type HoloSceneObject } from '../holo/scene'
-import { cropUniforms, inPositionCrop } from '../holo/cropGlsl'
+import { round1, type HoloImage, type HoloPosition, type HoloSceneObject, type HoloShapeCrop } from '../holo/scene'
+import { createPositionCropMasks, inPositionCrop, inSingleCrop } from '../holo/cropGlsl'
 import { ZONE_KIND_VALUE, zonesMaterial, type ZoneKind } from '../holo/usability'
 import { layerExtent } from '../layers'
 
@@ -93,7 +93,23 @@ type SingleGizmoMode = 'translate' | 'rotate' | 'scale'
 type FrameCursor = 'move' | 'nwse' | 'nesw' | 'ew' | 'ns' | 'grab' | 'grabbing'
 type PictureDragMode = 'move' | 'scale' | 'stretchX' | 'stretchY' | 'rotate'
 
+interface FrameDragTarget {
+  targetKind: 'image' | 'crop'
+  id: string
+  positionId: string
+  z: number
+  imgWidth: number
+  imgHeight: number
+  x: number
+  y: number
+  size: number
+  stretchX: number
+  stretchY: number
+  rotationDeg: number
+}
+
 interface PictureDragState {
+  targetKind: 'image' | 'crop'
   id: string
   positionId: string
   mode: PictureDragMode
@@ -140,6 +156,8 @@ const props = defineProps<{
   images: HoloImage[]
   thumbnails: Record<string, string>
   selectedImageId: string | null
+  /** Selected shape crop (circle, polygon, mask) shown with 2D disc handles. */
+  selectedCropId: string | null
   /** Show only what is selected, when anything is. */
   isolate: boolean
   /** What the zones on the disc show. */
@@ -151,6 +169,8 @@ const emit = defineEmits<{
   'select-image': [id: string]
   /** A picture moved, turned or sized with the handles: its layer's new place (`Layer`). */
   'image-transform': [payload: { id: string; x: number; y: number; size: number; stretchX: number; stretchY: number; rotationDeg: number }]
+  /** A crop shape moved, turned or sized with the handles. */
+  'crop-transform': [payload: { id: string; x: number; y: number; size: number; stretchX: number; stretchY: number; rotationDeg: number }]
   position: [id: string]
   'transform-start': [id: string]
   'transform-change': [payload: { id: string; positionMm: Vec3; rotationDeg: Vec3; scaleMm: Vec3 }]
@@ -182,6 +202,7 @@ let renderer: WebGLRenderer | null = null
 let scene: Scene | null = null
 let camera: PerspectiveCamera | null = null
 let axes: ReturnType<typeof createAxesGizmo> | null = null
+let cropMasks: ReturnType<typeof createPositionCropMasks> | null = null
 let pictures: ReturnType<typeof createFlatPictures> | null = null
 let pictureFrame: ReturnType<typeof createPictureFrame> | null = null
 let orbit: OrbitControls | null = null
@@ -287,7 +308,7 @@ function buildDisc() {
   // 3. Where depth shows, worked out on the graphics card so that a lamp can be dragged.
   usabilityMesh?.geometry.dispose()
   ;(usabilityMesh?.material as ShaderMaterial | undefined)?.dispose()
-  usabilityMesh = new Mesh(new RingGeometry(rIn, rOut, 128), zonesMaterial())
+  usabilityMesh = new Mesh(new RingGeometry(rIn, rOut, 128), zonesMaterial(cropMasks?.get(props.positionId).texture ?? null))
   usabilityMesh.position.z = 0.06
   usabilityMesh.renderOrder = 3
   discGroup.add(usabilityMesh)
@@ -411,6 +432,7 @@ function markerAt(e: PointerEvent): string | null {
 }
 
 function updateZones() {
+  cropMasks?.sync(props.positions, props.thumbnails)
   const u = (usabilityMesh?.material as ShaderMaterial | undefined)?.uniforms
   if (!u) return
   ;(u.lamp.value as Vector3).set(...props.lampMm)
@@ -421,10 +443,11 @@ function updateZones() {
   if (usabilityMesh) usabilityMesh.visible = true
   const left = turnLeft()
   u.phi.value = Math.abs(left) < 0.05 ? 0 : MathUtils.degToRad(left)
-  const c = cropUniforms(currentPosition())
-  u.crop.value = c.crop
-  u.side.value = c.side
-  u.axis.value = c.axis
+  const c = cropMasks?.get(props.positionId)
+  if (c) {
+    u.cropMap.value = c.texture
+    u.hasCrop.value = c.hasCrop ? 1 : 0
+  }
 }
 
 function ensureDropIndicator() {
@@ -845,6 +868,12 @@ function attachSingleGizmo(control: TransformControls, mesh: Mesh, size: number)
   if (!gizmoDragging) control.enabled = true
 }
 
+function selectedShapeCrop(): HoloShapeCrop | null {
+  if (!props.selectedCropId) return null
+  const c = currentPosition()?.crops.find((x) => x.id === props.selectedCropId && x.visible)
+  return c && c.kind !== 'sector' ? c : null
+}
+
 function pictureTargetFor(img: HoloImage): PictureFrameTarget | null {
   if (img.positionId !== props.positionId) return null
   const mesh = pictures?.meshOf(img.id)
@@ -863,20 +892,75 @@ function pictureTargetFor(img: HoloImage): PictureFrameTarget | null {
   }
 }
 
+function cropTargetFor(crop: HoloShapeCrop): PictureFrameTarget {
+  const across = 2 * props.outerRadiusMm
+  const [ew, eh] = layerExtent(
+    crop.kind === 'mask' ? crop : { width: 1, height: 1, size: crop.size, stretchX: crop.stretchX, stretchY: crop.stretchY },
+  )
+  return {
+    id: crop.id,
+    positionId: props.positionId,
+    cx: crop.x * across,
+    cy: -crop.y * across,
+    z: 0.08,
+    widthMm: ew * across,
+    heightMm: eh * across,
+    rotationDeg: crop.rotationDeg,
+  }
+}
+
+function frameTargetFromImage(img: HoloImage): FrameDragTarget | null {
+  const mesh = pictures?.meshOf(img.id)
+  if (!mesh) return null
+  return {
+    targetKind: 'image',
+    id: img.id,
+    positionId: img.positionId,
+    z: mesh.position.z,
+    imgWidth: img.width,
+    imgHeight: img.height,
+    x: img.x,
+    y: img.y,
+    size: img.size,
+    stretchX: img.stretchX,
+    stretchY: img.stretchY,
+    rotationDeg: img.rotationDeg,
+  }
+}
+
+function frameTargetFromCrop(crop: HoloShapeCrop): FrameDragTarget {
+  return {
+    targetKind: 'crop',
+    id: crop.id,
+    positionId: props.positionId,
+    z: 0.08,
+    imgWidth: crop.kind === 'mask' ? crop.width : 1,
+    imgHeight: crop.kind === 'mask' ? crop.height : 1,
+    x: crop.x,
+    y: crop.y,
+    size: crop.size,
+    stretchX: crop.stretchX,
+    stretchY: crop.stretchY,
+    rotationDeg: crop.rotationDeg,
+  }
+}
+
 function syncPictureFrame() {
+  if (pictureDrag) return
   const img = props.images.find((i) => i.id === props.selectedImageId && i.positionId === props.positionId)
-  const target = img ? pictureTargetFor(img) : null
+  const crop = img ? null : selectedShapeCrop()
+  const target = img ? pictureTargetFor(img) : crop ? cropTargetFor(crop) : null
   pictureFrame?.sync(target)
   if (target && camera) pictureFrame?.updateForCamera(camera)
-  if (!target && !pictureDrag) frameCursor.value = null
+  if (!target) frameCursor.value = null
 }
 
 function syncGizmoAttachment() {
   if (!gizmos) return
   syncPictureFrame()
-  // Selected flat pictures use the 2D disc-plane frame instead of 3D TransformControls.
+  // Selected flat pictures and editable crop shapes use the 2D disc-plane frame instead of 3D TransformControls.
   const selectedImg = props.images.find((i) => i.id === props.selectedImageId && i.positionId === props.positionId)
-  if (selectedImg && pictures?.meshOf(selectedImg.id)) {
+  if ((selectedImg && pictures?.meshOf(selectedImg.id)) || selectedShapeCrop()) {
     detachGizmosFrom()
     return
   }
@@ -1086,11 +1170,21 @@ function pickImageId(e: PointerEvent): string | null {
     if (id === props.selectedImageId) return id
     group.worldToLocal(pickLocal.copy(hit.point))
     const r = Math.hypot(pickLocal.x, pickLocal.y)
-    if (r >= props.innerRadiusMm && r <= props.outerRadiusMm && inPositionCrop(pickLocal.x, pickLocal.y, pos)) {
+    if (r >= props.innerRadiusMm && r <= props.outerRadiusMm && inPositionCrop(pickLocal.x, pickLocal.y, props.outerRadiusMm, pos, cropMasks?.masks)) {
       return id
     }
   }
   return null
+}
+
+const CROP_HIT_PLANE = new Plane(new Vector3(0, 0, 1), -0.08)
+
+function hitSelectedCrop(e: PointerEvent): HoloShapeCrop | null {
+  const crop = selectedShapeCrop()
+  if (!crop || !camera) return null
+  if (!intersectPicturePlane(e, props.positionId, CROP_HIT_PLANE, pickLocal)) return null
+  const across = Math.max(2 * props.outerRadiusMm, 1e-6)
+  return inSingleCrop(pickLocal.x / across, -pickLocal.y / across, crop, cropMasks?.masks) ? crop : null
 }
 
 function wrapRotationDeg(deg: number): number {
@@ -1118,22 +1212,21 @@ function intersectPicturePlane(e: PointerEvent, positionId: string, plane: Plane
   return true
 }
 
-function beginPictureDrag(e: PointerEvent, img: HoloImage, mode: PictureDragMode, handle: PictureHandleKind | null) {
-  const mesh = pictures?.meshOf(img.id)
-  if (!mesh || !camera) return
-  const plane = new Plane(new Vector3(0, 0, 1), -mesh.position.z)
-  if (!intersectPicturePlane(e, img.positionId, plane, dragLocal)) return
+function beginFrameDrag(e: PointerEvent, item: FrameDragTarget, mode: PictureDragMode, handle: PictureHandleKind | null) {
+  if (!camera) return
+  const plane = new Plane(new Vector3(0, 0, 1), -item.z)
+  if (!intersectPicturePlane(e, item.positionId, plane, dragLocal)) return
 
   const across = 2 * props.outerRadiusMm
-  const cx = img.x * across
-  const cy = -img.y * across
-  const theta = -MathUtils.degToRad(img.rotationDeg)
+  const cx = item.x * across
+  const cy = -item.y * across
+  const theta = -MathUtils.degToRad(item.rotationDeg)
   const cosT = Math.cos(theta)
   const sinT = Math.sin(theta)
   const dx = dragLocal.x - cx
   const dy = dragLocal.y - cy
-  const startStretchX = Number.isFinite(img.stretchX) && img.stretchX > 0 ? img.stretchX : 1
-  const startStretchY = Number.isFinite(img.stretchY) && img.stretchY > 0 ? img.stretchY : 1
+  const startStretchX = Number.isFinite(item.stretchX) && item.stretchX > 0 ? item.stretchX : 1
+  const startStretchY = Number.isFinite(item.stretchY) && item.stretchY > 0 ? item.stretchY : 1
 
   let startEdgeDist = 0.5
   if (mode === 'stretchX') {
@@ -1145,24 +1238,25 @@ function beginPictureDrag(e: PointerEvent, img: HoloImage, mode: PictureDragMode
   }
 
   pictureDrag = {
-    id: img.id,
-    positionId: img.positionId,
+    targetKind: item.targetKind,
+    id: item.id,
+    positionId: item.positionId,
     mode,
     handle,
     plane,
-    imgWidth: img.width,
-    imgHeight: img.height,
+    imgWidth: item.imgWidth,
+    imgHeight: item.imgHeight,
     across,
     startLocalX: dragLocal.x,
     startLocalY: dragLocal.y,
     startCenterX: cx,
     startCenterY: cy,
-    startX: img.x,
-    startY: img.y,
-    startSize: img.size,
+    startX: item.x,
+    startY: item.y,
+    startSize: item.size,
     startStretchX,
     startStretchY,
-    startRotDeg: img.rotationDeg,
+    startRotDeg: item.rotationDeg,
     startDist: Math.max(Math.hypot(dx, dy), 0.5),
     startEdgeDist,
     startAngle: Math.atan2(dy, dx),
@@ -1181,7 +1275,7 @@ function beginPictureDrag(e: PointerEvent, img: HoloImage, mode: PictureDragMode
   else if (handle && isEdgeHandle(handle)) frameCursor.value = pictureFrame?.edgeCursor(handle, camera) ?? 'ew'
 }
 
-/** Update a picture drag strictly from pointerdown-captured values and the current ray hit. */
+/** Update a picture or crop-shape drag strictly from pointerdown-captured values and the current ray hit. */
 function updatePictureDrag(e: PointerEvent) {
   const drag = pictureDrag
   if (!drag || !camera) return
@@ -1236,26 +1330,40 @@ function updatePictureDrag(e: PointerEvent) {
   const [ew, eh] = layerExtent({ width: drag.imgWidth, height: drag.imgHeight, size, stretchX, stretchY })
   const widthMm = ew * drag.across
   const heightMm = eh * drag.across
-  const mesh = pictures?.meshOf(drag.id)
-  if (mesh) {
-    mesh.position.set(nx, ny, mesh.position.z)
-    mesh.scale.set(widthMm, heightMm, 1)
-    mesh.rotation.set(0, 0, -MathUtils.degToRad(rotationDeg))
-    mesh.updateMatrix()
-    const u = (mesh.material as ShaderMaterial | undefined)?.uniforms
-    if (u?.toGroup) u.toGroup.value.copy(mesh.matrix)
+  if (drag.targetKind === 'image') {
+    const mesh = pictures?.meshOf(drag.id)
+    if (mesh) {
+      mesh.position.set(nx, ny, mesh.position.z)
+      mesh.scale.set(widthMm, heightMm, 1)
+      mesh.rotation.set(0, 0, -MathUtils.degToRad(rotationDeg))
+      mesh.updateMatrix()
+      const u = (mesh.material as ShaderMaterial | undefined)?.uniforms
+      if (u?.toGroup) u.toGroup.value.copy(mesh.matrix)
+      pictureFrame?.sync({
+        id: drag.id,
+        positionId: drag.positionId,
+        cx: nx,
+        cy: ny,
+        z: mesh.position.z,
+        widthMm,
+        heightMm,
+        rotationDeg,
+      })
+    }
+    emit('image-transform', { id: drag.id, x, y, size, stretchX, stretchY, rotationDeg })
+  } else {
     pictureFrame?.sync({
       id: drag.id,
       positionId: drag.positionId,
       cx: nx,
       cy: ny,
-      z: mesh.position.z,
+      z: 0.08,
       widthMm,
       heightMm,
       rotationDeg,
     })
+    emit('crop-transform', { id: drag.id, x, y, size, stretchX, stretchY, rotationDeg })
   }
-  emit('image-transform', { id: drag.id, x, y, size, stretchX, stretchY, rotationDeg })
 }
 
 function updateFrameHover(e: PointerEvent) {
@@ -1281,7 +1389,8 @@ function updateFrameHover(e: PointerEvent) {
     frameCursor.value = pictureFrame.edgeCursor(handle, camera)
     return
   }
-  if (props.selectedImageId && !pickObjectId(e) && pickImageId(e) === props.selectedImageId) {
+  const hitModel = pickObjectId(e)
+  if (!hitModel && ((props.selectedImageId && pickImageId(e) === props.selectedImageId) || hitSelectedCrop(e))) {
     frameCursor.value = 'move'
   } else {
     frameCursor.value = null
@@ -1300,20 +1409,22 @@ function onPointerDown(e: PointerEvent) {
     return
   }
 
-  // Check 2D picture frame handles before scene meshes since the frame renders on top.
-  if (camera && pictureFrame && props.selectedImageId) {
+  // Check 2D frame handles (selected picture or selected crop shape) before scene meshes.
+  const activeCrop = selectedShapeCrop()
+  if (camera && pictureFrame && (props.selectedImageId || activeCrop)) {
     updatePointerNdc(e)
     raycaster.setFromCamera(pointerNdc, camera)
     const handle = pictureFrame.pickHandle(raycaster)
     if (handle) {
+      const mode: PictureDragMode =
+        handle === 'rotate' ? 'rotate'
+        : handle === 'l' || handle === 'r' ? 'stretchX'
+        : handle === 't' || handle === 'b' ? 'stretchY'
+        : 'scale'
       const img = props.images.find((i) => i.id === props.selectedImageId && i.positionId === props.positionId)
-      if (img) {
-        const mode: PictureDragMode =
-          handle === 'rotate' ? 'rotate'
-          : handle === 'l' || handle === 'r' ? 'stretchX'
-          : handle === 't' || handle === 'b' ? 'stretchY'
-          : 'scale'
-        beginPictureDrag(e, img, mode, handle)
+      const target = img ? frameTargetFromImage(img) : activeCrop ? frameTargetFromCrop(activeCrop) : null
+      if (target) {
+        beginFrameDrag(e, target, mode, handle)
         return
       }
     }
@@ -1321,13 +1432,18 @@ function onPointerDown(e: PointerEvent) {
 
   const hitId = pickObjectId(e)
   if (!hitId) {
+    if (activeCrop && hitSelectedCrop(e)) {
+      beginFrameDrag(e, frameTargetFromCrop(activeCrop), 'move', null)
+      return
+    }
     const imageId = pickImageId(e)
     if (imageId) {
       if (imageId !== props.selectedImageId) emit('select-image', imageId)
       const img = props.images.find((i) => i.id === imageId && i.positionId === props.positionId)
-      if (img) {
+      const target = img ? frameTargetFromImage(img) : null
+      if (img && target) {
         pictureFrame?.sync(pictureTargetFor(img))
-        beginPictureDrag(e, img, 'move', null)
+        beginFrameDrag(e, target, 'move', null)
       }
     }
     return
@@ -1493,6 +1609,11 @@ onMounted(() => {
 
   scene = new Scene()
   axes = createAxesGizmo()
+  cropMasks = createPositionCropMasks(() => {
+    updateZones()
+    syncPictures()
+  })
+  cropMasks.sync(props.positions, props.thumbnails)
   pictures = createFlatPictures(groupFor, () => {})
   pictureFrame = createPictureFrame(groupFor)
   camera = new PerspectiveCamera(CAMERA_FOV_DEG, 1, 1, 8000)
@@ -1576,9 +1697,10 @@ watch(() => [props.innerRadiusMm, props.outerRadiusMm], () => {
   buildMarkers()
   syncLamp()
 })
-watch(() => [props.positions, props.positionId], () => {
+watch(() => [props.positions, props.positionId, props.thumbnails], () => {
   buildMarkers()
   updateZones()
+  syncPictures()
 }, { deep: true })
 watch(() => [props.lampMm, props.distanceMm, props.zones], () => {
   updateZones()
@@ -1589,7 +1711,7 @@ watch(() => [props.mode, props.snap], () => {
   syncGizmoAttachment()
 })
 watch(() => props.previewT, () => syncMotionTransforms())
-watch(() => [props.objects, props.meshes, props.selectedId, props.selectedImageId, props.isolate, props.positions, props.positionId], () => syncObjects(), { deep: true })
+watch(() => [props.objects, props.meshes, props.selectedId, props.selectedImageId, props.selectedCropId, props.isolate, props.positions, props.positionId], () => syncObjects(), { deep: true })
 
 /** The selected model's or picture's id, when only it is to be shown. */
 const isolated = () => (props.isolate ? (props.selectedId && props.selectedId !== LAMP_ID ? props.selectedId : props.selectedImageId) : null)
@@ -1600,9 +1722,11 @@ function shown(id: string) {
 }
 
 function syncPictures() {
-  if (pictureDrag) return
+  if (pictureDrag?.targetKind === 'image') return
+  cropMasks?.sync(props.positions, props.thumbnails)
   pictures?.sync({
     images: props.images, positions: props.positions, positionId: props.positionId, thumbnails: props.thumbnails,
+    cropFor: (id) => cropMasks!.get(id),
     // The 2D manipulation frame renders the selection outline and handles.
     selectedId: null, pickedId: props.selectedImageId, only: isolated(), innerRadiusMm: props.innerRadiusMm, outerRadiusMm: props.outerRadiusMm,
   })
@@ -1611,13 +1735,15 @@ function syncPictures() {
   syncGizmoAttachment()
 }
 
-watch(() => [props.images, props.thumbnails, props.selectedId, props.selectedImageId, props.isolate, props.positions, props.positionId, props.innerRadiusMm, props.outerRadiusMm], syncPictures, { deep: true })
+watch(() => [props.images, props.thumbnails, props.selectedId, props.selectedImageId, props.selectedCropId, props.isolate, props.positions, props.positionId, props.innerRadiusMm, props.outerRadiusMm], syncPictures, { deep: true })
 
 onBeforeUnmount(() => {
   canvas.value?.removeEventListener('pointermove', onGizmoHoverPriority)
   pictureFrame?.dispose()
   pictureFrame = null
   pictures?.dispose()
+  cropMasks?.dispose()
+  cropMasks = null
   cancelAnimationFrame(animFrame)
   axes?.dispose()
   resizeObs?.disconnect()

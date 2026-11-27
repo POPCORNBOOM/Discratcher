@@ -372,6 +372,22 @@ fn default_crop_deg() -> f64 {
     30.0
 }
 
+fn default_one() -> f64 {
+    1.0
+}
+
+fn default_sides() -> u32 {
+    6
+}
+
+fn default_shape_size() -> f64 {
+    0.35
+}
+
+fn default_mask_dim() -> u32 {
+    1
+}
+
 pub const DEFAULT_PARALLAX: f64 = 2.0;
 
 fn default_parallax() -> f64 {
@@ -481,6 +497,131 @@ pub enum CropSide {
     Down,
 }
 
+/// Which channel of a mask picture defines the kept region.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MaskChannel {
+    #[default]
+    Luma,
+    Alpha,
+}
+
+/// One crop shape attached to a viewing position; visible crops unite to form its kept area.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Crop {
+    #[serde(rename_all = "camelCase")]
+    Sector {
+        id: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default = "default_true")]
+        visible: bool,
+        #[serde(default = "default_crop_deg")]
+        deg: f64,
+        #[serde(default)]
+        side: CropSide,
+        #[serde(default)]
+        offset_deg: f64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Circle {
+        id: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default = "default_true")]
+        visible: bool,
+        #[serde(default)]
+        x: f64,
+        #[serde(default)]
+        y: f64,
+        #[serde(default = "default_shape_size")]
+        size: f64,
+        #[serde(default = "default_one")]
+        stretch_x: f64,
+        #[serde(default = "default_one")]
+        stretch_y: f64,
+        #[serde(default)]
+        rotation_deg: f64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Polygon {
+        id: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default = "default_true")]
+        visible: bool,
+        #[serde(default = "default_sides")]
+        sides: u32,
+        #[serde(default)]
+        x: f64,
+        #[serde(default)]
+        y: f64,
+        #[serde(default = "default_shape_size")]
+        size: f64,
+        #[serde(default = "default_one")]
+        stretch_x: f64,
+        #[serde(default = "default_one")]
+        stretch_y: f64,
+        #[serde(default)]
+        rotation_deg: f64,
+    },
+    #[serde(rename_all = "camelCase")]
+    Mask {
+        id: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default = "default_true")]
+        visible: bool,
+        path: String,
+        #[serde(default = "default_mask_dim")]
+        width: u32,
+        #[serde(default = "default_mask_dim")]
+        height: u32,
+        #[serde(default)]
+        x: f64,
+        #[serde(default)]
+        y: f64,
+        #[serde(default = "default_one")]
+        size: f64,
+        #[serde(default = "default_one")]
+        stretch_x: f64,
+        #[serde(default = "default_one")]
+        stretch_y: f64,
+        #[serde(default)]
+        rotation_deg: f64,
+        #[serde(default)]
+        channel: MaskChannel,
+        #[serde(default)]
+        invert: bool,
+    },
+}
+
+impl Crop {
+    /// Whether this crop shape participates in masking.
+    pub fn visible(&self) -> bool {
+        match self {
+            Crop::Sector { visible, .. } | Crop::Circle { visible, .. } | Crop::Polygon { visible, .. } | Crop::Mask { visible, .. } => *visible,
+        }
+    }
+
+    /// The image path if this crop is a custom mask.
+    pub fn mask_path(&self) -> Option<&str> {
+        match self {
+            Crop::Mask { path, .. } => Some(path.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Mutable image path if this crop is a custom mask.
+    pub fn mask_path_mut(&mut self) -> Option<&mut String> {
+        match self {
+            Crop::Mask { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+}
+
 /// One way the disc is turned to be looked at, with its own objects.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -491,15 +632,18 @@ pub struct Position {
     /// Which angle of the disc is at the top, clockwise in degrees.
     pub phi_deg: f64,
     /// Half-angle kept either side of the crop's axis, degrees; 90 or more with both sides kept
-    /// means no crop.
+    /// means no crop (legacy field used when `crops` is absent).
     #[serde(default = "default_crop_deg")]
     pub crop_deg: f64,
-    /// Which ends of the axis keep their sector.
+    /// Which ends of the axis keep their sector (legacy field used when `crops` is absent).
     #[serde(default)]
     pub crop_side: CropSide,
-    /// The axis turned from 12 o'clock, clockwise as seen, degrees.
+    /// The axis turned from 12 o'clock, clockwise as seen, degrees (legacy field used when `crops` is absent).
     #[serde(default)]
     pub crop_offset_deg: f64,
+    /// Multi-shape crops for this position; empty means no crop, non-empty takes union of visible items.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crops: Option<Vec<Crop>>,
     /// How hard the solve holds every view white rather than letting it take the colour that is
     /// sharper; none takes each model's mode's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
