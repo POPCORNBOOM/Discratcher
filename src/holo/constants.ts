@@ -43,6 +43,10 @@ export const LAMP_HELD_MM: Vec3 = cylindricalToLampMm(LAMP_RIGHT_MM, 90, LAMP_UP
 export const LAMP_FAR_MM: Vec3 = cylindricalToLampMm(LAMP_RIGHT_MM, 0, LAMP_UP_MM)
 export const LAMP_FAR_RIGHT_MM: Vec3 = cylindricalToLampMm(LAMP_RIGHT_MM, 45, LAMP_UP_MM)
 
+/** The lamp positions offered by name: to the right, above, and above right. */
+export type LampPresetId = 'held' | 'far' | 'farRight'
+export const LAMP_PRESETS: Record<LampPresetId, Vec3> = { held: LAMP_HELD_MM, far: LAMP_FAR_MM, farRight: LAMP_FAR_RIGHT_MM }
+
 /** Transform animation: the disc tilts left and right, from -tilt to +tilt as t runs 0 to 1. */
 export const DEFAULT_TRANSFORM_TILT_DEG = 3.5
 export const MAX_TRANSFORM_TILT_DEG = 30

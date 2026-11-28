@@ -8,8 +8,10 @@ export const ZONE_KIND_VALUE: Record<ZoneKind, number> = { depth: 0, colour: 1, 
 
 /**
  * Colours the disc by how well each place suits what is selected, more violet the better; where the
- * light cannot work it is hatched. When nothing is selected (`none`), only the optically unusable
- * area (where neither depth nor colour can work) is hatched and no violet overlay is drawn. When a
+ * light cannot work it is hatched. When nothing is selected (`none`), only the lamp's glare band is
+ * hatched: where some eye in the head span sees the track part of the light flip sign or come within
+ * 0.15 of it, the rainbow streak of the grooves covers everything. Depth and colour both read 0
+ * there, so the hatching only grows when something is selected. When a
  * grey carved picture is selected (`crop`), only the crop border is shown. The current position's
  * crop (`cropMap`, in its frame turned by `phi`) is marked by a violet outline while the optical
  * zones remain visible across the whole ring. `g_t` and `g_r` are the parts of light and view
@@ -30,6 +32,7 @@ export function zonesMaterial(initialCropMap: Texture | null = null): ShaderMate
       kind: { value: ZONE_KIND_VALUE.none },
       inner: { value: 0 },
       outer: { value: 0 },
+      hatchMm: { value: 2.4 },
     },
     vertexShader: `
       varying vec2 at;
@@ -39,7 +42,7 @@ export function zonesMaterial(initialCropMap: Texture | null = null): ShaderMate
       varying vec2 at;
       uniform sampler2D cropMap;
       uniform vec3 lamp;
-      uniform float distance, span, phi, hasCrop, kind, inner, outer;
+      uniform float distance, span, phi, hasCrop, kind, inner, outer, hatchMm;
       vec2 gAt(vec3 p, vec2 r, float eyeX) {
         vec3 g = normalize(lamp - p) + normalize(vec3(eyeX, 0.0, distance) - p);
         return vec2(-g.x * r.y + g.y * r.x, dot(g.xy, r));
@@ -56,6 +59,15 @@ export function zonesMaterial(initialCropMap: Texture | null = null): ShaderMate
         float band = smoothstep(0.15, 0.22, absLo) * (1.0 - smoothstep(0.70, 0.84, absHi));
         float rr = grMax / 0.55;
         return lo * hi <= 0.0 ? 0.0 : smoothstep(0.056, 0.22, hi - lo) * band * exp(-0.5 * rr * rr);
+      }
+      bool glareAt(vec3 p, vec2 r) {
+        float lo = 1e9, hi = -1e9;
+        for (int i = 0; i < 9; i++) {
+          float gt = gAt(p, r, span * (float(i) / 4.0 - 1.0)).x;
+          lo = min(lo, gt);
+          hi = max(hi, gt);
+        }
+        return lo * hi <= 0.0 || min(abs(lo), abs(hi)) < 0.15;
       }
       float colourAt(vec3 p, vec2 r) {
         vec2 gl = gAt(p, r, -32.0), gc = gAt(p, r, 0.0), gr = gAt(p, r, 32.0);
@@ -113,10 +125,10 @@ export function zonesMaterial(initialCropMap: Texture | null = null): ShaderMate
           dead = strength < 0.12;
         } else {
           strength = 0.0;
-          dead = depthAt(p, r) < 0.12 && colourAt(p, r) < 0.12;
+          dead = glareAt(p, r);
         }
         if (kind > 1.5 && !dead) discard;
-        float line = fract((at.x + at.y) / 1.41421 / 2.4);
+        float line = fract((at.x + at.y) / 1.41421 / hatchMm);
         gl_FragColor = dead ? vec4(vec3(0.92), line < 0.22 ? 0.27 : 0.0) : vec4(violet.rgb, strength * 0.47);
       }
     `,

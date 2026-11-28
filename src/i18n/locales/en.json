@@ -480,5 +480,15 @@
   "carve.maxDutyLow": "Steadier burn",
   "carve.maxDutyHigh": "Darker picture",
   "cal.faster": "Faster",
-  "cal.finer": "More precise"
+  "cal.finer": "More precise",
+  "wizard.title": "New design",
+  "wizard.stepLamp": "Light",
+  "wizard.stepStart": "Start from",
+  "wizard.fitsPictures": "Best for pictures",
+  "wizard.fitsModels": "Best for models",
+  "wizard.fitsBoth": "Some of both",
+  "wizard.lampHelp": "Pick where the lamp stands first: the same disc is carved differently for each lamp. The hatched band is the lamp's glare, where nothing shows.",
+  "wizard.lampLater": "You can fine-tune the lamp's angle, distance and height later under Design lighting.",
+  "wizard.next": "Next",
+  "wizard.create": "Create"
 }

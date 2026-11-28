@@ -10,14 +10,8 @@
         <h1>{{ t('holo.title') }}</h1>
         <section class="group">
           <div class="small muted">{{ t('holo.newDesign') }}</div>
-          <div class="templates">
-            <button v-for="tpl in DESIGN_TEMPLATES" :key="tpl.id" type="button" class="template" @click="newDesign(tpl)">
-              <UiIcon :path="tpl.icon" :size="24" />
-              <span class="title">{{ t(tpl.name) }}</span>
-              <span class="small muted">{{ t(tpl.description) }}</span>
-            </button>
-          </div>
           <div class="row">
+            <UiButton variant="solid" :icon="mdiPlus" @click="wizardOpen = true">{{ t('holo.newDesign') }}</UiButton>
             <UiButton variant="soft" :icon="mdiFolderOpenOutline" @click="openDesign">{{ t('holo.openFolder') }}</UiButton>
           </div>
         </section>
@@ -1003,6 +997,7 @@
       </div>
       </Transition>
     </div>
+    <NewDesignDialog v-if="wizardOpen" @close="wizardOpen = false" @create="newDesign" />
     <UiDialog v-if="pendingDiscard" :title="t('holo.discardTitle')" @close="pendingDiscard = null">
       <p>{{ t('holo.discardBody') }}</p>
       <template #actions>
@@ -1104,7 +1099,7 @@ import {
 } from '@mdi/js'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, shallowRef, watch } from 'vue'
 import { call, on, defaultDesignLocation, pickDesign, pickFolder, pickImage, pickLegacyScene, pickModel, revealPath, type RecentDesign } from '../api'
-import { DESIGN_TEMPLATES, type DesignTemplate } from '../holo/templates'
+import type { DesignTemplate } from '../holo/templates'
 import type { ZoneKind } from '../holo/usability'
 import HoloPreview from '../components/HoloPreview.vue'
 import HoloViewport3D, { type GizmoMode } from '../components/HoloViewport3D.vue'
@@ -1128,9 +1123,8 @@ import {
   DEFAULT_DISTANCE_MM,
   DEFAULT_HEAD_SPAN_MM,
   DEFAULT_TILT_DEG,
-  LAMP_FAR_MM,
-  LAMP_FAR_RIGHT_MM,
   LAMP_HELD_MM,
+  LAMP_PRESETS,
   LAMP_ID,
   LAMP_MAX_UP_MM,
   LAMP_MIN_UP_MM,
@@ -1141,6 +1135,7 @@ import {
   transformTiltDeg,
   DEFAULT_TRANSFORM_TILT_DEG,
   MAX_TRANSFORM_TILT_DEG,
+  type LampPresetId,
   type Vec3,
 } from '../holo/constants'
 import {
@@ -1202,6 +1197,7 @@ import { useStudio } from '../stores/studio'
 import type { ArtworkAnalysis, DiscGeometryPreset } from '../types'
 import { copyLayer, coverSize, makeLayer, restacked } from '../layers'
 import { MAX_LAYERS } from '../discRenderer'
+import NewDesignDialog from '../components/NewDesignDialog.vue'
 import UiDialog from '../components/UiDialog.vue'
 
 type LightMode = 'flash' | 'lamp' | 'far'
@@ -2268,11 +2264,15 @@ function matchLampPreset(lampMm: Vec3, distanceMm: number): string {
 }
 
 function setLampPreset(preset: string) {
-  const next = preset === 'held' ? LAMP_HELD_MM : preset === 'far' ? LAMP_FAR_MM : preset === 'farRight' ? LAMP_FAR_RIGHT_MM : null
-  if (!next) return
-  if (String(next) !== String(opts.lampMm)) pushHistory()
+  if (!(preset in LAMP_PRESETS)) return
+  if (String(LAMP_PRESETS[preset as LampPresetId]) !== String(opts.lampMm)) pushHistory()
+  applyLampPreset(preset as LampPresetId)
+}
+
+/** Puts the lamp at `preset` and the eye at the usual distance, without an undo step. */
+function applyLampPreset(preset: LampPresetId) {
   opts.lampPreset = preset
-  opts.lampMm = [...next]
+  opts.lampMm = [...LAMP_PRESETS[preset]]
   syncCylindricalFromLampMm(opts.lampMm)
   opts.distanceMm = DEFAULT_DISTANCE_MM
 }
@@ -2628,10 +2628,15 @@ async function importLegacyScene() {
   }
 }
 
-/** A new, unsaved design from `tpl`. */
-function newDesign(tpl: DesignTemplate) {
+const wizardOpen = ref(false)
+
+/** A new, unsaved design from `tpl`, lit by `lamp`. */
+function newDesign(lamp: LampPresetId, tpl: DesignTemplate) {
+  wizardOpen.value = false
   enterDesign()
   const fresh = tpl.make()
+  fresh.lampMm = [...LAMP_PRESETS[lamp]]
+  applyLampPreset(lamp)
   scene.value = fresh
   positionId.value = fresh.positions[0].id
   pickedRaw.value = []
@@ -3116,9 +3121,6 @@ onBeforeUnmount(() => {
 .start .item .text { min-width: 0; }
 .start .badge { height: 18px; display: inline-flex; align-items: center; padding: 0 var(--oc-space-xs); border-radius: 9px; font-size: var(--oc-text-xs); white-space: nowrap; }
 .start .badge.warn { background: var(--oc-bg-warning-subtle); color: var(--oc-fg-warning); }
-.templates { display: grid; grid-template-columns: 1fr 1fr; gap: var(--oc-space-sm); }
-.template { display: flex; flex-direction: column; align-items: flex-start; gap: var(--oc-space-2xs); padding: var(--oc-space-md); border: 1px solid var(--oc-border-muted); border-radius: var(--oc-radius-control); background: var(--oc-bg-base); color: var(--oc-fg-default); text-align: left; }
-.template:hover { border-color: var(--oc-accent); }
 .image-controls { display: flex; flex-direction: column; gap: var(--oc-space-md); }
 .add-row { display: flex; gap: var(--oc-space-2xs); }
 .add-row > * { flex: 1; }

@@ -480,5 +480,15 @@
   "carve.maxDutyLow": "刻录更稳",
   "carve.maxDutyHigh": "图案更深",
   "cal.faster": "更快",
-  "cal.finer": "更准"
+  "cal.finer": "更准",
+  "wizard.title": "新建设计",
+  "wizard.stepLamp": "光源",
+  "wizard.stepStart": "起点",
+  "wizard.fitsPictures": "适合图片",
+  "wizard.fitsModels": "适合模型",
+  "wizard.fitsBoth": "兼顾两者",
+  "wizard.lampHelp": "先定灯放在哪儿：同一张盘在不同灯下要刻得不一样。斜线是灯的高光带，那里什么都看不出来。",
+  "wizard.lampLater": "灯的方位、半径和高度之后都能在“设计光照”里细调。",
+  "wizard.next": "下一步",
+  "wizard.create": "创建"
 }
