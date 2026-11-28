@@ -503,5 +503,7 @@
   "wizard.useTopLight": "改用顶光",
   "carve.ring": "环形",
   "carve.ringTurns": "圈数",
-  "carve.turns": "{n} 圈"
+  "carve.turns": "{n} 圈",
+  "carve.alongRing": "沿环",
+  "carve.acrossRing": "内外"
 }

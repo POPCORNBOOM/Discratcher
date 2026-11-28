@@ -112,8 +112,8 @@ import { t } from '../i18n'
 import { issueOf } from '../catalog'
 import { notifyError, notifySuccess } from '../notices'
 import { rememberTwist } from '../twist'
-import { layerExtent } from '../layers'
-import { coverSize, fileName, useComposition } from '../stores/composition'
+import { layerExtent, resetPlacement } from '../layers'
+import { fileName, useComposition } from '../stores/composition'
 import { useProcess, type StepContext } from '../stores/process'
 import { useStudio } from '../stores/studio'
 import type { BuiltIso, DiscGeometryPreset, Layer } from '../types'
@@ -132,7 +132,7 @@ const title = computed(() => (comp.path ? stem(comp.path) : t('carve.image')))
 function resetLayer() {
   const l = sel.value
   if (!l) return
-  Object.assign(l, { x: 0, y: 0, rotationDeg: 0, size: comp.layers[0] === l ? coverSize(l) : 0.5 })
+  resetPlacement(l, comp.layers[0] === l)
 }
 
 // ---- CD twist: one number per drive, read off a burned chart ----

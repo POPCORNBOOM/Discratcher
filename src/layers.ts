@@ -1,6 +1,6 @@
 // Pictures placed on the disc as layers: what the carve page and the hologram's flat positions
 // both do with them. Lists are bottom first.
-import { MAX_RING_TURNS } from './ringMap'
+import { MAX_RING_TURNS, ringFit } from './ringMap'
 import type { ArtworkAnalysis, Layer } from './types'
 
 export const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p
@@ -61,4 +61,9 @@ export function readLayer(raw: unknown): Layer | null {
     stretchX: num(l.stretchX, 1), stretchY: num(l.stretchY, 1),
     ring: !!l.ring, ringTurns: Math.min(MAX_RING_TURNS, Math.max(1, Math.round(num(l.ringTurns, 1)))),
   }
+}
+
+/** `l` back where it starts: wrapped round the ring, fitted to its turns; else filling the disc when `first`, smaller when not. */
+export function resetPlacement(l: Layer, first: boolean) {
+  Object.assign(l, l.ring ? ringFit(l, l.ringTurns) : { x: 0, y: 0, rotationDeg: 0, size: first ? coverSize(l) : 0.5 })
 }

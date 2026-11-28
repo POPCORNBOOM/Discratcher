@@ -1215,7 +1215,7 @@ import { notifyError, notifySuccess } from '../notices'
 import { useProcess, type StepContext } from '../stores/process'
 import { useStudio } from '../stores/studio'
 import type { ArtworkAnalysis, DiscGeometryPreset } from '../types'
-import { copyLayer, coverSize, makeLayer, restacked } from '../layers'
+import { copyLayer, makeLayer, resetPlacement, restacked } from '../layers'
 import { MAX_LAYERS } from '../discRenderer'
 import NewDesignDialog from '../components/NewDesignDialog.vue'
 import UiDialog from '../components/UiDialog.vue'
@@ -2034,7 +2034,7 @@ function resetImage() {
   const l = selectedImage.value
   if (!l) return
   pushHistory()
-  Object.assign(l, { x: 0, y: 0, rotationDeg: 0, size: positionImages.value[0] === l ? coverSize(l) : 0.5 })
+  resetPlacement(l, positionImages.value[0] === l)
 }
 
 function invertSelectedImage() {

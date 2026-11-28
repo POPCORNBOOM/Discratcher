@@ -358,6 +358,14 @@ impl Composition {
                 let (w, h) = (size * stretch(l.stretch_x) * picture.width as f64 / long, size * stretch(l.stretch_y) * picture.height as f64 / long);
                 let grid = l.repeat.then(|| {
                     let fill = if l.repeat_density.is_finite() { l.repeat_density.clamp(10.0, 100.0) as f64 / 100.0 } else { 1.0 };
+                    // Round the ring with an unturned grid, a whole number of cells go round, so
+                    // there is no seam (`repeatFill` in src/ringMap.ts).
+                    let fill = if l.ring && l.repeat_angle == 0.0 && w > 0.0 {
+                        let round = std::f64::consts::PI * (RING_INNER + RING_OUTER);
+                        w * (round * fill / w).round().max(1.0) / round
+                    } else {
+                        fill
+                    };
                     let (gs, gc) = (if l.repeat_angle.is_finite() { l.repeat_angle as f64 } else { 0.0 }).to_radians().sin_cos();
                     let stagger = if l.repeat_stagger.is_finite() { l.repeat_stagger.clamp(0.0, 100.0) as f64 / 100.0 } else { 0.0 };
                     Grid { cell_w: w / fill, cell_h: h / fill, cos: gc, sin: gs, stagger }
@@ -689,6 +697,25 @@ pub(crate) mod tests {
         assert_eq!(c.sample(-mid, 0.0), 0.0, "9 o'clock is the left half");
         assert_eq!(c.sample(mid, 0.0), 255.0, "3 o'clock the right");
         assert_eq!(c.sample_covered(0.0, -0.05), None, "the hub is off the band");
+    }
+
+    #[test]
+    fn ring_repeats_meet_without_a_seam() {
+        // A dark-to-light ramp, tiled round the ring in cells that do not divide it unless fitted,
+        // with a tile centred on 6 o'clock, where the unrolled ring's two ends meet.
+        let p = Arc::new(Picture::from_luma(8, 1, (0..8).map(|i| i * 32).collect()));
+        let round = std::f64::consts::PI * (RING_INNER + RING_OUTER);
+        let at = |angle: f32| {
+            let l = Layer { ring: true, repeat: true, repeat_angle: angle, size: 0.3, stretch_y: 0.9, ..layer(round / 2.0, 0.0, 1.0, 0.0) };
+            let c = Composition::new([(l, p.clone())]);
+            let mid = (RING_INNER + RING_OUTER) / 2.0;
+            (c.sample(0.002, mid), c.sample(-0.002, mid))
+        };
+        let (before, after) = at(0.0);
+        assert!((after - before).abs() < 5.0, "across 6 o'clock {before} -> {after}");
+        // Turned however slightly, the grid is not fitted and the ends do not meet.
+        let (before, after) = at(0.001);
+        assert!((after - before).abs() > 20.0, "unfitted {before} -> {after}");
     }
 
     #[test]

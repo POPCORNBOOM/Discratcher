@@ -30,9 +30,28 @@ vec3 ringUnroll(vec2 p, float turns) {
  * Wrapped round the ring, `l` is centred and as tall as one turn's band, over as many turns as
  * keep its shape best.
  */
-export function ringFit(l: Pick<Layer, 'width' | 'height'>): Pick<Layer, 'x' | 'y' | 'size' | 'rotationDeg' | 'stretchX' | 'stretchY' | 'ringTurns'> {
+export function ringFit(l: Pick<Layer, 'width' | 'height'>, turns?: number): Pick<Layer, 'x' | 'y' | 'size' | 'rotationDeg' | 'stretchX' | 'stretchY' | 'ringTurns'> {
   const aspect = Math.max(1, l.width) / Math.max(1, l.height)
-  const ringTurns = Math.min(MAX_RING_TURNS, Math.max(1, Math.round(Math.sqrt((aspect * RING_BAND) / RING_ROUND))))
+  const ringTurns = Math.min(MAX_RING_TURNS, Math.max(1, Math.round(turns ?? Math.sqrt((aspect * RING_BAND) / RING_ROUND))))
   const long = Math.max(l.width, l.height, 1)
   return { x: 0, y: 0, rotationDeg: 0, stretchX: 1, stretchY: 1, ringTurns, size: ((RING_BAND / ringTurns) * long) / Math.max(1, l.height) }
+}
+
+/**
+ * Share of a tile cell the picture fills, as `Composition::new` takes it: wrapped round the ring
+ * with an unturned grid, the cells are fitted so a whole number go round, leaving no seam.
+ * `width` is the picture's width as a share of the diameter.
+ */
+export function repeatFill(l: Pick<Layer, 'repeatDensity' | 'repeatAngle' | 'ring'>, width: number): number {
+  const fill = Math.min(1, Math.max(0.1, l.repeatDensity / 100))
+  if (!l.ring || l.repeatAngle !== 0 || !(width > 0)) return fill
+  const k = Math.max(1, Math.round((RING_ROUND * fill) / width))
+  return (width * k) / RING_ROUND
+}
+
+/** The placement sliders' reach (percent of the diameter) for `l`: the unrolled ring is longer than the disc is wide. */
+export function placeReach(l: Pick<Layer, 'ring' | 'ringTurns'>): { x: number; size: number } {
+  if (!l.ring) return { x: 50, size: 300 }
+  const length = RING_ROUND * Math.min(MAX_RING_TURNS, Math.max(1, Math.round(l.ringTurns)))
+  return { x: Math.ceil(length * 50), size: Math.max(300, Math.ceil(length * 150)) }
 }

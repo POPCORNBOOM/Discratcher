@@ -503,5 +503,7 @@
   "wizard.useTopLight": "Use light from above",
   "carve.ring": "Ring",
   "carve.ringTurns": "Turns",
-  "carve.turns": "{n} turns"
+  "carve.turns": "{n} turns",
+  "carve.alongRing": "Along the ring",
+  "carve.acrossRing": "In and out"
 }

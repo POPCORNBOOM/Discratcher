@@ -18,7 +18,7 @@ import {
   type Texture,
 } from 'three'
 import { layerExtent } from '../layers'
-import { RING_GLSL } from '../ringMap'
+import { RING_GLSL, repeatFill } from '../ringMap'
 import type { HoloImage, HoloPosition } from './scene'
 
 const VERTEX = `
@@ -209,7 +209,7 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
       u.ring.value = img.ring ? img.ringTurns : 0
       ;(u.place.value as Vector4).set(img.x, img.y, Math.cos(turn), Math.sin(turn))
       ;(u.ext.value as Vector2).set(ew || 1, eh || 1)
-      const fill = Math.min(1, Math.max(0.1, img.repeatDensity / 100))
+      const fill = repeatFill(img, ew)
       ;(u.grid.value as Vector4).set(img.repeat ? (ew || 1) / fill : 0, img.repeat ? (eh || 1) / fill : 0, (img.repeatAngle * Math.PI) / 180, 0)
       u.stagger.value = Math.min(1, Math.max(0, img.repeatStagger / 100))
     })
