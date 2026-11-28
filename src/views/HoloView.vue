@@ -103,7 +103,7 @@
 
         <UiAccordion v-model="openGroup">
         <template v-if="scene.objects.length || scene.images.length || scene.positions.length > 1">
-          <!-- Where on the disc this position is, and how it is solved. -->
+          <!-- Where on the disc this position is, how it is solved, its crops and what it shows. -->
           <UiSection name="positions" :icon="mdiCrosshairsGps" :title="t('holo.positions')">
             <template #actions><a v-if="scene.positions.length > 1 && !manyPicked" class="action-link" role="button" tabindex="0" @click="removePosition" @keydown.enter="removePosition">{{ t('holo.removePosition') }}</a></template>
             <div class="positions" role="tablist" :aria-label="t('holo.positions')">
@@ -126,11 +126,9 @@
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
             </div>
-          </UiSection>
 
-          <!-- Shapes restricting what part of the disc belongs to this position. -->
-          <UiSection name="crops" :icon="mdiContentCut" :title="t('holo.crops')">
-            <div v-if="manyPicked" class="small muted">{{ t('holo.pickedMany', { n: pickedIds.length }) }}</div>
+            <!-- Shapes restricting what part of the disc belongs to this position. -->
+            <div class="subhead"><UiIcon :path="mdiContentCut" :size="16" class="muted" />{{ t('holo.crops') }}</div>
             <div v-if="position.crops.length" class="obj-list" role="listbox" :aria-label="t('holo.crops')">
               <div
                 v-for="crop in position.crops"
@@ -421,10 +419,9 @@
                 </UiAdvanced>
               </template>
             </section>
-          </UiSection>
 
-          <!-- What the position shows, top first: where two want the same disc, the higher wins. -->
-          <UiSection name="models" :icon="mdiLayersOutline" :title="t('holo.contents')">
+            <!-- What the position shows, top first: where two want the same disc, the higher wins. -->
+            <div class="subhead"><UiIcon :path="mdiLayersOutline" :size="16" class="muted" />{{ t('holo.contents') }}</div>
             <div class="obj-list" role="listbox" :aria-label="t('holo.contents')">
               <div
                 v-for="(entry, i) in items"
@@ -1268,8 +1265,8 @@ const scene = ref<HoloScene>(emptyScene())
 const selectedId = ref<string | null>(null)
 /** The settings group open in the side panel. */
 const openGroup = ref('positions')
-// Picking a model or crop in the list opens its settings group.
-watch(selectedId, (id) => { if (id) openGroup.value = 'models' })
+// Picking a model, picture or crop opens the position's group, where their settings are.
+watch(selectedId, (id) => { if (id) openGroup.value = 'positions' })
 const MAX_POSITIONS = 24
 const positionId = ref(scene.value.positions[0].id)
 const position = computed(() => scene.value.positions.find((q) => q.id === positionId.value) ?? scene.value.positions[0])
@@ -1668,7 +1665,7 @@ function setPhi(deg: number) {
 // ---- Multi-shape crops ----
 const selectedCropId = ref<string | null>(null)
 const selectedCrop = computed(() => position.value.crops.find((c) => c.id === selectedCropId.value) ?? null)
-watch(selectedCropId, (id) => { if (id) openGroup.value = 'crops' })
+watch(selectedCropId, (id) => { if (id) openGroup.value = 'positions' })
 
 const cropSideOptions = computed(() => CROP_SIDES.map((v) => ({ value: v, label: t(`holo.cropSide.${v}`) })))
 const maskChannelOptions = computed(() => [
@@ -1722,7 +1719,7 @@ function addCrop(crop: HoloCrop) {
   position.value.crops.push(crop)
   syncPickedCrops()
   chooseCrop(crop.id)
-  openGroup.value = 'crops'
+  openGroup.value = 'positions'
 }
 
 function addSectorCrop() {
@@ -1936,7 +1933,7 @@ async function addImage() {
     scene.value.images.push({ ...l, invert: false, positionId: position.value.id, colour: true })
     putOnTop(l.id)
     choosePicture(l.id)
-    openGroup.value = 'models'
+    openGroup.value = 'positions'
     tab.value = 'edit'
   } catch (e) {
     notifyError(String(e))
@@ -3121,6 +3118,7 @@ onBeforeUnmount(() => {
 .start .item .text { min-width: 0; }
 .start .badge { height: 18px; display: inline-flex; align-items: center; padding: 0 var(--oc-space-xs); border-radius: 9px; font-size: var(--oc-text-xs); white-space: nowrap; }
 .start .badge.warn { background: var(--oc-bg-warning-subtle); color: var(--oc-fg-warning); }
+.subhead { display: flex; align-items: center; gap: var(--oc-space-xs); padding-top: var(--oc-space-md); border-top: 1px solid var(--oc-border-muted); font-weight: 600; }
 .image-controls { display: flex; flex-direction: column; gap: var(--oc-space-md); }
 .add-row { display: flex; gap: var(--oc-space-2xs); }
 .add-row > * { flex: 1; }
