@@ -239,7 +239,6 @@
   "holo.times": "{n} 倍",
   "holo.crop": "裁切范围",
   "holo.crops": "裁切",
-  "holo.cropEmpty": "当前位置不裁切，保留整圈盘面",
   "holo.cropKind.sector": "扇形",
   "holo.cropKind.polygon": "多边形",
   "holo.cropKind.circle": "圆形",

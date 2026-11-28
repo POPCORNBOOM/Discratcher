@@ -43,13 +43,13 @@ function toggle() {
 .chevron { color: var(--oc-fg-muted); transition: transform var(--fold) var(--oc-ease); }
 .chevron.on { transform: rotate(90deg); }
 .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Grows from no height to the content's own, so the open section pushes the rest down smoothly. */
+/* Child combinators so a section nested in an open one still folds. Grows from no height to the content's own, so the open section pushes the rest down smoothly. */
 .fold { flex: 0 1 auto; min-height: 0; display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--fold) var(--oc-ease); }
-.open .fold { grid-template-rows: 1fr; }
+.open > .fold { grid-template-rows: 1fr; }
 .clip { min-height: 0; overflow: hidden; }
-.open .clip { overflow-y: auto; overscroll-behavior: contain; }
+.open > .fold > .clip { overflow-y: auto; overscroll-behavior: contain; }
 .body { opacity: 0; transform: translateY(-4px); transition: opacity var(--fold) var(--oc-ease), transform var(--fold) var(--oc-ease); }
-.open .body { opacity: 1; transform: none; }
+.open > .fold > .clip > .body { opacity: 1; transform: none; }
 @media (prefers-reduced-motion: reduce) { .fold, .body, .chevron { transition: none; } }
 /* Under the heading, in from the chevron. */
 .body { display: flex; flex-direction: column; gap: var(--oc-space-md); padding: var(--oc-space-2xs) var(--oc-space-md) var(--oc-space-lg) calc(var(--oc-space-sm) + 14px + var(--oc-space-xs)); }

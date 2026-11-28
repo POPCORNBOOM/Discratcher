@@ -174,7 +174,6 @@
                 </span>
               </div>
             </div>
-            <div v-else class="small muted">{{ t('holo.cropEmpty') }}</div>
             <div class="crop-add-grid">
               <UiButton variant="ghost" :icon="mdiCircleSlice2" @click="addSectorCrop">{{ t('holo.cropKind.sector') }}</UiButton>
               <UiButton variant="ghost" :icon="mdiPentagonOutline" @click="addPolygonCrop">{{ t('holo.cropKind.polygon') }}</UiButton>

@@ -239,7 +239,6 @@
   "holo.times": "{n}×",
   "holo.crop": "Crop range",
   "holo.crops": "Crop",
-  "holo.cropEmpty": "No crop on this position; the whole ring is kept",
   "holo.cropKind.sector": "Sector",
   "holo.cropKind.polygon": "Polygon",
   "holo.cropKind.circle": "Circle",
