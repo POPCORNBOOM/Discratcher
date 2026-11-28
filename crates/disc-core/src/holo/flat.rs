@@ -84,13 +84,6 @@ pub fn pictures(scene: &Scene, positions: &[Position], max_edge: Option<u32>) ->
     Ok(out)
 }
 
-/// The crop axis's top end as a unit vector on the solve grid, before the position's turn: 12
-/// o'clock is -y there (where a picture's top lies), turned clockwise as seen by the offset.
-pub fn crop_axis(pos: &Position) -> [f64; 2] {
-    let (s, c) = pos.crop_offset_deg.to_radians().sin_cos();
-    [s, -c]
-}
-
 fn kept_sector(nx: f64, ny: f64, deg: f64, side: CropSide, offset_deg: f64) -> bool {
     if (side == CropSide::Both && deg >= 90.0) || deg >= 180.0 {
         return true;
@@ -189,23 +182,19 @@ pub struct PositionCrop<'a> {
     pos: &'a Position,
     phi_rad: f64,
     across: f64,
-    /// Decoded mask pictures indexed alongside `pos.crops` when present.
+    /// Decoded mask pictures indexed alongside `pos.crops`.
     masks: Vec<Option<Arc<ArtworkPicture>>>,
 }
 
 impl<'a> PositionCrop<'a> {
     /// Load any custom mask images referenced by visible crops on `pos`.
     pub fn load(pos: &'a Position, outer_radius_mm: f64, max_edge: Option<u32>) -> Result<Self, String> {
-        let mut masks = Vec::new();
-        if let Some(crops) = &pos.crops {
-            masks.reserve(crops.len());
-            for c in crops {
-                if let Crop::Mask { visible: true, path, .. } = c {
-                    masks.push(Some(mask_picture(path, max_edge)?));
-                } else {
-                    masks.push(None);
-                }
-            }
+        let mut masks = Vec::with_capacity(pos.crops.len());
+        for c in &pos.crops {
+            masks.push(match c {
+                Crop::Mask { visible: true, path, .. } => Some(mask_picture(path, max_edge)?),
+                _ => None,
+            });
         }
         Ok(Self {
             pos,
@@ -219,37 +208,32 @@ impl<'a> PositionCrop<'a> {
     #[inline]
     pub fn kept(&self, x: f64, y: f64) -> bool {
         let at = turn([x, y, 0.0], -self.phi_rad);
-        match &self.pos.crops {
-            None => kept_sector(at[0], at[1], self.pos.crop_deg, self.pos.crop_side, self.pos.crop_offset_deg),
-            Some(crops) => {
-                let mut any_visible = false;
-                let (nx, ny) = (at[0] / self.across, at[1] / self.across);
-                for (i, c) in crops.iter().enumerate() {
-                    if !c.visible() {
-                        continue;
-                    }
-                    any_visible = true;
-                    let hit = match c {
-                        Crop::Sector { deg, side, offset_deg, .. } => kept_sector(nx, ny, *deg, *side, *offset_deg),
-                        Crop::Circle { x, y, size, stretch_x, stretch_y, rotation_deg, .. } => {
-                            kept_circle(nx, ny, *x, *y, *size, *stretch_x, *stretch_y, *rotation_deg)
-                        }
-                        Crop::Polygon { sides, x, y, size, stretch_x, stretch_y, rotation_deg, .. } => {
-                            kept_polygon(nx, ny, *sides, *x, *y, *size, *stretch_x, *stretch_y, *rotation_deg)
-                        }
-                        Crop::Mask { width, height, x, y, size, stretch_x, stretch_y, rotation_deg, channel, invert, .. } => {
-                            self.masks.get(i).and_then(|m| m.as_ref()).is_some_and(|pic| {
-                                kept_mask(nx, ny, pic, *width, *height, *x, *y, *size, *stretch_x, *stretch_y, *rotation_deg, *channel, *invert)
-                            })
-                        }
-                    };
-                    if hit {
-                        return true;
-                    }
+        let mut any_visible = false;
+        let (nx, ny) = (at[0] / self.across, at[1] / self.across);
+        for (i, c) in self.pos.crops.iter().enumerate() {
+            if !c.visible() {
+                continue;
+            }
+            any_visible = true;
+            let hit = match c {
+                Crop::Sector { deg, side, offset_deg, .. } => kept_sector(nx, ny, *deg, *side, *offset_deg),
+                Crop::Circle { x, y, size, stretch_x, stretch_y, rotation_deg, .. } => {
+                    kept_circle(nx, ny, *x, *y, *size, *stretch_x, *stretch_y, *rotation_deg)
                 }
-                !any_visible
+                Crop::Polygon { sides, x, y, size, stretch_x, stretch_y, rotation_deg, .. } => {
+                    kept_polygon(nx, ny, *sides, *x, *y, *size, *stretch_x, *stretch_y, *rotation_deg)
+                }
+                Crop::Mask { width, height, x, y, size, stretch_x, stretch_y, rotation_deg, channel, invert, .. } => {
+                    self.masks.get(i).and_then(|m| m.as_ref()).is_some_and(|pic| {
+                        kept_mask(nx, ny, pic, *width, *height, *x, *y, *size, *stretch_x, *stretch_y, *rotation_deg, *channel, *invert)
+                    })
+                }
+            };
+            if hit {
+                return true;
             }
         }
+        !any_visible
     }
 }
 
@@ -349,7 +333,7 @@ mod tests {
     }
 
     fn flat_pos(id: &str, phi_deg: f64, crop_deg: f64) -> Position {
-        Position { id: id.into(), name: String::new(), phi_deg, crop_deg, crop_side: Default::default(), crop_offset_deg: 0.0, crops: None, neutral: None, spin: false, look_deg: None, order: vec![] }
+        Position { id: id.into(), name: String::new(), phi_deg, crops: vec![Crop::sector(crop_deg, CropSide::Both, 0.0)], neutral: None, spin: false, look_deg: None, order: vec![] }
     }
 
     fn image(path: &str, position: &str) -> SceneImage {
@@ -474,7 +458,7 @@ mod tests {
 
     #[test]
     fn the_crop_keeps_the_ends_asked_for_around_a_turned_axis() {
-        let at = |side: CropSide, offset: f64| Position { crop_side: side, crop_offset_deg: offset, ..flat_pos("0", 0.0, 30.0) };
+        let at = |side: CropSide, offset: f64| Position { crops: vec![Crop::sector(30.0, side, offset)], ..flat_pos("0", 0.0, 30.0) };
         // 12 o'clock is -y on the solve grid, 3 o'clock +x.
         let (top, bottom, right) = ((0.0, -40.0), (0.0, 40.0), (40.0, 0.0));
         let k = |p: &Position, (x, y): (f64, f64)| kept(x, y, p);
@@ -488,9 +472,9 @@ mod tests {
         let up_right = at(CropSide::Up, 90.0);
         assert!(k(&up_right, right) && !k(&up_right, top) && !k(&up_right, (-40.0, 0.0)));
         // Both ends at 90° keep everything; one end at 90° keeps its half.
-        let all = Position { crop_deg: 90.0, ..both.clone() };
+        let all = Position { crops: vec![Crop::sector(90.0, CropSide::Both, 0.0)], ..both.clone() };
         assert!(k(&all, right) && k(&all, bottom));
-        let half = Position { crop_deg: 90.0, ..up.clone() };
+        let half = Position { crops: vec![Crop::sector(90.0, CropSide::Up, 0.0)], ..up.clone() };
         assert!(k(&half, (40.0, -1.0)) && !k(&half, (40.0, 1.0)));
         // The same as before for both ends without an offset.
         for &(x, y) in &[(10.0, -30.0), (25.0, 20.0), (-5.0, 50.0), (-40.0, -10.0)] {
@@ -504,11 +488,11 @@ mod tests {
         let d = dir("multishape");
         let across = 2.0 * 58.0;
 
-        let empty_pos = Position { crops: Some(vec![]), ..flat_pos("0", 0.0, 10.0) };
+        let empty_pos = Position { crops: vec![], ..flat_pos("0", 0.0, 10.0) };
         assert!(kept(40.0, 0.0, &empty_pos));
 
         let hidden_circle = Position {
-            crops: Some(vec![Crop::Circle {
+            crops: vec![Crop::Circle {
                 id: "c1".into(),
                 name: String::new(),
                 visible: false,
@@ -518,14 +502,14 @@ mod tests {
                 stretch_x: 1.0,
                 stretch_y: 1.0,
                 rotation_deg: 0.0,
-            }]),
+            }],
             ..flat_pos("0", 0.0, 10.0)
         };
         assert!(kept(40.0, 0.0, &hidden_circle), "no visible crops means uncropped");
 
         // Triangle at bottom (0, +0.35) + circle at right (+0.35, 0) union test.
         let triangle_and_circle = Position {
-            crops: Some(vec![
+            crops: vec![
                 Crop::Polygon {
                     id: "tri".into(),
                     name: String::new(),
@@ -549,7 +533,7 @@ mod tests {
                     stretch_y: 1.0,
                     rotation_deg: 0.0,
                 },
-            ]),
+            ],
             ..flat_pos("0", 0.0, 30.0)
         };
         let pc = PositionCrop::load(&triangle_and_circle, 58.0, None).unwrap();
@@ -574,7 +558,7 @@ mod tests {
         .unwrap();
 
         let make_mask_pos = |path: &std::path::Path, channel: MaskChannel, invert: bool| Position {
-            crops: Some(vec![Crop::Mask {
+            crops: vec![Crop::Mask {
                 id: "m".into(),
                 name: "m".into(),
                 visible: true,
@@ -589,7 +573,7 @@ mod tests {
                 rotation_deg: 0.0,
                 channel,
                 invert,
-            }]),
+            }],
             ..flat_pos("0", 0.0, 30.0)
         };
 

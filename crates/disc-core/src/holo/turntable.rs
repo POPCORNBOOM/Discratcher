@@ -258,16 +258,17 @@ pub(crate) fn positions(scene: &Scene) -> Vec<Position> {
     if !scene.positions.is_empty() {
         return scene.positions.clone();
     }
-    vec![Position { id: String::new(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, crop_side: Default::default(), crop_offset_deg: 0.0, crops: None, neutral: None, spin: false, look_deg: None, order: vec![] }]
+    vec![Position { id: String::new(), name: String::new(), phi_deg: 0.0, crops: model3d::default_crops(), neutral: None, spin: false, look_deg: None, order: vec![] }]
 }
 
 /// Position `at`'s models and pictures, top first: as its `order` lists them, then any it leaves
-/// out. Those whose position is gone belong to the first.
+/// out. Models whose position is gone belong to the first, as files from 0.2.0 expect; pictures
+/// whose position is gone are left out.
 pub(crate) fn items<'a>(scene: &'a Scene, positions: &[Position], at: usize) -> Vec<Item<'a>> {
     let pos = &positions[at];
     let mine = |id: &str| id == pos.id || (at == 0 && !positions.iter().any(|p| p.id == id));
     let models: Vec<&SceneObject> = scene.objects.iter().filter(|o| mine(&o.position_id)).collect();
-    let pictures: Vec<&SceneImage> = scene.images.iter().filter(|i| mine(&i.position_id)).collect();
+    let pictures: Vec<&SceneImage> = scene.images.iter().filter(|i| i.position_id == pos.id).collect();
     let mut out: Vec<Item> = vec![];
     let id_of = |it: &Item| match it {
         Item::Model(o) => o.id.clone(),
@@ -830,10 +831,7 @@ mod tests {
             id: id.into(),
             name: String::new(),
             phi_deg,
-            crop_deg,
-            crop_side: Default::default(),
-            crop_offset_deg: 0.0,
-            crops: None,
+            crops: vec![model3d::Crop::sector(crop_deg, model3d::CropSide::Both, 0.0)],
             neutral: None, spin: false, look_deg: None,
             order: vec![],
         }
@@ -891,6 +889,32 @@ mod tests {
         assert_eq!(owner_at_star(vec!["pic".into(), model.id.clone()]), Some(0), "picture on top");
         assert_eq!(owner_at_star(vec![model.id.clone(), "pic".into()]), None, "model on top");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_picture_whose_position_is_gone_is_left_out() {
+        let picture = |id: &str, at: &str| SceneImage {
+            id: id.into(),
+            name: String::new(),
+            width: 4,
+            height: 4,
+            position_id: at.into(),
+            colour: false,
+            chroma: None,
+            layer: crate::artwork::Layer::plain(),
+        };
+        let sc = Scene {
+            version: model3d::SCENE_VERSION,
+            objects: vec![],
+            lamp_mm: None,
+            positions: vec![pos("a", 0.0, 30.0)],
+            images: vec![picture("kept", "a"), picture("orphan", "gone")],
+        };
+        let ids: Vec<String> = items(&sc, &positions(&sc), 0).iter().map(|it| match it {
+            Item::Picture(p) => p.id.clone(),
+            Item::Model(o) => o.id.clone(),
+        }).collect();
+        assert_eq!(ids, ["kept"]);
     }
 
     #[test]
@@ -1278,7 +1302,7 @@ mod tests {
             lamp_mm: None,
             positions: vec![
                 Position {
-                    crops: Some(vec![model3d::Crop::Circle {
+                    crops: vec![model3d::Crop::Circle {
                         id: "c0".into(),
                         name: String::new(),
                         visible: true,
@@ -1288,11 +1312,11 @@ mod tests {
                         stretch_x: 1.0,
                         stretch_y: 1.0,
                         rotation_deg: 0.0,
-                    }]),
+                    }],
                     ..pos("0", 0.0, 90.0)
                 },
                 Position {
-                    crops: Some(vec![model3d::Crop::Circle {
+                    crops: vec![model3d::Crop::Circle {
                         id: "c1".into(),
                         name: String::new(),
                         visible: true,
@@ -1302,7 +1326,7 @@ mod tests {
                         stretch_x: 1.0,
                         stretch_y: 1.0,
                         rotation_deg: 0.0,
-                    }]),
+                    }],
                     ..pos("1", 90.0, 90.0)
                 },
             ],
@@ -1465,7 +1489,7 @@ mod tests {
         assert_eq!(s.positions.len(), 1);
         assert_eq!(s.objects[0].mode, model3d::Mode::Real);
         assert_eq!(s.objects[0].parallax, 2.0);
-        assert_eq!(s.positions[0].crop_deg, 30.0);
+        assert_eq!(s.positions[0].crops, model3d::default_crops(), "a position from before crops keeps the default sector");
         assert_eq!(s.objects[0].motion.sample(0.5), model3d::IDENTITY_MAT4);
         assert!(s.objects[0].motion.samples.is_empty());
     }
@@ -1918,10 +1942,7 @@ mod frames_study {
             id: "0".into(),
             name: String::new(),
             phi_deg: 0.0,
-            crop_deg: 90.0,
-            crop_side: Default::default(),
-            crop_offset_deg: 0.0,
-            crops: None,
+            crops: vec![],
             neutral: None, spin: false, look_deg: None,
             order: vec![],
         };

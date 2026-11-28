@@ -372,6 +372,11 @@ fn default_crop_deg() -> f64 {
     30.0
 }
 
+/// A position's crops before it says otherwise: the default sector.
+pub fn default_crops() -> Vec<Crop> {
+    vec![Crop::sector(default_crop_deg(), CropSide::Both, 0.0)]
+}
+
 fn default_one() -> f64 {
     1.0
 }
@@ -613,6 +618,11 @@ impl Crop {
         }
     }
 
+    /// A sector `deg` either side of its axis, turned `offset_deg` clockwise from 12 o'clock.
+    pub fn sector(deg: f64, side: CropSide, offset_deg: f64) -> Self {
+        Crop::Sector { id: "sector".into(), name: String::new(), visible: true, deg, side, offset_deg }
+    }
+
     /// Mutable image path if this crop is a custom mask.
     pub fn mask_path_mut(&mut self) -> Option<&mut String> {
         match self {
@@ -631,19 +641,10 @@ pub struct Position {
     pub name: String,
     /// Which angle of the disc is at the top, clockwise in degrees.
     pub phi_deg: f64,
-    /// Half-angle kept either side of the crop's axis, degrees; 90 or more with both sides kept
-    /// means no crop (legacy field used when `crops` is absent).
-    #[serde(default = "default_crop_deg")]
-    pub crop_deg: f64,
-    /// Which ends of the axis keep their sector (legacy field used when `crops` is absent).
-    #[serde(default)]
-    pub crop_side: CropSide,
-    /// The axis turned from 12 o'clock, clockwise as seen, degrees (legacy field used when `crops` is absent).
-    #[serde(default)]
-    pub crop_offset_deg: f64,
-    /// Multi-shape crops for this position; empty means no crop, non-empty takes union of visible items.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub crops: Option<Vec<Crop>>,
+    /// What part of the disc it keeps: the union of the visible shapes, the whole ring when there
+    /// are none. A position from before crops keeps the default sector, as a new one does.
+    #[serde(default = "default_crops")]
+    pub crops: Vec<Crop>,
     /// How hard the solve holds every view white rather than letting it take the colour that is
     /// sharper; none takes each model's mode's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]

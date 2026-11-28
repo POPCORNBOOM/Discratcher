@@ -291,7 +291,7 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
         return {
           scene: {
             version: 1,
-            positions: [{ id: 'p1', name: '', phiDeg: 0, cropDeg: 30, order: ['o1'] }],
+            positions: [{ id: 'p1', name: '', phiDeg: 0, order: ['o1'] }],
             objects: [{
               id: 'o1',
               path: 'builtin:star',

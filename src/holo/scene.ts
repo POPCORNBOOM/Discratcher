@@ -468,36 +468,20 @@ function asCrop(raw: unknown): HoloCrop | null {
   return null
 }
 
-/** Parse and validate a versioned scene JSON payload, bringing older versions up to date. */
+/** Parse and validate a scene JSON payload: this version, or 0.2.0's (version 1). */
 export function validateScene(raw: unknown): HoloScene {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid scene payload')
   const rec = raw as Record<string, unknown>
   if (rec.version !== 1 && rec.version !== SCENE_VERSION) {
     throw new Error(`Unsupported scene version: ${String(rec.version)}`)
   }
-  // Version 1 kept the mode, parallax and tilt on the position; its models take them over.
-  const legacy = new Map<string, { mode: HoloMode; parallax: number; tiltDeg: number }>()
   if (!Array.isArray(rec.objects)) throw new Error('Scene objects must be an array')
   const positions: HoloPosition[] = []
   for (const item of Array.isArray(rec.positions) ? rec.positions : []) {
     const q = item as Record<string, unknown> | null
     if (q && typeof q.id === 'string' && q.id && typeof q.phiDeg === 'number' && Number.isFinite(q.phiDeg)) {
-      let crops: HoloCrop[]
-      if (Array.isArray(q.crops)) {
-        crops = q.crops.map(asCrop).filter((c): c is HoloCrop => c !== null)
-      } else {
-        const cropDeg =
-          typeof q.cropDeg === 'number' && Number.isFinite(q.cropDeg)
-            ? Math.min(90, Math.max(5, q.cropDeg))
-            : DEFAULT_CROP_DEG
-        const cropSide = CROP_SIDES.includes(q.cropSide as CropSide) ? (q.cropSide as CropSide) : 'both'
-        const cropOffsetDeg =
-          typeof q.cropOffsetDeg === 'number' && Number.isFinite(q.cropOffsetDeg)
-            ? Math.min(MAX_CROP_OFFSET_DEG, Math.max(-MAX_CROP_OFFSET_DEG, q.cropOffsetDeg))
-            : 0
-        crops = cropSide === 'both' && cropDeg >= 90 ? [] : [makeSectorCrop(cropDeg, cropSide, cropOffsetDeg)]
-      }
-      legacy.set(q.id, { mode: asMode(q.mode), parallax: asParallax(q.parallax), tiltDeg: asTilt(q.tiltDeg) })
+      // A position from 0.2.0 has no crops and keeps the default sector, as a new one does.
+      const crops = Array.isArray(q.crops) ? q.crops.map(asCrop).filter((c): c is HoloCrop => c !== null) : [makeSectorCrop()]
       positions.push({
         id: q.id,
         name: typeof q.name === 'string' ? q.name : '',
@@ -529,9 +513,9 @@ export function validateScene(raw: unknown): HoloScene {
       positionId: positions.some((q) => q.id === o.positionId) ? (o.positionId as string) : positions[0].id,
       style: asStyle(o.style),
       motion: asMotion(o.motion),
-      ...(rec.version === 1
-        ? (legacy.get(o.positionId as string) ?? legacy.get(positions[0].id) ?? { mode: 'real', parallax: DEFAULT_PARALLAX, tiltDeg: 0 })
-        : { mode: asMode(o.mode), parallax: asParallax(o.parallax), tiltDeg: asTilt(o.tiltDeg) }),
+      mode: asMode(o.mode),
+      parallax: asParallax(o.parallax),
+      tiltDeg: asTilt(o.tiltDeg),
     })
   }
   const images: HoloImage[] = []
@@ -539,10 +523,11 @@ export function validateScene(raw: unknown): HoloScene {
     const l = readLayer(item)
     const rawImg = item as Record<string, unknown>
     const positionId = rawImg.positionId
-    if (l) {
+    // A picture whose position is gone is gone with it.
+    if (l && positions.some((q) => q.id === positionId)) {
       images.push({
         ...l,
-        positionId: positions.some((q) => q.id === positionId) ? (positionId as string) : positions[0].id,
+        positionId: positionId as string,
         colour: !!rawImg.colour,
         ...(typeof rawImg.chroma === 'number' && Number.isFinite(rawImg.chroma) ? { chroma: Math.min(20, Math.max(0, rawImg.chroma)) } : {}),
       })
