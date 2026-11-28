@@ -127,8 +127,9 @@
               <div class="grow">{{ t('holo.overlap') }}</div>
             </div>
 
+            <UiAccordion v-model="positionPart">
             <!-- Shapes restricting what part of the disc belongs to this position. -->
-            <div class="subhead"><UiIcon :path="mdiContentCut" :size="16" class="muted" />{{ t('holo.crops') }}</div>
+            <UiSection name="crops" :icon="mdiContentCut" :title="t('holo.crops')">
             <div v-if="position.crops.length" class="obj-list" role="listbox" :aria-label="t('holo.crops')">
               <div
                 v-for="crop in position.crops"
@@ -419,9 +420,10 @@
                 </UiAdvanced>
               </template>
             </section>
+            </UiSection>
 
             <!-- What the position shows, top first: where two want the same disc, the higher wins. -->
-            <div class="subhead"><UiIcon :path="mdiLayersOutline" :size="16" class="muted" />{{ t('holo.contents') }}</div>
+            <UiSection name="contents" :icon="mdiLayersOutline" :title="t('holo.contents')">
             <div class="obj-list" role="listbox" :aria-label="t('holo.contents')">
               <div
                 v-for="(entry, i) in items"
@@ -695,6 +697,8 @@
               />
             </UiAdvanced>
           </section>
+            </UiSection>
+            </UiAccordion>
           </UiSection>
 
           <!-- How dark carved pictures may burn: one setting with the carve page. -->
@@ -1265,8 +1269,15 @@ const scene = ref<HoloScene>(emptyScene())
 const selectedId = ref<string | null>(null)
 /** The settings group open in the side panel. */
 const openGroup = ref('positions')
-// Picking a model, picture or crop opens the position's group, where their settings are.
-watch(selectedId, (id) => { if (id) openGroup.value = 'positions' })
+/** Which part of the position group is open: its crops or its contents. */
+const positionPart = ref('contents')
+/** Opens the position group at `part`, where the picked crop, model or picture is set. */
+function openPositionPart(part: 'crops' | 'contents') {
+  openGroup.value = 'positions'
+  positionPart.value = part
+}
+watch(selectedId, (id) => { if (id) openPositionPart('contents') })
+
 const MAX_POSITIONS = 24
 const positionId = ref(scene.value.positions[0].id)
 const position = computed(() => scene.value.positions.find((q) => q.id === positionId.value) ?? scene.value.positions[0])
@@ -1665,7 +1676,7 @@ function setPhi(deg: number) {
 // ---- Multi-shape crops ----
 const selectedCropId = ref<string | null>(null)
 const selectedCrop = computed(() => position.value.crops.find((c) => c.id === selectedCropId.value) ?? null)
-watch(selectedCropId, (id) => { if (id) openGroup.value = 'positions' })
+watch(selectedCropId, (id) => { if (id) openPositionPart('crops') })
 
 const cropSideOptions = computed(() => CROP_SIDES.map((v) => ({ value: v, label: t(`holo.cropSide.${v}`) })))
 const maskChannelOptions = computed(() => [
@@ -1719,7 +1730,7 @@ function addCrop(crop: HoloCrop) {
   position.value.crops.push(crop)
   syncPickedCrops()
   chooseCrop(crop.id)
-  openGroup.value = 'positions'
+  openPositionPart('crops')
 }
 
 function addSectorCrop() {
@@ -1890,6 +1901,7 @@ const positionImages = computed(() => scene.value.images.filter((i) => i.positio
 const imagesFull = computed(() => positionImages.value.length >= MAX_LAYERS)
 const selectedImageId = ref<string | null>(null)
 const selectedImage = computed(() => positionImages.value.find((i) => i.id === selectedImageId.value) ?? null)
+watch(selectedImageId, (id) => { if (id) openPositionPart('contents') })
 /** The disc's zones follow the selection: colour or crop-only for a picture, depth for a model,
  * and only the unusable areas when nothing (or only the lamp) is selected. */
 const zones = computed<ZoneKind>(() => {
@@ -1933,7 +1945,7 @@ async function addImage() {
     scene.value.images.push({ ...l, invert: false, positionId: position.value.id, colour: true })
     putOnTop(l.id)
     choosePicture(l.id)
-    openGroup.value = 'positions'
+    openPositionPart('contents')
     tab.value = 'edit'
   } catch (e) {
     notifyError(String(e))
@@ -3118,7 +3130,6 @@ onBeforeUnmount(() => {
 .start .item .text { min-width: 0; }
 .start .badge { height: 18px; display: inline-flex; align-items: center; padding: 0 var(--oc-space-xs); border-radius: 9px; font-size: var(--oc-text-xs); white-space: nowrap; }
 .start .badge.warn { background: var(--oc-bg-warning-subtle); color: var(--oc-fg-warning); }
-.subhead { display: flex; align-items: center; gap: var(--oc-space-xs); padding-top: var(--oc-space-md); border-top: 1px solid var(--oc-border-muted); font-weight: 600; }
 .image-controls { display: flex; flex-direction: column; gap: var(--oc-space-md); }
 .add-row { display: flex; gap: var(--oc-space-2xs); }
 .add-row > * { flex: 1; }
