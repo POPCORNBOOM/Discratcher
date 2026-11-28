@@ -493,14 +493,12 @@
   "holo.pictureChroma": "色彩还原",
   "holo.pictureChromaLow": "明暗更准",
   "holo.pictureChromaHigh": "颜色更准",
-  "holo.positionFixed": "定角",
-  "holo.positionSpin": "随转",
-  "holo.spinHelp": "转到哪里都对：盘上每一处经过观察方位时颜色正确。只放图片。",
+  "holo.positionSpin": "全角度",
   "holo.spinLook": "观察方位",
   "holo.oclock": "{n} 点",
-  "holo.spinNoModels": "随转位置只放图片",
+  "holo.spinNoModels": "全角度位置只放图片",
   "template.spin": "整盘彩色图片",
-  "template.spinHelp": "一个随转位置铺满整圈，放一张彩色图片。灯不动，转盘时转到观察方位的那块颜色总是对的。",
+  "template.spinHelp": "一个全角度位置铺满整圈，放一张彩色图片。",
   "wizard.spinSideLight": "右侧光下彩色图片几乎没有可用区域，整盘彩色图片建议用顶光。",
   "wizard.useTopLight": "改用顶光"
 }

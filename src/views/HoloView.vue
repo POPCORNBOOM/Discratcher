@@ -87,7 +87,7 @@
             <span class="drop-inner">
               <UiIcon :path="position.spin ? mdiImagePlusOutline : mdiCubeOutline" :size="24" />
               <span class="title">{{ t(position.spin ? 'holo.addImage' : 'holo.addModel') }}</span>
-              <span class="small muted">{{ t(position.spin ? 'holo.spinHelp' : 'holo.dropHint') }}</span>
+              <span v-if="!position.spin" class="small muted">{{ t('holo.dropHint') }}</span>
             </span>
           </button>
           <UiButton
@@ -112,8 +112,7 @@
               <UiButton icon-only variant="ghost" :icon="mdiPlus" :disabled="scene.positions.length >= MAX_POSITIONS" :aria-label="t('holo.addPosition')" :data-tooltip="t('holo.addPosition')" @click="addPosition" />
             </div>
             <div v-if="manyPicked" class="small muted">{{ t('holo.pickedMany', { n: pickedIds.length }) }}</div>
-            <UiSegmented :model-value="position.spin ? 'spin' : 'fixed'" :options="positionKindOptions" :disabled="manyPicked" @update:model-value="setPositionSpin($event === 'spin')" />
-            <div v-if="position.spin" class="small muted">{{ t('holo.spinHelp') }}</div>
+            <UiSwitch :model-value="!!position.spin" :disabled="manyPicked" @update:model-value="setPositionSpin">{{ t('holo.positionSpin') }}</UiSwitch>
             <UiAdvanced v-if="position.spin" :label="t('common.advanced')">
               <UiSlider :model-value="position.lookDeg ?? SPIN_LOOK_DEG" :label="t('holo.spinLook')" :min="0" :max="359" :step="1" :format="clockWords" @pointerdown="beginControlEdit" @update:model-value="setLookDeg" />
             </UiAdvanced>
@@ -1692,10 +1691,6 @@ function removePosition() {
   goToPosition(scene.value.positions[Math.max(0, at - 1)].id)
 }
 
-const positionKindOptions = computed(() => [
-  { value: 'fixed', label: t('holo.positionFixed') },
-  { value: 'spin', label: t('holo.positionSpin') },
-])
 /** Degrees clockwise from 12 o'clock, as a clock hour where it falls on one. */
 const clockWords = (deg: number) => {
   const d = Math.round(deg)

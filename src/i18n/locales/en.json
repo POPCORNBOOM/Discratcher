@@ -493,14 +493,12 @@
   "holo.pictureChroma": "Colour fidelity",
   "holo.pictureChromaLow": "Truer brightness",
   "holo.pictureChromaHigh": "Truer colour",
-  "holo.positionFixed": "Fixed",
-  "holo.positionSpin": "Spinning",
-  "holo.spinHelp": "Right at any turn: every part of the disc shows true colour as it passes the look. Pictures only.",
+  "holo.positionSpin": "All angles",
   "holo.spinLook": "Look at",
   "holo.oclock": "{n} o'clock",
-  "holo.spinNoModels": "A spinning position holds pictures only",
+  "holo.spinNoModels": "An all-angles position holds pictures only",
   "template.spin": "Whole-disc colour picture",
-  "template.spinHelp": "One spinning position over the whole ring with a colour picture. With the lamp still, the part turned to the look always shows true colour.",
+  "template.spinHelp": "One all-angles position over the whole ring with a colour picture.",
   "wizard.spinSideLight": "Colour pictures barely work under side light; light from above suits a whole-disc colour picture.",
   "wizard.useTopLight": "Use light from above"
 }
