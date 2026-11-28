@@ -501,5 +501,6 @@
   "holo.spinNoModels": "A spinning position holds pictures only",
   "template.spin": "Whole-disc colour picture",
   "template.spinHelp": "One spinning position over the whole ring with a colour picture. With the lamp still, the part turned to the look always shows true colour.",
-  "wizard.spinSideLight": "Colour pictures barely work under side light; light from above suits a whole-disc colour picture."
+  "wizard.spinSideLight": "Colour pictures barely work under side light; light from above suits a whole-disc colour picture.",
+  "wizard.useTopLight": "Use light from above"
 }

@@ -1179,6 +1179,7 @@ import {
   emptyScene,
   fileBaseName,
   formatDepthWords,
+  DEFAULT_CROP_DEG,
   freePhi,
   makeCircleCrop,
   makeCropId,
@@ -1714,6 +1715,9 @@ function setPositionSpin(spin: boolean) {
     q.spin = true
     q.phiDeg = 0
     lookTurn.value = 0
+    // A new position's untouched sector would keep only 12 and 6 o'clock; spinning wants the ring.
+    const [only] = q.crops
+    if (q.crops.length === 1 && only.kind === 'sector' && only.deg === DEFAULT_CROP_DEG && only.side === 'both' && only.offsetDeg === 0) q.crops = []
   } else {
     delete q.spin
     delete q.lookDeg

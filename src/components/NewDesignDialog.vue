@@ -53,7 +53,10 @@
       </div>
       <div v-if="template === 'spin' && lamp === 'held'" class="notice warn">
         <UiIcon :path="mdiAlertOutline" />
-        <div class="grow">{{ t('wizard.spinSideLight') }}</div>
+        <div class="grow">
+          {{ t('wizard.spinSideLight') }}
+          <a role="button" tabindex="0" @click="lamp = 'far'" @keydown.enter="lamp = 'far'">{{ t('wizard.useTopLight') }}</a>
+        </div>
       </div>
       <p class="small muted">{{ t('wizard.lampLater') }}</p>
     </template>
