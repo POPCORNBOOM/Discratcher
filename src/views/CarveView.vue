@@ -163,7 +163,7 @@ function loadTwistChart() {
       comp.clear()
       await comp.add(path)
       const l = comp.layers[0]
-      if (l) Object.assign(l, { name: t('carve.twistChart'), x: 0, y: 0, size: 1, rotationDeg: 0, invert: false, contrast: 0, brightness: 0, pixelated: false, repeat: false })
+      if (l) Object.assign(l, { name: t('carve.twistChart'), x: 0, y: 0, size: 1, rotationDeg: 0, invert: false, contrast: 0, brightness: 0, pixelated: false, repeat: false, ring: false })
     } catch (e) {
       notifyError(String(e))
     }

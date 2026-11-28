@@ -115,7 +115,7 @@ function placement(): ArtPlacement {
     floor: s.config.servoSafeDither ? Math.round(255 * (1 - duty)) / 255 : 0,
     layers: shownLayers.value.map((l) => {
       const [width, height] = layerExtent(l)
-      return { x: l.x, y: l.y, width, height, rotationRad: (l.rotationDeg * Math.PI) / 180, contrast: l.contrast, brightness: l.brightness, invert: l.invert, pixelated: !!l.pixelated, pixelsW: l.width, pixelsH: l.height, repeat: l.repeat ? Math.min(1, Math.max(0.1, l.repeatDensity / 100)) : 0, repeatAngleRad: (l.repeatAngle * Math.PI) / 180, repeatStagger: Math.min(1, Math.max(0, l.repeatStagger / 100)) }
+      return { x: l.x, y: l.y, width, height, rotationRad: (l.rotationDeg * Math.PI) / 180, contrast: l.contrast, brightness: l.brightness, invert: l.invert, pixelated: !!l.pixelated, pixelsW: l.width, pixelsH: l.height, repeat: l.repeat ? Math.min(1, Math.max(0.1, l.repeatDensity / 100)) : 0, repeatAngleRad: (l.repeatAngle * Math.PI) / 180, repeatStagger: Math.min(1, Math.max(0, l.repeatStagger / 100)), ringTurns: l.ring ? l.ringTurns : 0 }
     }),
     turn: burning ? state.spin - spinAtBurn : 0,
     revealMm,

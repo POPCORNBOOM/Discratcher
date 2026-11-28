@@ -1,5 +1,6 @@
 // Pictures placed on the disc as layers: what the carve page and the hologram's flat positions
 // both do with them. Lists are bottom first.
+import { MAX_RING_TURNS } from './ringMap'
 import type { ArtworkAnalysis, Layer } from './types'
 
 export const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p
@@ -8,7 +9,7 @@ export const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p
 export const coverSize = (l: Pick<Layer, 'width' | 'height'>) => Math.max(l.width, l.height) / Math.max(1, Math.min(l.width, l.height))
 
 /** What a layer from an older file lacks. */
-const NEW_EFFECTS = { pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0, stretchX: 1, stretchY: 1 }
+const NEW_EFFECTS = { pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0, stretchX: 1, stretchY: 1, ring: false, ringTurns: 1 }
 
 /** A picture's width and height on the disc, as shares of the diameter (`Composition::new`). */
 export function layerExtent(l: Pick<Layer, 'width' | 'height' | 'size' | 'stretchX' | 'stretchY'>): [number, number] {
@@ -22,7 +23,7 @@ export function makeLayer(file: string, a: ArtworkAnalysis, first: boolean): Lay
   const l: Layer = {
     id: crypto.randomUUID(), path: file, name: fileName(file), width: a.width, height: a.height,
     x: 0, y: 0, size: 0, rotationDeg: 0, invert: a.suggestInvert, contrast: 0, brightness: 0,
-    pixelated: false, repeat: false, repeatDensity: 100, repeatAngle: 0, repeatStagger: 0, stretchX: 1, stretchY: 1,
+    ...NEW_EFFECTS,
   }
   l.size = first ? coverSize(l) : 0.5
   return l
@@ -58,5 +59,6 @@ export function readLayer(raw: unknown): Layer | null {
     x: num(l.x, 0), y: num(l.y, 0), size: num(l.size, 1), rotationDeg: num(l.rotationDeg, 0),
     invert: !!l.invert, contrast: num(l.contrast, 0), brightness: num(l.brightness, 0),
     stretchX: num(l.stretchX, 1), stretchY: num(l.stretchY, 1),
+    ring: !!l.ring, ringTurns: Math.min(MAX_RING_TURNS, Math.max(1, Math.round(num(l.ringTurns, 1)))),
   }
 }

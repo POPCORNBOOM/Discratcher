@@ -887,7 +887,8 @@ function selectedShapeCrop(): HoloShapeCrop | null {
 }
 
 function pictureTargetFor(img: HoloImage): PictureFrameTarget | null {
-  if (img.positionId !== props.positionId) return null
+  // A picture wrapped round the ring is placed by its sliders only.
+  if (img.positionId !== props.positionId || img.ring) return null
   const mesh = pictures?.meshOf(img.id)
   if (!mesh || !mesh.visible) return null
   const across = 2 * props.outerRadiusMm
@@ -923,7 +924,7 @@ function cropTargetFor(crop: HoloShapeCrop): PictureFrameTarget {
 
 function frameTargetFromImage(img: HoloImage): FrameDragTarget | null {
   const mesh = pictures?.meshOf(img.id)
-  if (!mesh) return null
+  if (!mesh || img.ring) return null
   return {
     targetKind: 'image',
     id: img.id,

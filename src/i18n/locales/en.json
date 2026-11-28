@@ -500,5 +500,8 @@
   "template.spin": "Whole-disc colour picture",
   "template.spinHelp": "One all-angles position over the whole ring with a colour picture.",
   "wizard.spinSideLight": "Colour pictures barely work under side light; light from above suits a whole-disc colour picture.",
-  "wizard.useTopLight": "Use light from above"
+  "wizard.useTopLight": "Use light from above",
+  "carve.ring": "Ring",
+  "carve.ringTurns": "Turns",
+  "carve.turns": "{n} turns"
 }

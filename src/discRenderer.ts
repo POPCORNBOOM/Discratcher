@@ -2,6 +2,8 @@
 // d(sinθi + sinθm) = mλ solved per pixel against the radial track pitch, so it moves
 // with the light and the tilt the way the real thing does.
 
+import { RING_GLSL } from './ringMap'
+
 const MAX_PIXEL_RATIO = 2
 /** How many pictures the disc can show at once. */
 export const MAX_LAYERS = 8
@@ -131,11 +133,12 @@ vec3 backdrop(vec2 p) {
   return c;
 }
 
+${RING_GLSL}
 // What the carver writes under a point, as grey and coverage; mirrors Composition::sample
 // in artwork.rs. xy is in disc units with y up. uArtGeo holds the recorded band's inner and
 // outer radius and the guard's floor. Per layer, bottom first, uLayerA holds the centre (a
 // share of the diameter, y down) and the turn's cosine and sine; uLayerB the picture's
-// width and height as shares of the diameter, the contrast gain and invert; uLayerC the brightness shift (a share of the grey range), whether it is pixelated and the picture's own pixel size; uLayerD the tile grid: the share of a cell a tile fills (0 when the layer does not repeat), its turn in radians, and the row stagger.
+// width and height as shares of the diameter, the contrast gain and invert; uLayerC the brightness shift (a share of the grey range), whether it is pixelated and the picture's own pixel size; uLayerD the tile grid: the share of a cell a tile fills (0 when the layer does not repeat), its turn in radians, the row stagger, and the turns of the ring it wraps round (0 when it does not).
 vec2 carvedAt(vec2 xy) {
   float r = length(xy) * DISC_MM;
   // uArtTurn: how far the disc has turned since the burn began, and the radius written so far.
@@ -148,7 +151,16 @@ vec2 carvedAt(vec2 xy) {
   for (int i = 0; i < MAX_LAYERS; i++) {
     if (i >= uLayers) break;
     vec4 a = uLayerA[i], b = uLayerB[i], c = uLayerC[i], e = uLayerD[i];
-    vec2 d = p - a.xy;
+    vec2 q = p, gx = dpx, gy = dpy;
+    if (e.w > 0.5) {
+      // The unrolled ring's slope by differences: derivatives are undefined in a branch.
+      vec3 w = ringUnroll(p, e.w);
+      if (w.z < 0.5) continue;
+      q = w.xy;
+      gx = ringUnroll(p + dpx, e.w).xy - q;
+      gy = ringUnroll(p + dpy, e.w).xy - q;
+    }
+    vec2 d = q - a.xy;
     if (e.x > 0.0) {
       vec2 cell = b.xy / e.x;
       float gc = cos(e.y), gs = sin(e.y);
@@ -160,8 +172,8 @@ vec2 carvedAt(vec2 xy) {
       d = vec2(gc * g.x - gs * g.y, gs * g.x + gc * g.y);
     }
     vec2 uv = vec2(a.z * d.x + a.w * d.y, -a.w * d.x + a.z * d.y) / b.xy + 0.5;
-    vec2 duvx = vec2(a.z * dpx.x + a.w * dpx.y, -a.w * dpx.x + a.z * dpx.y) / b.xy;
-    vec2 duvy = vec2(a.z * dpy.x + a.w * dpy.y, -a.w * dpy.x + a.z * dpy.y) / b.xy;
+    vec2 duvx = vec2(a.z * gx.x + a.w * gx.y, -a.w * gx.x + a.z * gx.y) / b.xy;
+    vec2 duvy = vec2(a.z * gy.x + a.w * gy.y, -a.w * gy.x + a.z * gy.y) / b.xy;
     vec2 at = uv;
     // The texture is the picture stretched to a square, so the centre of a source pixel is still its own value.
     if (c.y > 0.5) at = (clamp(floor(uv * c.zw), vec2(0.0), c.zw - 1.0) + 0.5) / c.zw;
@@ -389,6 +401,8 @@ export interface ArtLayer {
   repeatAngleRad: number
   /** Share of a tile every other row slides along. */
   repeatStagger: number
+  /** Turns of the ring it wraps round; 0 when it lies flat. */
+  ringTurns: number
 }
 
 export interface ArtPlacement {
@@ -502,7 +516,7 @@ export function createDiscRenderer(canvas: HTMLCanvasElement) {
       gl!.uniform4fv(u.layerA, shown.flatMap((l) => [l.x, l.y, Math.cos(l.rotationRad), Math.sin(l.rotationRad)]))
       gl!.uniform4fv(u.layerB, shown.flatMap((l) => [l.width || 1, l.height || 1, contrastGain(l.contrast), l.invert ? 1 : 0]))
       gl!.uniform4fv(u.layerC, shown.flatMap((l) => [Math.min(100, Math.max(-100, l.brightness || 0)) / 100, l.pixelated ? 1 : 0, Math.max(1, l.pixelsW), Math.max(1, l.pixelsH)]))
-      gl!.uniform4fv(u.layerD, shown.flatMap((l) => [l.repeat, l.repeatAngleRad, l.repeatStagger, 0]))
+      gl!.uniform4fv(u.layerD, shown.flatMap((l) => [l.repeat, l.repeatAngleRad, l.repeatStagger, l.ringTurns]))
     }
     gl!.uniform1f(u.codeLight, s.codeLight)
     gl!.uniform1i(u.etchA, front)

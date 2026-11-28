@@ -51,6 +51,48 @@ pub struct Layer {
     pub stretch_x: f64,
     #[serde(default = "one")]
     pub stretch_y: f64,
+    /// Wrap the picture round the written ring: its width runs clockwise round the disc and its
+    /// top faces the rim. Everything else places it in the unrolled ring (see `ring_unroll`).
+    #[serde(default)]
+    pub ring: bool,
+    /// How many turns the unrolled ring makes, spiralling inwards: a long picture keeps its
+    /// shape over more turns.
+    #[serde(default = "one")]
+    pub ring_turns: f64,
+}
+
+/// The written ring the `ring` layers wrap round, as shares of the diameter (which spans the
+/// written area, so its rim is 0.5): a DVD's data area, 24.173 to 57.879 mm.
+pub const RING_INNER: f64 = 24.173 / (2.0 * 57.879);
+pub const RING_OUTER: f64 = 0.5;
+/// The most turns a ring can spiral.
+pub const MAX_RING_TURNS: f64 = 12.0;
+
+/// Disc point (`x`, `y`) (shares of the diameter, y down) in the unrolled ring of `turns` turns,
+/// where a ring layer is placed as any layer is on the disc: x runs along the ring and is the
+/// length round its middle circle, centred on 12 o'clock for one turn and on the spiral's
+/// middle for more; y is 0 on the middle of the band and negative towards the rim. With more
+/// than one turn the band splits into a spiral of `turns` narrower bands, the first outermost
+/// starting at 6 o'clock; points off the spiral are none. Mirrored in `src/ringMap.ts`.
+/// `turns` is rounded to a whole number.
+pub fn ring_unroll(x: f64, y: f64, turns: f64) -> Option<(f64, f64)> {
+    let n = if turns.is_finite() { turns.round().clamp(1.0, MAX_RING_TURNS) } else { 1.0 };
+    let round = std::f64::consts::TAU * (RING_INNER + RING_OUTER) / 2.0;
+    let band = (RING_OUTER - RING_INNER) / n;
+    let rho = x.hypot(y);
+    // Clockwise from 6 o'clock, 0 ..= 1 of a turn.
+    let a = (x.atan2(-y) / std::f64::consts::TAU + 0.5).rem_euclid(1.0);
+    let depth = (RING_OUTER - rho) / band;
+    if n == 1.0 {
+        return Some(((a - 0.5) * round, (depth - 0.5) * band));
+    }
+    let u = depth - a;
+    let lap = u.floor();
+    let along = lap + a;
+    if along < 0.0 || along >= n {
+        return None;
+    }
+    Some(((along - n / 2.0) * round, (u - lap - 0.5) * band))
 }
 
 fn full_density() -> f32 {
@@ -80,6 +122,8 @@ impl Layer {
             repeat_stagger: 0.0,
             stretch_x: 1.0,
             stretch_y: 1.0,
+            ring: false,
+            ring_turns: 1.0,
         }
     }
 }
@@ -251,6 +295,25 @@ struct Placed {
     invert: bool,
     pixelated: bool,
     grid: Option<Grid>,
+    /// Turns of the unrolled ring it is placed in, when it wraps round the disc.
+    ring: Option<f64>,
+}
+
+impl Placed {
+    /// Where disc point (`x`, `y`) falls on the picture, 0 ..= 1 either way; none off it.
+    #[inline]
+    fn uv(&self, x: f64, y: f64) -> Option<(f64, f64)> {
+        let (x, y) = match self.ring {
+            Some(turns) => ring_unroll(x, y, turns)?,
+            None => (x, y),
+        };
+        let (dx, dy) = (x - self.cx, y - self.cy);
+        let (dx, dy) = self.grid.as_ref().map_or((dx, dy), |g| g.tile_offset(dx, dy));
+        // Undo the clockwise turn.
+        let u = (self.cos * dx + self.sin * dy) / self.w + 0.5;
+        let v = (-self.sin * dx + self.cos * dy) / self.h + 0.5;
+        ((0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v)).then_some((u, v))
+    }
 }
 
 /// A layer's tiles: where the cells fall around the layer's own centre.
@@ -311,6 +374,7 @@ impl Composition {
                     invert: l.invert,
                     pixelated: l.pixelated,
                     grid,
+                    ring: l.ring.then_some(l.ring_turns),
                     picture,
                 }
             })
@@ -348,14 +412,7 @@ impl Composition {
         let mut rgb = [255.0f32; 3];
         let mut cover = 0.0f32;
         for l in &self.layers {
-            let (dx, dy) = (x - l.cx, y - l.cy);
-            let (dx, dy) = l.grid.as_ref().map_or((dx, dy), |g| g.tile_offset(dx, dy));
-            // Undo the clockwise turn.
-            let u = (l.cos * dx + l.sin * dy) / l.w + 0.5;
-            let v = (-l.sin * dx + l.cos * dy) / l.h + 0.5;
-            if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
-                continue;
-            }
+            let Some((u, v)) = l.uv(x, y) else { continue };
             let (raw, alpha) = if l.pixelated { l.picture.nearest_rgb(u, v) } else { l.picture.bilinear_rgb(u, v) };
             let a = alpha / 255.0;
             for ch in 0..3 {
@@ -374,14 +431,7 @@ impl Composition {
         let mut grey = 255.0f32;
         let mut cover = 0.0f32;
         for l in &self.layers {
-            let (dx, dy) = (x - l.cx, y - l.cy);
-            let (dx, dy) = l.grid.as_ref().map_or((dx, dy), |g| g.tile_offset(dx, dy));
-            // Undo the clockwise turn.
-            let u = (l.cos * dx + l.sin * dy) / l.w + 0.5;
-            let v = (-l.sin * dx + l.cos * dy) / l.h + 0.5;
-            if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
-                continue;
-            }
+            let Some((u, v)) = l.uv(x, y) else { continue };
             let (luma, alpha) = if l.pixelated { l.picture.nearest(u, v) } else { l.picture.bilinear(u, v) };
             let t = ((luma - 128.0) * l.gain + 128.0 + l.shift).clamp(0.0, 255.0);
             let t = if l.invert { 255.0 - t } else { t };
@@ -602,6 +652,43 @@ pub(crate) mod tests {
         l.repeat_stagger = 50.0;
         // Row 1 slides half a tile: x = 0.1 is now a tile's centre.
         assert!((at(&l, 0.1, 0.1) - 127.5).abs() < 1.0);
+    }
+
+    #[test]
+    fn ring_unroll_wraps_the_band_and_spirals_inwards() {
+        let mid = (RING_INNER + RING_OUTER) / 2.0;
+        let round = std::f64::consts::TAU * mid;
+        let close = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() < 1e-9;
+        // One turn: 12 o'clock on the middle circle is the origin, 3 o'clock a quarter on.
+        assert!(close(ring_unroll(0.0, -mid, 1.0).unwrap(), (0.0, 0.0)));
+        assert!(close(ring_unroll(mid, 0.0, 1.0).unwrap(), (round / 4.0, 0.0)));
+        // The rim is up, the hub down.
+        assert!(ring_unroll(0.0, -RING_OUTER, 1.0).unwrap().1 < 0.0);
+        // Two turns: just after 6 o'clock on the outer half is the spiral's start, and the same
+        // angle one band in is a turn further along, at the same height in its band.
+        let band = (RING_OUTER - RING_INNER) / 2.0;
+        let a = 0.01f64;
+        let at = |r: f64| ring_unroll(-r * (a * std::f64::consts::TAU).sin(), r * (a * std::f64::consts::TAU).cos(), 2.0);
+        let r0 = RING_OUTER - band * (0.5 + a);
+        let (x0, y0) = at(r0).unwrap();
+        let (x1, y1) = at(r0 - band).unwrap();
+        assert!((x1 - x0 - round).abs() < 1e-9 && (y1 - y0).abs() < 1e-9, "{x0} {y0} {x1} {y1}");
+        assert!((x0 - (a - 1.0) * round).abs() < 1e-9);
+        // Outside the spiral there is nothing.
+        assert!(ring_unroll(0.01, RING_OUTER - band * 0.01, 2.0).is_none(), "just before 6 o'clock on the rim is before the start");
+    }
+
+    #[test]
+    fn ring_layer_wraps_the_picture_round_the_disc() {
+        // Left half black, right half white, as wide as the middle circle is round.
+        let p = Arc::new(Picture::from_luma(4, 1, vec![0, 0, 255, 255]));
+        let round = std::f64::consts::TAU * (RING_INNER + RING_OUTER) / 2.0;
+        let l = Layer { ring: true, size: round, stretch_y: (RING_OUTER - RING_INNER) * 2.0 / round, ..layer(0.0, 0.0, 1.0, 0.0) };
+        let c = Composition::new([(l, p)]);
+        let mid = (RING_INNER + RING_OUTER) / 2.0;
+        assert_eq!(c.sample(-mid, 0.0), 0.0, "9 o'clock is the left half");
+        assert_eq!(c.sample(mid, 0.0), 255.0, "3 o'clock the right");
+        assert_eq!(c.sample_covered(0.0, -0.05), None, "the hub is off the band");
     }
 
     #[test]

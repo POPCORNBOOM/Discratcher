@@ -76,6 +76,10 @@ export interface Layer {
   /** Stretch along the picture's own width and height; 1 keeps its shape. */
   stretchX: number
   stretchY: number
+  /** Wrap round the written ring, placed in the unrolled ring (`src/ringMap.ts`). */
+  ring: boolean
+  /** Turns the unrolled ring spirals inwards over. */
+  ringTurns: number
 }
 export interface CarveJobConfig {
   /** Bottom first. */

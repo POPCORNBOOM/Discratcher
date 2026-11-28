@@ -13,9 +13,12 @@ import {
   ShaderMaterial,
   TextureLoader,
   type Group,
+  Vector2,
+  Vector4,
   type Texture,
 } from 'three'
 import { layerExtent } from '../layers'
+import { RING_GLSL } from '../ringMap'
 import type { HoloImage, HoloPosition } from './scene'
 
 const VERTEX = `
@@ -32,14 +35,45 @@ const FRAGMENT = `
 uniform sampler2D map;
 uniform sampler2D cropMap;
 uniform float gain, shift, invert, colour, hasCrop, inner, outer, opacity, picked;
+// A picture that wraps round the ring or repeats is drawn over the whole disc and placed here, as
+// \`Composition\` places it: wide is 1, ring its turns (0 flat), place its centre and turn's cosine
+// and sine, ext its width and height, grid a tile cell's width and height (0 when it does not
+// repeat), the grid's turn, and the row stagger.
+uniform float wide, ring;
+uniform vec4 place, grid;
+uniform vec2 ext;
+uniform float stagger;
 varying vec2 vUv;
 varying vec2 vAt;
+${RING_GLSL}
 void main() {
   float r = length(vAt);
   vec2 cuv = vec2(vAt.x, -vAt.y) / max(2.0 * outer, 1e-4) + 0.5;
   bool kept = r >= inner && r <= outer && (hasCrop < 0.5 || texture2D(cropMap, cuv).r >= 0.5);
   if (!kept && picked < 0.5) discard;
-  vec4 t = texture2D(map, vUv);
+  vec2 uv = vUv;
+  if (wide > 0.5) {
+    vec2 q = vec2(vAt.x, -vAt.y) / max(2.0 * outer, 1e-4);
+    if (ring > 0.5) {
+      vec3 w = ringUnroll(q, ring);
+      if (w.z < 0.5) discard;
+      q = w.xy;
+    }
+    vec2 d = q - place.xy;
+    if (grid.x > 0.0) {
+      float gc = cos(grid.z), gs = sin(grid.z);
+      vec2 g = vec2(gc * d.x + gs * d.y, -gs * d.x + gc * d.y);
+      float row = floor(g.y / grid.y + 0.5);
+      g.x -= mod(row, 2.0) * stagger * grid.x;
+      g.x -= floor(g.x / grid.x + 0.5) * grid.x;
+      g.y -= row * grid.y;
+      d = vec2(gc * g.x - gs * g.y, gs * g.x + gc * g.y);
+    }
+    vec2 st = vec2(place.z * d.x + place.w * d.y, -place.w * d.x + place.z * d.y) / ext + 0.5;
+    if (st.x < 0.0 || st.y < 0.0 || st.x > 1.0 || st.y > 1.0) discard;
+    uv = vec2(st.x, 1.0 - st.y);
+  }
+  vec4 t = texture2D(map, uv);
   vec3 base = colour > 0.5 ? t.rgb * 255.0 : vec3(dot(t.rgb, vec3(0.299, 0.587, 0.114)) * 255.0);
   vec3 v = clamp((base - 128.0) * gain + 128.0 + shift, 0.0, 255.0);
   if (invert > 0.5) v = 255.0 - v;
@@ -116,6 +150,7 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
             map: { value: null }, cropMap: { value: st.cropFor(img.positionId).texture }, toGroup: { value: new Matrix4() },
             gain: { value: 1 }, shift: { value: 0 }, invert: { value: 0 }, colour: { value: 0 },
             hasCrop: { value: 0 }, inner: { value: 0 }, outer: { value: 0 }, opacity: { value: 1 }, picked: { value: 0 },
+            wide: { value: 0 }, ring: { value: 0 }, place: { value: new Vector4() }, grid: { value: new Vector4() }, ext: { value: new Vector2(1, 1) }, stagger: { value: 0 },
           },
         })
         const mesh = new Mesh(plane, material)
@@ -140,14 +175,22 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
       if (e.mesh.parent !== group) group.add(e.mesh)
       // Picture width and height on the disc, including any single-axis stretch.
       const [ew, eh] = layerExtent(img)
-      e.mesh.scale.set(ew * across, eh * across, 1)
-      e.mesh.position.set(img.x * across, -img.y * across, 0.06 + order * 0.002)
-      // Clockwise as seen.
-      e.mesh.rotation.set(0, 0, -(img.rotationDeg * Math.PI) / 180)
+      const wide = img.ring || img.repeat
+      const turn = (img.rotationDeg * Math.PI) / 180
+      if (wide) {
+        e.mesh.scale.set(across, across, 1)
+        e.mesh.position.set(0, 0, 0.06 + order * 0.002)
+        e.mesh.rotation.set(0, 0, 0)
+      } else {
+        e.mesh.scale.set(ew * across, eh * across, 1)
+        e.mesh.position.set(img.x * across, -img.y * across, 0.06 + order * 0.002)
+        // Clockwise as seen.
+        e.mesh.rotation.set(0, 0, -turn)
+      }
       e.mesh.renderOrder = 2 + order
       e.mesh.updateMatrix()
       e.mesh.visible = !!e.texture && (!st.only || st.only === img.id)
-      e.outline.visible = img.id === st.selectedId
+      e.outline.visible = img.id === st.selectedId && !wide
       const crop = st.cropFor(img.positionId)
       const u = e.mesh.material.uniforms
       u.map.value = e.texture
@@ -162,6 +205,13 @@ export function createFlatPictures(groupFor: (positionId: string) => Group, redr
       u.outer.value = st.outerRadiusMm
       u.opacity.value = img.positionId === st.positionId ? 1 : 0.4
       u.picked.value = img.id === st.pickedId ? 1 : 0
+      u.wide.value = wide ? 1 : 0
+      u.ring.value = img.ring ? img.ringTurns : 0
+      ;(u.place.value as Vector4).set(img.x, img.y, Math.cos(turn), Math.sin(turn))
+      ;(u.ext.value as Vector2).set(ew || 1, eh || 1)
+      const fill = Math.min(1, Math.max(0.1, img.repeatDensity / 100))
+      ;(u.grid.value as Vector4).set(img.repeat ? (ew || 1) / fill : 0, img.repeat ? (eh || 1) / fill : 0, (img.repeatAngle * Math.PI) / 180, 0)
+      u.stagger.value = Math.min(1, Math.max(0, img.repeatStagger / 100))
     })
   }
 
