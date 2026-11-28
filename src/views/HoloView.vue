@@ -1685,7 +1685,10 @@ function removePosition() {
   pushHistory()
   const id = position.value.id
   const at = scene.value.positions.findIndex((q) => q.id === id)
+  // Its models and pictures go with it; left behind they would fall to the first position.
   scene.value.objects = scene.value.objects.filter((o) => o.positionId !== id)
+  scene.value.images = scene.value.images.filter((i) => i.positionId !== id)
+  if (selectedImageId.value && !scene.value.images.some((i) => i.id === selectedImageId.value)) selectedImageId.value = null
   scene.value.positions = scene.value.positions.filter((q) => q.id !== id)
   // The one before it, or the one that was after the first.
   goToPosition(scene.value.positions[Math.max(0, at - 1)].id)
