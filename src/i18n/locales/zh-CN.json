@@ -489,5 +489,8 @@
   "wizard.lampHelp": "先定灯放在哪儿：同一张盘在不同灯下要刻得不一样。斜线是灯的高光带，那里什么都看不出来。",
   "wizard.lampLater": "灯的方位、半径和高度之后都能在“设计光照”里细调。",
   "wizard.next": "下一步",
-  "wizard.create": "创建"
+  "wizard.create": "创建",
+  "holo.pictureChroma": "色彩还原",
+  "holo.pictureChromaLow": "明暗更准",
+  "holo.pictureChromaHigh": "颜色更准"
 }

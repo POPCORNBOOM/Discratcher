@@ -57,6 +57,8 @@ export function transformTiltDeg(tiltDeg: number, t: number): number {
 }
 
 export const DEFAULT_DISTANCE_MM = 350
+/** How hard a colour picture's hues are matched against its brightness (`turntable::PICTURE_CHROMA`). */
+export const DEFAULT_PICTURE_CHROMA = 9
 export const DEFAULT_TILT_DEG = 20
 /** The disc faces the eye when it is looked at; the editor's camera only starts tilted. */
 export const STAGE_TILT_DEG = 0

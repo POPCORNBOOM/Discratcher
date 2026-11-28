@@ -179,7 +179,8 @@ export interface HoloPosition {
  * A picture placed as on the carve page in its position's own frame: upright with the position at
  * the top (`disc_core::holo::model3d::SceneImage`).
  */
-export type HoloImage = Layer & { positionId: string; colour: boolean }
+/** `chroma`: for a colour picture, how hard its hues are matched; absent takes `DEFAULT_PICTURE_CHROMA`. */
+export type HoloImage = Layer & { positionId: string; colour: boolean; chroma?: number }
 
 export interface HoloScene {
   version: typeof SCENE_VERSION
@@ -533,6 +534,7 @@ export function validateScene(raw: unknown): HoloScene {
         ...l,
         positionId: positions.some((q) => q.id === positionId) ? (positionId as string) : positions[0].id,
         colour: !!rawImg.colour,
+        ...(typeof rawImg.chroma === 'number' && Number.isFinite(rawImg.chroma) ? { chroma: Math.min(20, Math.max(0, rawImg.chroma)) } : {}),
       })
     }
   }

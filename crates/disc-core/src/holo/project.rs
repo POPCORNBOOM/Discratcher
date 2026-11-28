@@ -428,7 +428,7 @@ mod tests {
                     tilt_deg: 0.0,
                 },
             ],
-            images: vec![SceneImage { id: "i".into(), name: "p".into(), width: 4, height: 4, position_id: "b".into(), colour: false, layer: Layer { path: picture.into(), ..Layer::plain() } }],
+            images: vec![SceneImage { id: "i".into(), name: "p".into(), width: 4, height: 4, position_id: "b".into(), colour: false, chroma: None, layer: Layer { path: picture.into(), ..Layer::plain() } }],
             lamp_mm: None,
         }
         .with_builtin()
@@ -504,6 +504,7 @@ mod tests {
             height: 4,
             position_id: "b".into(),
             colour: false,
+            chroma: None,
             layer: Layer { path: outside.join("p2.png").to_string_lossy().into(), ..Layer::plain() },
         });
 

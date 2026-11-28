@@ -47,6 +47,8 @@ pub struct Picture {
     pub rank: usize,
     pub phi_rad: f64,
     pub colour: bool,
+    /// How hard a colour picture's hues are matched, as `SceneImage::chroma`.
+    pub chroma: Option<f64>,
     picture: Arc<Composition>,
 }
 
@@ -75,7 +77,7 @@ pub fn pictures(scene: &Scene, positions: &[Position], max_edge: Option<u32>) ->
         for (rank, it) in items(scene, positions, at).into_iter().enumerate() {
             if let Item::Picture(p) = it {
                 let picture = composition(std::slice::from_ref(&p.layer), max_edge)?;
-                out.push(Picture { id: p.id.clone(), at, rank, phi_rad: pos.phi_deg.to_radians(), colour: p.colour, picture });
+                out.push(Picture { id: p.id.clone(), at, rank, phi_rad: pos.phi_deg.to_radians(), colour: p.colour, chroma: p.chroma, picture });
             }
         }
     }
@@ -351,7 +353,7 @@ mod tests {
     }
 
     fn image(path: &str, position: &str) -> SceneImage {
-        SceneImage { id: "i".into(), name: "p".into(), width: 64, height: 64, position_id: position.into(), colour: false, layer: Layer { path: path.into(), size: 0.8, ..Layer::plain() } }
+        SceneImage { id: "i".into(), name: "p".into(), width: 64, height: 64, position_id: position.into(), colour: false, chroma: None, layer: Layer { path: path.into(), size: 0.8, ..Layer::plain() } }
     }
 
     fn solve(scene: &Scene) -> turntable::Solution {

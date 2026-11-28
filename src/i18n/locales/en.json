@@ -489,5 +489,8 @@
   "wizard.lampHelp": "Pick where the lamp stands first: the same disc is carved differently for each lamp. The hatched band is the lamp's glare, where nothing shows.",
   "wizard.lampLater": "You can fine-tune the lamp's angle, distance and height later under Design lighting.",
   "wizard.next": "Next",
-  "wizard.create": "Create"
+  "wizard.create": "Create",
+  "holo.pictureChroma": "Colour fidelity",
+  "holo.pictureChromaLow": "Truer brightness",
+  "holo.pictureChromaHigh": "Truer colour"
 }

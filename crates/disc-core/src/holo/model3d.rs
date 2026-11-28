@@ -689,6 +689,10 @@ pub struct SceneImage {
     /// Solve as a colour diffraction picture instead of grey carving.
     #[serde(default)]
     pub colour: bool,
+    /// For a colour picture, how hard its hues are matched against its brightness; none takes
+    /// `turntable::PICTURE_CHROMA`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chroma: Option<f64>,
     #[serde(flatten)]
     pub layer: crate::artwork::Layer,
 }

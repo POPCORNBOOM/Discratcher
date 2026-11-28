@@ -112,16 +112,6 @@
             </div>
             <div v-if="manyPicked" class="small muted">{{ t('holo.pickedMany', { n: pickedIds.length }) }}</div>
             <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" :disabled="manyPicked" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
-            <UiSlider
-              :model-value="neutralNow"
-              :label="t('holo.chroma')"
-              :min="0"
-              :max="3"
-              :step="0.05"
-              :ends="[t('holo.chromaLow'), t('holo.chromaHigh')]"
-              @pointerdown="beginControlEdit"
-              @update:model-value="setNeutral"
-            />
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
@@ -474,6 +464,17 @@
                 :options="pictureColourOptions"
                 @update:model-value="setSelectedImageColour($event === 'colour')"
               />
+              <UiSlider
+                v-if="selectedImage.colour"
+                :model-value="selectedImage.chroma ?? DEFAULT_PICTURE_CHROMA"
+                :label="t('holo.pictureChroma')"
+                :min="0"
+                :max="20"
+                :step="0.5"
+                :ends="[t('holo.pictureChromaLow'), t('holo.pictureChromaHigh')]"
+                @pointerdown="beginControlEdit"
+                @update:model-value="setSelectedImageChroma"
+              />
               <div v-if="!selectedImage.colour && pictures[selectedImage.path]?.suggestInvert && !selectedImage.invert" class="notice warn">
                 <UiIcon :path="mdiAlertOutline" />
                 <div class="grow">
@@ -495,6 +496,17 @@
               <a class="action-link" role="button" tabindex="0" @click="resetSelected" @keydown.enter="resetSelected">{{ t('holo.reset') }}</a>
             </div>
             <UiSegmented :model-value="selectedObj.mode" :options="calcModeOptions" @update:model-value="setSelectedMode($event as HoloMode)" />
+            <!-- Kept per position: its models are solved together. -->
+            <UiSlider
+              :model-value="neutralNow"
+              :label="t('holo.chroma')"
+              :min="0"
+              :max="3"
+              :step="0.05"
+              :ends="[t('holo.chromaLow'), t('holo.chromaHigh')]"
+              @pointerdown="beginControlEdit"
+              @update:model-value="setNeutral"
+            />
             <UiSlider
               v-if="selectedObj.mode === 'real'"
               :model-value="selectedObj.parallax"
@@ -1122,6 +1134,7 @@ import {
   DEFAULT_DATA_OUTER_MM,
   DEFAULT_DISTANCE_MM,
   DEFAULT_HEAD_SPAN_MM,
+  DEFAULT_PICTURE_CHROMA,
   DEFAULT_TILT_DEG,
   LAMP_HELD_MM,
   LAMP_PRESETS,
@@ -1990,6 +2003,15 @@ function setSelectedImageColour(colour: boolean) {
   if (!img || img.colour === colour) return
   pushHistory()
   img.colour = colour
+}
+
+/** How hard the selected colour picture's hues are matched; the default is left unsaved. */
+function setSelectedImageChroma(v: number) {
+  const img = selectedImage.value
+  if (!img) return
+  const next = Math.round(v * 2) / 2
+  if (next === DEFAULT_PICTURE_CHROMA) delete img.chroma
+  else img.chroma = next
 }
 
 /** The position's neutral colour, or the default for its models: real parallax's when it has any. */

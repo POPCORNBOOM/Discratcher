@@ -36,7 +36,7 @@ pub const EYE_HALF_MM: f64 = 32.0;
 /// Viewing poses solved across `[-EYE_HALF_MM, +EYE_HALF_MM]` for colour pictures, including `0`.
 const COLOUR_VIEWS: usize = 5;
 /// Colour weight for colour pictures, holding greys neutral even past local white headroom.
-const PICTURE_CHROMA: f64 = 9.0;
+pub const PICTURE_CHROMA: f64 = 9.0;
 /// The lamp, in the viewer's frame: right, up, towards the viewer.
 pub const LAMP_MM: [f64; 3] = [150.0, 0.0, 400.0];
 /// Heads outside the window that are asked for evenness only, mm.
@@ -536,15 +536,16 @@ fn srgb_to_linear(v: f32) -> f64 {
     }
 }
 
-/// Solve one disc cell's codebook weights for a colour picture across the viewing poses.
-fn solve_colour_cell(x: f64, y: f64, rgb: [f32; 3], poses: &[(V3, V3)], opts: &Options, resp: &Responses) -> Vec<f32> {
+/// Solve one disc cell's codebook weights for a colour picture across the viewing poses, its
+/// hues weighted `chroma` against its brightness.
+fn solve_colour_cell(x: f64, y: f64, rgb: [f32; 3], chroma: f64, poses: &[(V3, V3)], opts: &Options, resp: &Responses) -> Vec<f32> {
     let k = resp.options;
     let plain = k - 1;
     let luma = |p: [f32; 3]| 0.2126 * p[0] as f64 + 0.7152 * p[1] as f64 + 0.0722 * p[2] as f64;
     let target_lin = [srgb_to_linear(rgb[0]), srgb_to_linear(rgb[1]), srgb_to_linear(rgb[2])];
     let target_luma = 0.2126 * target_lin[0] + 0.7152 * target_lin[1] + 0.0722 * target_lin[2];
     let t = target_luma * opts.exposure;
-    let colour = PICTURE_CHROMA.sqrt();
+    let colour = chroma.max(0.0).sqrt();
 
     let (mut g, mut h) = (vec![0.0f64; k * k], vec![0.0f64; k]);
     let mut row = vec![0.0f64; k];
@@ -703,9 +704,10 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
                     let poses: Vec<_> = (0..COLOUR_VIEWS)
                         .map(|i| eye_and_lamp(&opts, lamp, EYE_HALF_MM * (2.0 * i as f64 / (COLOUR_VIEWS - 1) as f64 - 1.0), angle))
                         .collect();
+                    let chroma = pic.chroma.unwrap_or(PICTURE_CHROMA);
                     let solved_cells: Vec<(usize, Vec<f32>)> = cells
                         .par_iter()
-                        .map(|&(c, x, y, rgb)| (c, solve_colour_cell(x, y, rgb, &poses, &opts, resp)))
+                        .map(|&(c, x, y, rgb)| (c, solve_colour_cell(x, y, rgb, chroma, &poses, &opts, resp)))
                         .collect();
                     for (c, w) in solved_cells {
                         weights[c * k..(c + 1) * k].copy_from_slice(&w);
@@ -858,7 +860,7 @@ mod tests {
         let across = 2.0 * preset.outer_radius_mm;
         let model = star("0", 0.0, 41.0);
         let picture = SceneImage {
-            id: "pic".into(), name: "p".into(), width: 16, height: 16, position_id: "0".into(), colour: false,
+            id: "pic".into(), name: "p".into(), width: 16, height: 16, position_id: "0".into(), colour: false, chroma: None,
             layer: crate::artwork::Layer { path: path.to_string_lossy().into(), y: -41.0 / across, size: 30.0 / across, ..crate::artwork::Layer::plain() },
         };
         let shared = design::shared_codebook(0.1333);
@@ -894,6 +896,7 @@ mod tests {
             height: 16,
             position_id: "0".into(),
             colour,
+            chroma: None,
             layer: crate::artwork::Layer {
                 path: path.to_string_lossy().into(),
                 x: 41.0 / across,
@@ -968,6 +971,7 @@ mod tests {
                 height: 16,
                 position_id: "0".into(),
                 colour: true,
+                chroma: None,
                 layer: crate::artwork::Layer {
                     path: rgbw_path.to_string_lossy().into(),
                     x: 41.0 / across,
