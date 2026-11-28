@@ -15,6 +15,21 @@ export const appVersion = ref('')
 export const checking = ref(false)
 /** A newer release, once one has been found. */
 export const update = shallowRef<Update | null>(null)
+/** Whether its notes are being shown, to download it or not. */
+export const notesOpen = ref(false)
+
+/**
+ * A release's notes as the release page has them, made fit to read here: the version line on
+ * top and the install hint under the closing rule left off, and bullets split out.
+ */
+export function releaseNotes(body: string | undefined, version: string): { text: string; bullet: boolean }[] {
+  const lines = (body ?? '').split('\n')
+  const rule = lines.findIndex((l) => /^\s*-{3,}\s*$/.test(l))
+  return (rule < 0 ? lines : lines.slice(0, rule))
+    .map((l) => l.trim())
+    .filter((l, i) => l && !(i === 0 && l.replace(/^v/, '') === version))
+    .map((l) => (/^[-*] /.test(l) ? { text: l.slice(2), bullet: true } : { text: l, bullet: false }))
+}
 
 /** The user asking gets an answer either way; the check at startup stays silent. */
 export async function checkForUpdate(manual = false) {
@@ -23,6 +38,8 @@ export async function checkForUpdate(manual = false) {
   try {
     update.value = await check()
     if (manual && !update.value) notifySuccess(t('update.latest'))
+    // Asked for, a newer release shows its notes at once.
+    if (manual && update.value) notesOpen.value = true
   } catch (e) {
     if (manual) notifyError(t('update.failed', { e: String(e) }))
   } finally {

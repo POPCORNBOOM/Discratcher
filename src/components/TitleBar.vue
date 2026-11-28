@@ -29,7 +29,7 @@
         </section>
       </div>
 
-      <UiButton v-if="update" variant="soft" :disabled="p.status === 'running'" @click="updateDialog = true">{{ t('update.available', { version: update.version }) }}</UiButton>
+      <UiButton v-if="update" variant="soft" :disabled="p.status === 'running'" @click="notesOpen = true">{{ t('update.available', { version: update.version }) }}</UiButton>
 
       <div class="preset" data-tauri-drag-region="false">
         <UiSelect class="picker" filterable :label="t('presets.label')" :placeholder="t('presets.none')" :model-value="s.preset?.id ?? ''" :options="presetOptions" :disabled="!!s.job" @update:model-value="s.presetId = $event" @preview="preview" />
@@ -57,11 +57,16 @@
       </template>
     </UiDialog>
 
-    <UiDialog v-if="updateDialog && update" :title="t('update.available', { version: update.version })" data-tauri-drag-region="false" @close="updateDialog = false">
-      <p class="notes selectable">{{ update.body || t('update.noNotes') }}</p>
+    <UiDialog v-if="notesOpen && update" :title="t('update.available', { version: update.version })" data-tauri-drag-region="false" @close="notesOpen = false">
+      <div class="notes selectable">
+        <template v-if="notes.length">
+          <p v-for="(n, i) in notes" :key="i" :class="{ bullet: n.bullet }">{{ n.text }}</p>
+        </template>
+        <p v-else class="muted">{{ t('update.noNotes') }}</p>
+      </div>
       <template #actions>
-        <UiButton variant="ghost" @click="updateDialog = false">{{ t('update.later') }}</UiButton>
-        <UiButton variant="solid" @click="confirmUpdate">{{ t('update.now') }}</UiButton>
+        <UiButton variant="ghost" @click="notesOpen = false">{{ t('common.cancel') }}</UiButton>
+        <UiButton variant="solid" @click="confirmUpdate">{{ t('update.download') }}</UiButton>
       </template>
     </UiDialog>
 
@@ -80,7 +85,7 @@ import { useProcess } from '../stores/process'
 import { useComposition } from '../stores/composition'
 import { useStudio, type CarveCommands } from '../stores/studio'
 import { overallProgress, tasks } from '../tasks'
-import { appVersion, checkForUpdate, checking, installUpdate, update } from '../updater'
+import { appVersion, checkForUpdate, checking, installUpdate, notesOpen, releaseNotes, update } from '../updater'
 import BrandMark from './BrandMark.vue'
 import UiButton from './UiButton.vue'
 import UiDialog from './UiDialog.vue'
@@ -98,7 +103,7 @@ const mac = navigator.userAgent.includes('Mac')
 const s = useStudio()
 const comp = useComposition()
 const p = useProcess()
-const updateDialog = ref(false)
+const notes = computed(() => (update.value ? releaseNotes(update.value.body, update.value.version) : []))
 const confirmDelete = ref(false)
 const taskPanel = ref(false)
 const noticePanel = ref(false)
@@ -154,7 +159,7 @@ watch(latest, (n) => {
 })
 
 function confirmUpdate() {
-  updateDialog.value = false
+  notesOpen.value = false
   installUpdate()
 }
 
@@ -242,7 +247,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .titlebar { position: relative; height: var(--oc-shell-titlebar-height); flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: var(--oc-space-sm); padding: 0 0 0 var(--oc-space-md); background: var(--oc-bg-block); border-bottom: 1px solid var(--oc-border-muted); z-index: 10; }
 .titlebar.mac { padding: 0 var(--oc-space-md) 0 84px; }
-.notes { max-height: 320px; overflow-y: auto; white-space: pre-wrap; }
+.notes { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: var(--oc-space-xs); line-height: 1.6; }
+.notes p { margin: 0; }
+.notes .bullet { position: relative; padding-left: var(--oc-space-md); }
+.notes .bullet::before { content: ''; position: absolute; left: 4px; top: 0.75em; width: 4px; height: 4px; border-radius: 50%; background: var(--oc-fg-muted); }
 .left { display: flex; align-items: center; gap: var(--oc-space-2xs); }
 .middle { display: flex; justify-content: center; }
 .brand { position: relative; display: inline-flex; align-items: center; gap: var(--oc-space-xs); height: var(--oc-size-md); padding: 0 var(--oc-space-sm); border-radius: var(--oc-radius-control); color: var(--oc-fg-muted); font-size: var(--oc-text-sm); }
