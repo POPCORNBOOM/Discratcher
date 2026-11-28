@@ -69,14 +69,8 @@
           <UiButton icon-only variant="ghost" :icon="mdiClose" :aria-label="t('common.cancel')" @click="loadError = ''" />
         </div>
 
-        <div v-if="expViews.length" class="notice info">
-          <UiIcon :path="mdiFlaskOutline" />
-          <div class="grow">{{ t('holo.expActive', { n: expViews.length }) }}</div>
-          <UiButton icon-only variant="ghost" :icon="mdiClose" :aria-label="t('holo.clearExp')" @click="clearExpViews" />
-        </div>
-
         <!-- Empty state: one drop area + "试试示例" -->
-        <section v-if="!scene.objects.length && !scene.images.length && scene.positions.length < 2 && !expViews.length" class="section empty-section">
+        <section v-if="!scene.objects.length && !scene.images.length && scene.positions.length < 2" class="section empty-section">
           <button
             class="drop"
             :class="{ over: dropHover }"
@@ -717,11 +711,6 @@
             </UiAccordion>
           </UiSection>
 
-          <!-- How dark carved pictures may burn: one setting with the carve page. -->
-          <UiSection name="safety" :icon="mdiShieldCheckOutline" :title="t('holo.carveSafety')">
-            <CarveSafety />
-          </UiSection>
-
           <!-- The lamp and where you look from, shared by every position. -->
           <UiSection name="lighting" :icon="mdiLightbulbOutline" :title="t('holo.lighting')">
             <UiSelect :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset" />
@@ -738,45 +727,13 @@
               @update:model-value="setDistance"
             />
           </UiSection>
+
+          <!-- How dark carved pictures may burn: one setting with the carve page. -->
+          <UiSection name="safety" :icon="mdiShieldCheckOutline" :title="t('holo.carveSafety')">
+            <CarveSafety />
+          </UiSection>
         </template>
 
-        <!-- Experimental tools -->
-        <UiSection name="experimental" :icon="mdiFlaskOutline" :title="t('holo.expTools')">
-          <div class="exp-actions">
-            <UiButton :icon="mdiFire" :disabled="!ready" @click="burnSwatch">{{ t('holo.swatchBurn') }}</UiButton>
-            <UiButton :icon="mdiCubeOutline" :disabled="loadingTest3d || !!s.job" @click="loadTest3d">{{ t('holo.test3dLoad') }}</UiButton>
-            <UiButton variant="ghost" :icon="mdiFileImportOutline" :disabled="!!s.job" @click="guardUnsaved(importLegacyScene)">{{ t('holo.importLegacy') }}</UiButton>
-          </div>
-
-          <section class="section">
-            <div class="title row">
-              <span class="grow">{{ t('holo.views') }}</span>
-              <UiButton variant="ghost" :icon="mdiPlus" :disabled="expViews.length >= MAX_VIEWS" @click="addExpView">{{ t('holo.addView') }}</UiButton>
-            </div>
-            <div class="field">
-              <div class="field-head"><span>{{ t('holo.lightMode') }}</span></div>
-              <UiSelect
-                :model-value="expOpts.lightMode"
-                :label="t('holo.lightMode')"
-                :options="lightModeOptions"
-                @update:model-value="expOpts.lightMode = $event as LightMode"
-              />
-            </div>
-            <UiSlider v-model="opts.exposure" :label="t('holo.exposure')" :min="0.1" :max="1.5" :step="0.05" :format="(x) => x.toFixed(2)" />
-            <UiSlider v-if="expOpts.lightMode === 'far'" v-model="expOpts.lightDeg" :label="t('holo.light')" :min="-30" :max="30" :step="0.5" :format="deg" />
-
-            <div v-for="(v, i) in expViews" :key="v.id" class="exp-view">
-              <div class="row">
-                <span class="grow ellipsis small" :data-tooltip="v.imagePath" data-tooltip-overflow>{{ fileName(v.imagePath) }}</span>
-                <UiButton icon-only variant="ghost" :icon="mdiClose" :aria-label="t('holo.remove')" @click="removeExpView(i)" />
-              </div>
-              <UiSlider v-if="expOpts.lightMode === 'lamp'" v-model="v.headXMm" :label="t('holo.headX')" :min="-150" :max="150" :step="5" :format="signedMm" />
-              <UiSlider v-model="v.angleDeg" :label="t('holo.tilt')" :min="5" :max="60" :step="0.5" :format="deg" />
-              <UiSlider v-if="expOpts.lightMode !== 'lamp'" v-model="v.dirDeg" :label="t('holo.azimuth')" :min="-180" :max="180" :step="1" :format="degInt" />
-            </div>
-            <UiButton v-if="expViews.length" variant="ghost" @click="clearExpViews">{{ t('holo.clearExp') }}</UiButton>
-          </section>
-        </UiSection>
         </UiAccordion>
       </div>
 
@@ -1002,10 +959,7 @@
       <!-- Preview: drag round the disc to turn it, move across it to tilt it -->
       <Transition name="stage">
       <div v-show="shownTab === 'preview'" class="stage-body">
-        <HoloPreview v-if="previewVisited" v-show="!expViews.length" v-model:turn="lookTurn" v-model:preview-t="previewT" :mode="previewMode.mode" :active="tab === 'preview' && !expViews.length && hasPreviewSource" :weights="weights" :tables="tables" :inner-radius-mm="radii.inner" :outer-radius-mm="radii.outer" :lamp-mm="opts.lampMm" :distance-mm="opts.distanceMm" :tilt-deg="previewMode.tiltDeg" />
-        <div v-if="expViews.length" class="preview-stage" :class="{ dragging: previewDragging }" @pointerdown="onPreviewPointerDown" @pointermove="onPreviewPointerMove" @pointerup="onPreviewPointerUp" @pointercancel="onPreviewPointerUp">
-          <canvas ref="previewCanvas" class="preview-disc" />
-        </div>
+        <HoloPreview v-if="previewVisited" v-model:turn="lookTurn" v-model:preview-t="previewT" :mode="previewMode.mode" :active="tab === 'preview' && hasPreviewSource" :weights="weights" :tables="tables" :inner-radius-mm="radii.inner" :outer-radius-mm="radii.outer" :lamp-mm="opts.lampMm" :distance-mm="opts.distanceMm" :tilt-deg="previewMode.tiltDeg" />
         <div v-if="!hasPreviewSource" class="hint">{{ t('holo.previewEmpty') }}</div>
         <div v-if="previewBusy" class="float small muted">{{ t('holo.previewSolve') }}</div>
         <div v-if="hasPreviewSource" class="float left small muted gestures">
@@ -1085,9 +1039,7 @@ import {
   mdiCursorMove,
   mdiEyeOffOutline,
   mdiEyeOutline,
-  mdiFileImportOutline,
   mdiFire,
-  mdiFlaskOutline,
   mdiFolderAlertOutline,
   mdiFolderOpenOutline,
   mdiFolderOutline,
@@ -1115,7 +1067,7 @@ import {
   mdiUndo,
 } from '@mdi/js'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, shallowRef, watch } from 'vue'
-import { call, on, defaultDesignLocation, pickDesign, pickFolder, pickImage, pickLegacyScene, pickModel, revealPath, type RecentDesign } from '../api'
+import { call, on, defaultDesignLocation, pickDesign, pickFolder, pickImage, pickModel, revealPath, type RecentDesign } from '../api'
 import type { DesignTemplate } from '../holo/templates'
 import type { ZoneKind } from '../holo/usability'
 import HoloPreview from '../components/HoloPreview.vue'
@@ -1138,10 +1090,8 @@ import {
   DEFAULT_DATA_INNER_MM,
   DEFAULT_DATA_OUTER_MM,
   DEFAULT_DISTANCE_MM,
-  DEFAULT_HEAD_SPAN_MM,
   DEFAULT_PICTURE_CHROMA,
   SPIN_LOOK_DEG,
-  DEFAULT_TILT_DEG,
   LAMP_HELD_MM,
   LAMP_PRESETS,
   LAMP_ID,
@@ -1220,30 +1170,8 @@ import { MAX_LAYERS } from '../discRenderer'
 import NewDesignDialog from '../components/NewDesignDialog.vue'
 import UiDialog from '../components/UiDialog.vue'
 
-type LightMode = 'flash' | 'lamp' | 'far'
-interface ExpView { id: number; imagePath: string; angleDeg: number; dirDeg: number; headXMm: number }
-interface ViewSpecDto {
-  imagePath: string
-  angleDeg: number
-  lightDeg: number
-  dirDeg: number
-  distanceMm: number
-  lightMode: LightMode
-  lightMm?: Vec3 | null
-  eyeMm?: Vec3 | null
-}
-interface ModelViewsDto {
-  views: ViewSpecDto[]
-  thumbnails: string[]
-  triangles: number
-}
 
-const MAX_VIEWS = 40
 const MAX_HISTORY = 60
-const PREVIEW_SIZE = 576
-const FIRST_DEG = 8
-const LAST_DEG = 25
-const DEFAULT_DIR_DEG = -90
 const mac = navigator.userAgent.includes('Mac')
 const modKey = mac ? '⌘' : 'Ctrl+'
 
@@ -1333,7 +1261,6 @@ const opts = reactive<{
   distanceMm: number
   chromaWeight: number
   exposure: number
-  grid: number
 }>({
   lampPreset: 'held',
   lampMm: [...LAMP_HELD_MM],
@@ -1342,7 +1269,6 @@ const opts = reactive<{
   distanceMm: DEFAULT_DISTANCE_MM,
   chromaWeight: 1,
   exposure: 0.6,
-  grid: 256,
 })
 
 // Editor-only preview parameter for transform mode (not saved, not sent to solver).
@@ -1366,22 +1292,8 @@ const previewMode = computed(() => lookOf(position.value))
 const motionDraft = ref<string[]>([])
 const motionError = ref('')
 
-// ---- Experimental legacy tools state (collapsed inside Advanced) ----
-const expViews = ref<ExpView[]>([])
-const loadingTest3d = ref(false)
-const expOpts = reactive<{ lightMode: LightMode; lightDeg: number }>({
-  lightMode: 'lamp',
-  lightDeg: 0,
-})
-let nextExpId = 1
-
 // ---- Preview state ----
-const previewCanvas = ref<HTMLCanvasElement | null>(null)
-const lookHeadX = ref(0)
-const lookTilt = ref(DEFAULT_TILT_DEG)
-const lookDir = ref(DEFAULT_DIR_DEG)
 const previewBusy = ref(false)
-const previewDragging = ref(false)
 /** What the pointer does in the preview, as an icon and a few words each. */
 /** What the mouse does in the edit view, as the preview lists its own. */
 const editGestures = computed(() => [
@@ -1390,24 +1302,18 @@ const editGestures = computed(() => [
   { icon: mdiMouseRightClickOutline, text: t('holo.gesturePan') },
   { icon: mdiMouseScrollWheel, text: t('holo.gestureZoom') },
 ])
-const previewGestures = computed(() =>
-  expViews.value.length
-    ? [{ icon: mdiMouseLeftClickOutline, text: t('holo.gestureView') }]
-    : [
-        { icon: mdiMouseLeftClickOutline, text: t('holo.gestureDrag') },
-        { icon: mdiMouseScrollWheel, text: t('holo.gestureWheel') },
-        { icon: mdiCursorDefaultOutline, text: t('holo.gestureTilt') },
-      ],
-)
-let previewDragStartX = 0
-let previewDragStartVal = 0
+const previewGestures = computed(() => [
+  { icon: mdiMouseLeftClickOutline, text: t('holo.gestureDrag') },
+  { icon: mdiMouseScrollWheel, text: t('holo.gestureWheel') },
+  { icon: mdiCursorDefaultOutline, text: t('holo.gestureTilt') },
+])
 let previewTimer = 0
 
 // ---- Derived values ----
 const isDvd = computed(() => !!s.preset && s.preset.media !== 'cd')
 const ready = computed(() => isDvd.value && !s.job)
 const visibleObjects = computed(() => scene.value.objects.filter((o) => o.visible))
-const hasPreviewSource = computed(() => expViews.value.length > 0 || visibleObjects.value.length > 0 || scene.value.images.length > 0)
+const hasPreviewSource = computed(() => visibleObjects.value.length > 0 || scene.value.images.length > 0)
 const canBurn = computed(() => ready.value && hasPreviewSource.value)
 const radii = computed(() => discRadiiMm(s.preset))
 const selectedObj = computed(() => scene.value.objects.find((o) => o.id === selectedId.value) ?? null)
@@ -1425,11 +1331,6 @@ const lampPresetOptions = computed<UiSelectOption[]>(() => [
 const pictureColourOptions = computed(() => [
   { value: 'colour', label: t('holo.pictureColour') },
   { value: 'mono', label: t('holo.pictureMono') },
-])
-const lightModeOptions = computed<UiSelectOption[]>(() => [
-  { value: 'lamp', label: t('holo.lightModeLamp') },
-  { value: 'flash', label: t('holo.lightModeFlash') },
-  { value: 'far', label: t('holo.lightModeFar') },
 ])
 const calcModeOptions = computed<UiSelectOption[]>(() => [
   { value: 'real', label: t('holo.calcModeReal') },
@@ -1450,19 +1351,12 @@ const motionPresetOptions = computed<UiSelectOption[]>(() =>
 const deg = (x: number) => `${x.toFixed(1)}°`
 const degInt = (x: number) => `${Math.round(x)}°`
 const mm = (x: number) => t('holo.distanceUnit', { n: Math.round(x) })
-const signedMm = (x: number) => {
-  const n = Math.round(x)
-  return t('holo.distanceUnit', { n: n > 0 ? `+${n}` : `${n}` })
-}
 const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path
-const previewReadout = computed(() => {
-  if (!expViews.value.length) {
-    return previewMode.value.mode === 'transform'
-      ? `${degInt(lookTurn.value)}  ${deg(transformTiltDeg(previewMode.value.tiltDeg, previewT.value))}`
-      : degInt(lookTurn.value)
-  }
-  return expOpts.lightMode === 'lamp' ? `${signedMm(lookHeadX.value)}  ${deg(lookTilt.value)}` : `${deg(lookTilt.value)}  ${degInt(lookDir.value)}`
-})
+const previewReadout = computed(() =>
+  previewMode.value.mode === 'transform'
+    ? `${degInt(lookTurn.value)}  ${deg(transformTiltDeg(previewMode.value.tiltDeg, previewT.value))}`
+    : degInt(lookTurn.value),
+)
 
 // ---- History helpers ----
 function pushHistory() {
@@ -1533,8 +1427,7 @@ async function addModelPath(path: string, displayName?: string) {
   try {
     await loadMeshForPath(path)
     pushHistory()
-    expViews.value = []
-    const place = defaultObjectPlacement(s.preset, positionObjects.value.length)
+      const place = defaultObjectPlacement(s.preset, positionObjects.value.length)
     const obj: HoloSceneObject = {
       id: makeObjectId(),
       path,
@@ -2427,7 +2320,6 @@ function closeDesign() {
   selectedCropId.value = null
   designDir.value = null
   missingFiles.value = []
-  expViews.value = []
   undoStack.value = []
   redoStack.value = []
   markSaved()
@@ -2693,19 +2585,6 @@ async function openDesignAt(path: string) {
   }
 }
 
-async function importLegacyScene() {
-  const path = await pickLegacyScene()
-  if (!path) return
-  try {
-    const opened = await call<{ scene: unknown; dir: string | null }>('design_open', { path })
-    await applyLoadedScene(validateScene(opened.scene), null)
-    enterDesign()
-    notifySuccess(t('holo.opened', { name: fileName(path) }))
-  } catch (e) {
-    notifyError(String(e))
-  }
-}
-
 const wizardOpen = ref(false)
 
 /** A new, unsaved design from `tpl`, lit by `lamp`. */
@@ -2724,7 +2603,6 @@ function newDesign(lamp: LampPresetId, tpl: DesignTemplate) {
   selectedCropId.value = null
   designDir.value = null
   missingFiles.value = []
-  expViews.value = []
   undoStack.value = []
   redoStack.value = []
   markSaved()
@@ -2761,7 +2639,6 @@ async function applyLoadedScene(loaded: HoloScene, dir: string | null) {
   selectedImageId.value = null
   selectedCropId.value = null
   designDir.value = dir
-  expViews.value = []
   undoStack.value = []
   redoStack.value = []
   markSaved()
@@ -2811,73 +2688,6 @@ async function setupTauriFileDrop() {
   }
 }
 
-// ---- Experimental legacy tools (kept working inside collapsed section) ----
-function spreadExpViews() {
-  const n = expViews.value.length
-  if (expOpts.lightMode === 'lamp') {
-    expViews.value.forEach((v, i) => {
-      v.headXMm = n === 1 ? 0 : -DEFAULT_HEAD_SPAN_MM + (2 * DEFAULT_HEAD_SPAN_MM * i) / (n - 1)
-    })
-  } else {
-    expViews.value.forEach((v, i) => {
-      v.angleDeg = n === 1 ? (FIRST_DEG + LAST_DEG) / 2 : FIRST_DEG + ((LAST_DEG - FIRST_DEG) * i) / (n - 1)
-    })
-  }
-}
-
-async function addExpView() {
-  const path = await pickImage()
-  if (!path) return
-  const tilt = expOpts.lightMode === 'lamp' ? DEFAULT_TILT_DEG : 0
-  expViews.value.push({ id: nextExpId++, imagePath: path, angleDeg: tilt, dirDeg: DEFAULT_DIR_DEG, headXMm: 0 })
-  spreadExpViews()
-  tab.value = 'preview'
-}
-
-function removeExpView(i: number) {
-  expViews.value.splice(i, 1)
-}
-
-function clearExpViews() {
-  expViews.value = []
-}
-
-async function loadTest3d() {
-  loadingTest3d.value = true
-  try {
-    const specs = await call<ViewSpecDto[]>('holo_test3d_views', { preset: s.preset })
-    if (!specs.length) return
-    expOpts.lightMode = specs[0].lightMode
-    expOpts.lightDeg = specs[0].lightDeg
-    expViews.value = specs.map((v) => {
-      if (v.lightMode === 'lamp' && v.eyeMm) {
-        const tilt = (Math.atan2(-v.eyeMm[1], v.eyeMm[2]) * 180) / Math.PI
-        return { id: nextExpId++, imagePath: v.imagePath, angleDeg: Math.round(tilt * 2) / 2, dirDeg: DEFAULT_DIR_DEG, headXMm: v.eyeMm[0] }
-      }
-      return { id: nextExpId++, imagePath: v.imagePath, angleDeg: v.angleDeg, dirDeg: v.dirDeg, headXMm: 0 }
-    })
-    tab.value = 'preview'
-  } catch (e) {
-    notifyError(String(e))
-  } finally {
-    loadingTest3d.value = false
-  }
-}
-
-function burnSwatch() {
-  const preset = s.preset!
-  p.openBurn({
-    title: t('holo.swatchTitle'),
-    note: t('holo.swatchNote'),
-    fileName: 'holo-swatch.iso',
-    prepareLabel: t('holo.compose'),
-    prepare: async (path: string) => {
-      const r = await call<{ mismatchedBytes: number; layoutPath: string }>('holo_build_swatch_iso', { preset, outputIsoPath: path })
-      if (r.mismatchedBytes) throw t('holo.selfCheckFail', { n: r.mismatchedBytes })
-    },
-  })
-}
-
 // ---- Preview & Burn pipeline ----
 function activePresetForPreview(): DiscGeometryPreset {
   return s.preset && s.preset.media !== 'cd' ? s.preset : FALLBACK_DVD_PRESET
@@ -2890,30 +2700,6 @@ const sceneOptions = () => ({
   grid: GRID,
 })
 
-function expViewSpec(imagePath: string, angleDeg: number, dirDeg: number, headXMm: number): ViewSpecDto {
-  if (expOpts.lightMode === 'lamp') {
-    const a = (angleDeg * Math.PI) / 180
-    return {
-      imagePath,
-      angleDeg,
-      lightDeg: 0,
-      dirDeg: DEFAULT_DIR_DEG,
-      distanceMm: opts.distanceMm,
-      lightMode: 'lamp',
-      lightMm: [...opts.lampMm],
-      eyeMm: [headXMm, -opts.distanceMm * Math.sin(a), opts.distanceMm * Math.cos(a)],
-    }
-  }
-  return {
-    imagePath,
-    angleDeg,
-    lightDeg: expOpts.lightDeg,
-    dirDeg,
-    distanceMm: opts.distanceMm,
-    lightMode: expOpts.lightMode,
-  }
-}
-
 /** Quick first pass while the full one is worked out. */
 const DRAFT_GRID = 192
 /** A cell of 0.23 mm, about the length of disc one sync frame takes: finer shows nothing more. */
@@ -2924,7 +2710,7 @@ let solving = false
 
 /** Solves the scene as it is now, coarse first; a change on the way starts over. */
 async function solveScene() {
-  if (solving || expViews.value.length || (!visibleObjects.value.length && !scene.value.images.length)) return
+  if (solving || (!visibleObjects.value.length && !scene.value.images.length)) return
   solving = true
   try {
     while (solvedVersion !== sceneVersion) {
@@ -2954,47 +2740,6 @@ async function solveScene() {
   }
 }
 
-let frameWanted = false
-let framing = false
-/** Draws as often as frames come back: the latest look each time, none skipped for waiting. */
-function requestFrame() {
-  frameWanted = true
-  if (!framing) void drawFrames()
-}
-async function drawFrames() {
-  framing = true
-  try {
-    while (frameWanted && tab.value === 'preview') {
-      frameWanted = false
-      const buf = await frame()
-      const c = previewCanvas.value
-      if (!buf || !c) continue
-      if (c.width !== PREVIEW_SIZE) c.width = c.height = PREVIEW_SIZE
-      c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(buf), PREVIEW_SIZE, PREVIEW_SIZE), 0, 0)
-    }
-  } catch (e) {
-    notifyError(String(e))
-  } finally {
-    framing = false
-  }
-}
-function frame(): Promise<ArrayBuffer> | null {
-  if (expViews.value.length) {
-    return call<ArrayBuffer>('holo_design_preview', {
-      preset: activePresetForPreview(),
-      input: {
-        views: expViews.value.map((v) => expViewSpec(v.imagePath, v.angleDeg, v.dirDeg, v.headXMm)),
-        chromaWeight: opts.chromaWeight,
-        exposure: opts.exposure,
-        grid: opts.grid,
-      },
-      view: expViewSpec('', lookTilt.value, lookDir.value, lookHeadX.value),
-      size: PREVIEW_SIZE,
-    })
-  }
-  return null
-}
-
 /** Something that is burned changed. Worked out in the background too, so the preview is ready. */
 function sceneChanged() {
   sceneVersion++
@@ -3002,34 +2747,10 @@ function sceneChanged() {
   previewTimer = window.setTimeout(() => void solveScene(), tab.value === 'preview' ? 120 : 500)
 }
 
-function onPreviewPointerDown(e: PointerEvent) {
-  if (e.button !== 0) return
-  previewDragging.value = true
-  previewDragStartX = e.clientX
-  previewDragStartVal = expOpts.lightMode !== 'lamp' ? lookDir.value : lookHeadX.value
-  ;(e.currentTarget as HTMLElement | null)?.setPointerCapture(e.pointerId)
-}
-
-function onPreviewPointerMove(e: PointerEvent) {
-  if (!previewDragging.value) return
-  const dx = e.clientX - previewDragStartX
-  if (expOpts.lightMode !== 'lamp') lookDir.value = Math.max(-180, Math.min(180, Math.round(previewDragStartVal + dx * 0.6)))
-  else lookHeadX.value = Math.max(-DEFAULT_HEAD_SPAN_MM, Math.min(DEFAULT_HEAD_SPAN_MM, Math.round(previewDragStartVal + dx * 0.55)))
-}
-
-function onPreviewPointerUp() {
-  previewDragging.value = false
-}
-
 function burnDesign() {
   const preset = s.preset!
-  const usingExp = expViews.value.length > 0
   const sceneSnapshot = cloneScene(scene.value)
-  const expSnapshot = expViews.value.map((v) => expViewSpec(v.imagePath, v.angleDeg, v.dirDeg, v.headXMm))
   const sceneOpts = sceneOptions()
-  const chromaWeight = opts.chromaWeight
-  const exposure = opts.exposure
-  const grid = opts.grid
 
   const guidePos = positionObjects.value.some((o) => o.visible)
     ? position.value
@@ -3039,22 +2760,16 @@ function burnDesign() {
 
   p.openBurn({
     title: t('holo.burnTitle'),
-    note: usingExp
-      ? t('holo.burnNote', { n: expSnapshot.length })
-      : visibleObjects.value.length
-        ? t('holo.burnNoteModels', { n: visibleObjects.value.length })
-        : t('holo.burnNoteImages', { n: scene.value.images.length }),
+    note: visibleObjects.value.length
+      ? t('holo.burnNoteModels', { n: visibleObjects.value.length })
+      : t('holo.burnNoteImages', { n: scene.value.images.length }),
     fileName: 'holo.iso',
     prepareLabel: t('holo.compose'),
-    viewingGuide: usingExp ? 'real' : guidePos ? lookOf(guidePos).mode : false,
+    viewingGuide: guidePos ? lookOf(guidePos).mode : false,
     viewingTiltDeg: guidePos ? lookOf(guidePos).tiltDeg : DEFAULT_TRANSFORM_TILT_DEG,
     prepare: async (path: string, ctx: StepContext) => {
-      if (usingExp) {
-        await call('holo_build_design_iso', { preset, input: { views: expSnapshot, chromaWeight, exposure, grid }, outputIsoPath: path })
-      } else {
-        ctx.report(5, t('holo.previewSolve'))
-        await call('holo_build_scene_iso', { preset, scene: sceneSnapshot, options: sceneOpts, tone, outputIsoPath: path })
-      }
+      ctx.report(5, t('holo.previewSolve'))
+      await call('holo_build_scene_iso', { preset, scene: sceneSnapshot, options: sceneOpts, tone, outputIsoPath: path })
     },
   })
 }
@@ -3129,10 +2844,6 @@ watch(() => [s.config.servoSafeDither, s.config.maxDarkDutyCycle], () => {
   if (scene.value.images.length) sceneChanged()
 })
 
-watch([expViews, expOpts], () => {
-  if (tab.value === 'preview') requestFrame()
-}, { deep: true })
-
 watch(tab, async (to) => {
   const turn = lookTurn.value - position.value.phiDeg
   const view = viewportRef.value
@@ -3152,11 +2863,6 @@ watch(tab, () => {
   previewVisited.value = true
   clearTimeout(previewTimer)
   void solveScene()
-  requestFrame()
-})
-
-watch([lookHeadX, lookTilt, lookDir], () => {
-  if (tab.value === 'preview') requestFrame()
 })
 
 onMounted(async () => {
@@ -3232,8 +2938,6 @@ img.thumb { object-fit: cover; }
 .mat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--oc-space-2xs); }
 .mat-input { width: 100%; min-width: 0; height: var(--oc-size-sm); padding: 0 var(--oc-space-2xs); border: 0; border-radius: 4px; background: var(--oc-bg-input); color: var(--oc-fg-default); font-size: var(--oc-text-xs); text-align: center; }
 .mat-input[readonly] { background: var(--oc-bg-base); color: var(--oc-fg-muted); text-overflow: ellipsis; }
-.exp-actions { display: flex; flex-direction: column; gap: var(--oc-space-sm); }
-.exp-view { display: flex; flex-direction: column; gap: var(--oc-space-2xs); }
 .stage { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .stage-bar { position: absolute; z-index: 1; top: var(--oc-space-md); left: var(--oc-space-lg); right: var(--oc-space-md); display: flex; align-items: center; gap: var(--oc-space-sm); pointer-events: none; }
 .stage-bar > :not(.grow) { pointer-events: auto; }
@@ -3267,7 +2971,4 @@ img.thumb { object-fit: cover; }
 .unusable.solo { border-radius: var(--oc-radius-pill); }
 /* The crop's outline on the disc. */
 .cropped { box-sizing: border-box; margin: 0 var(--oc-space-sm); border: 1.5px solid rgba(144, 69, 249, 0.9); border-radius: 2px; }
-.preview-stage { position: absolute; inset: 0; display: grid; place-items: center; cursor: grab; touch-action: none; }
-.preview-stage.dragging { cursor: grabbing; }
-.preview-disc { width: min(86%, 86vh - 108px); aspect-ratio: 1; will-change: transform; }
 </style>

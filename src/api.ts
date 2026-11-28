@@ -99,13 +99,6 @@ export async function revealPath(path: string): Promise<void> {
   await revealItemInDir(path)
 }
 
-/** An older scene JSON file to import as an unsaved design. */
-export async function pickLegacyScene(): Promise<string | null> {
-  if (mock) return '/Users/demo/legacy.holo.json'
-  const r = await open({ multiple: false, filters: [{ name: t('dialog.designFilter'), extensions: ['json'] }] })
-  return typeof r === 'string' ? r : null
-}
-
 let mockLocations = 0
 
 /** A parent folder to place a new design folder inside. */

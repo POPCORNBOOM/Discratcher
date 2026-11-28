@@ -440,102 +440,6 @@ async fn build_carved_iso(app: AppHandle, state: State<'_, Studio>, config: Carv
     .await
 }
 
-/// Experimental: the codebook calibration disc image. Its layout is kept in the app's data
-/// folder, since the photos of the burned disc are read against it later.
-#[tauri::command]
-async fn holo_build_swatch_iso(
-    app: AppHandle,
-    state: State<'_, Studio>,
-    preset: DiscGeometryPreset,
-    output_iso_path: String,
-) -> Result<disc_core::holo::swatch::SwatchSummary, String> {
-    let cancel = fresh_cancel(&state);
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("holo");
-    blocking(move || {
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let layout_path = dir.join(format!("swatch-{stamp}.json"));
-        disc_core::holo::swatch::build_iso(&preset, &output_iso_path, &layout_path, &cancel, &|p| {
-            let _ = app.emit("carve://progress", p);
-        })
-    })
-    .await
-}
-
-/// The last design solved, so dragging the preview angle does not solve it again.
-fn solved_design(preset: &DiscGeometryPreset, input: &disc_core::holo::design::DesignInput, uniform_background: bool) -> Result<Arc<disc_core::holo::design::Solved>, String> {
-    use disc_core::holo::design;
-    static LAST: Mutex<Option<(String, Arc<design::Solved>)>> = Mutex::new(None);
-    let key = serde_json::to_string(&(preset, input, uniform_background)).map_err(|e| e.to_string())?;
-    if let Some((k, v)) = LAST.lock().unwrap().as_ref() {
-        if *k == key {
-            return Ok(v.clone());
-        }
-    }
-    let shared = design::shared_codebook(preset.channel_bit_length_nm * 1e-3);
-    let mut solved = design::solve(input, &shared.1, preset)?;
-    if uniform_background {
-        design::uniform_background(&mut solved, input, &shared.0)?;
-    }
-    let solved = Arc::new(solved);
-    *LAST.lock().unwrap() = Some((key, solved.clone()));
-    Ok(solved)
-}
-
-/// Experimental: the disc as seen from `view`, RGBA, `size` square.
-#[tauri::command]
-async fn holo_design_preview(
-    preset: DiscGeometryPreset,
-    input: disc_core::holo::design::DesignInput,
-    view: disc_core::holo::design::ViewSpec,
-    size: usize,
-    uniform_background: Option<bool>,
-) -> Result<tauri::ipc::Response, String> {
-    blocking(move || {
-        let solved = solved_design(&preset, &input, uniform_background.unwrap_or(false))?;
-        let shared = disc_core::holo::design::shared_codebook(preset.channel_bit_length_nm * 1e-3);
-        Ok(tauri::ipc::Response::new(disc_core::holo::design::render(&solved, &shared.1, &preset, &view, size.clamp(64, 1024), 1.0)))
-    })
-    .await
-}
-
-#[tauri::command]
-async fn holo_build_design_iso(
-    app: AppHandle,
-    state: State<'_, Studio>,
-    preset: DiscGeometryPreset,
-    input: disc_core::holo::design::DesignInput,
-    output_iso_path: String,
-    uniform_background: Option<bool>,
-) -> Result<disc_core::holo::design::DesignSummary, String> {
-    let cancel = fresh_cancel(&state);
-    blocking(move || {
-        let solved = solved_design(&preset, &input, uniform_background.unwrap_or(false))?;
-        let shared = disc_core::holo::design::shared_codebook(preset.channel_bit_length_nm * 1e-3);
-        disc_core::holo::design::build_iso(&preset, &shared.0, &solved, None, &output_iso_path, &cancel, &|p| {
-            let _ = app.emit("carve://progress", p);
-        })
-    })
-    .await
-}
-
-/// Experimental: writes the 4-sphere 3D parallax test scene targets into the app's data
-/// folder and returns the matching fixed-lamp horizontal head-motion views.
-#[tauri::command]
-async fn holo_test3d_views(
-    app: AppHandle,
-    preset: Option<DiscGeometryPreset>,
-) -> Result<Vec<disc_core::holo::design::ViewSpec>, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("holo").join("test3d");
-    blocking(move || {
-        let p = preset
-            .filter(|p| p.media == Media::Dvd)
-            .unwrap_or_else(disc_core::preset::reference_preset);
-        disc_core::holo::testscene::write_test3d_views(&dir, &p)
-    })
-    .await
-}
-
 /// Load a 3D mesh (OBJ / glTF / GLB or `builtin:star`) into a normalized, size-limited binary
 /// buffer for the 3D scene editor viewport: `[v_count:u32][i_count:u32][positions][normals][indices]`.
 #[tauri::command]
@@ -792,10 +696,6 @@ pub fn run() {
             build_carved_iso,
             make_twist_chart,
             burn_iso_to_drive,
-            holo_build_swatch_iso,
-            holo_design_preview,
-            holo_build_design_iso,
-            holo_test3d_views,
             holo_load_mesh,
             holo_solve_scene,
             holo_scene_weights,

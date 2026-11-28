@@ -183,55 +183,6 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     }
     case 'add_calibration_record': log.push(a.record); return null
     case 'cancel_job': stop = true; return null
-    case 'holo_design_preview': {
-      // A rainbow that reacts to tilt, azimuth, head position, distance, and light mode so previews stay lively.
-      const n = a.size as number, d = new Uint8ClampedArray(n * n * 4)
-      const eye = a.view?.eyeMm as [number, number, number] | undefined
-      const lamp = a.view?.lightMm as [number, number, number] | undefined
-      const deg = (a.view?.angleDeg as number | undefined) ?? 16.5
-      let dir = (((a.view?.dirDeg as number | undefined) ?? -90) * Math.PI) / 180
-      let gain = a.view?.lightMode === 'far' ? 6 : 9 * (350 / Math.max(150, (a.view?.distanceMm as number | undefined) ?? 350))
-      if (a.view?.lightMode === 'lamp' && eye) {
-        const l = lamp ?? [250, 0, 400]
-        const en = Math.hypot(eye[0], eye[1], eye[2]) || 1
-        const ln = Math.hypot(l[0], l[1], l[2]) || 1
-        const gx = eye[0] / en + l[0] / ln
-        const gy = eye[1] / en + l[1] / ln
-        dir = Math.atan2(gy, gx)
-        gain = 10 * Math.hypot(gx, gy) / Math.max(0.15, Math.sin((deg * Math.PI) / 180))
-      }
-      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-        const i = (y * n + x) * 4, dx = x / n - 0.5, dy = y / n - 0.5, r = Math.hypot(dx, dy)
-        if (r > 0.5 || r < 0.2) continue
-        const h = (Math.abs(Math.sin(dir - Math.atan2(dy, dx))) * deg * gain) % 360
-        d[i] = 128 + 127 * Math.cos((h * Math.PI) / 180); d[i + 1] = 128 + 127 * Math.cos(((h - 120) * Math.PI) / 180); d[i + 2] = 128 + 127 * Math.cos(((h + 120) * Math.PI) / 180); d[i + 3] = 255
-      }
-      await wait(80)
-      return d.buffer
-    }
-    case 'holo_build_design_iso':
-    case 'holo_build_swatch_iso':
-      for (let p = 0; p <= 100; p += 10) { emit('carve://progress', { percent: p, mbPerS: 512, maxSectorDarkRatio: 0 }); await wait(40) }
-      return { outputIsoPath: a.outputIsoPath, totalSectors: 2295104, mismatchedBytes: 0, usage: [], rings: 16, layoutPath: '/data/holo/swatch.json' }
-    case 'holo_test3d_views': {
-      const tiltRad = (20 * Math.PI) / 180
-      const ey = -350 * Math.sin(tiltRad)
-      const ez = 350 * Math.cos(tiltRad)
-      return Array.from({ length: 8 }, (_, i) => {
-        const hx = -80 + (160 * i) / 7
-        const d = Math.hypot(hx, ey, ez)
-        return {
-          imagePath: `/data/holo/test3d/view-${i}.png`,
-          angleDeg: (Math.acos(ez / d) * 180) / Math.PI,
-          lightDeg: 0,
-          dirDeg: (Math.atan2(ey, hx) * 180) / Math.PI,
-          distanceMm: d,
-          lightMode: 'lamp',
-          lightMm: [250, 0, 400],
-          eyeMm: [hx, ey, ez],
-        }
-      })
-    }
     case 'holo_load_mesh': {
       const p = String(a.path ?? '')
       if (p.includes('missing') || p.includes('nonexistent')) {
