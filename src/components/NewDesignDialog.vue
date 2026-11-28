@@ -76,11 +76,11 @@ import UiIcon from './UiIcon.vue'
 
 const emit = defineEmits<{ close: []; create: [lamp: LampPresetId, template: DesignTemplate] }>()
 
-/** Side light suits pictures, light from above suits models; the corner light is between. */
+/** Side light suits models, light from above suits colour pictures; the corner light is between (see `usability.ts`). */
 const LAMPS: { id: LampPresetId; name: string; fits: string; azimuthDeg: number }[] = (
   [
-    ['held', 'holo.lampHeld', 'wizard.fitsPictures'],
-    ['far', 'holo.lampFar', 'wizard.fitsModels'],
+    ['held', 'holo.lampHeld', 'wizard.fitsModels'],
+    ['far', 'holo.lampFar', 'wizard.fitsPictures'],
     ['farRight', 'holo.lampFarRight', 'wizard.fitsBoth'],
   ] as const
 ).map(([id, name, fits]) => ({ id, name, fits, azimuthDeg: lampMmToCylindrical(LAMP_PRESETS[id]).azimuthDeg }))
