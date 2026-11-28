@@ -57,6 +57,8 @@ export function transformTiltDeg(tiltDeg: number, t: number): number {
 }
 
 export const DEFAULT_DISTANCE_MM = 350
+/** Where a spinning position is looked at when it does not say, clockwise from 12 o'clock (`turntable::SPIN_LOOK_DEG`). */
+export const SPIN_LOOK_DEG = 90
 /** How hard a colour picture's hues are matched against its brightness (`turntable::PICTURE_CHROMA`). */
 export const DEFAULT_PICTURE_CHROMA = 9
 export const DEFAULT_TILT_DEG = 20

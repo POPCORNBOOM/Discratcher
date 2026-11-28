@@ -349,7 +349,7 @@ mod tests {
     }
 
     fn flat_pos(id: &str, phi_deg: f64, crop_deg: f64) -> Position {
-        Position { id: id.into(), name: String::new(), phi_deg, crop_deg, crop_side: Default::default(), crop_offset_deg: 0.0, crops: None, neutral: None, order: vec![] }
+        Position { id: id.into(), name: String::new(), phi_deg, crop_deg, crop_side: Default::default(), crop_offset_deg: 0.0, crops: None, neutral: None, spin: false, look_deg: None, order: vec![] }
     }
 
     fn image(path: &str, position: &str) -> SceneImage {

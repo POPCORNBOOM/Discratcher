@@ -82,15 +82,16 @@
             :class="{ over: dropHover }"
             type="button"
             :disabled="loadingMesh || !!s.job"
-            @click="addModelFromPicker"
+            @click="position.spin ? addImage() : addModelFromPicker()"
           >
             <span class="drop-inner">
-              <UiIcon :path="mdiCubeOutline" :size="24" />
-              <span class="title">{{ t('holo.addModel') }}</span>
-              <span class="small muted">{{ t('holo.dropHint') }}</span>
+              <UiIcon :path="position.spin ? mdiImagePlusOutline : mdiCubeOutline" :size="24" />
+              <span class="title">{{ t(position.spin ? 'holo.addImage' : 'holo.addModel') }}</span>
+              <span class="small muted">{{ t(position.spin ? 'holo.spinHelp' : 'holo.dropHint') }}</span>
             </span>
           </button>
           <UiButton
+            v-if="!position.spin"
             variant="soft"
             :icon="mdiStarFourPointsOutline"
             :disabled="loadingMesh || !!s.job"
@@ -98,7 +99,7 @@
           >
             {{ t('holo.trySample') }}
           </UiButton>
-          <UiButton variant="ghost" :icon="mdiImagePlusOutline" :disabled="!!s.job" @click="addImage">{{ t('holo.orImage') }}</UiButton>
+          <UiButton v-if="!position.spin" variant="ghost" :icon="mdiImagePlusOutline" :disabled="!!s.job" @click="addImage">{{ t('holo.orImage') }}</UiButton>
         </section>
 
         <UiAccordion v-model="openGroup">
@@ -111,7 +112,12 @@
               <UiButton icon-only variant="ghost" :icon="mdiPlus" :disabled="scene.positions.length >= MAX_POSITIONS" :aria-label="t('holo.addPosition')" :data-tooltip="t('holo.addPosition')" @click="addPosition" />
             </div>
             <div v-if="manyPicked" class="small muted">{{ t('holo.pickedMany', { n: pickedIds.length }) }}</div>
-            <UiSlider v-if="scene.positions.length > 1" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" :disabled="manyPicked" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
+            <UiSegmented :model-value="position.spin ? 'spin' : 'fixed'" :options="positionKindOptions" :disabled="manyPicked" @update:model-value="setPositionSpin($event === 'spin')" />
+            <div v-if="position.spin" class="small muted">{{ t('holo.spinHelp') }}</div>
+            <UiAdvanced v-if="position.spin" :label="t('common.advanced')">
+              <UiSlider :model-value="position.lookDeg ?? SPIN_LOOK_DEG" :label="t('holo.spinLook')" :min="0" :max="359" :step="1" :format="clockWords" @pointerdown="beginControlEdit" @update:model-value="setLookDeg" />
+            </UiAdvanced>
+            <UiSlider v-if="scene.positions.length > 1 && !position.spin" :model-value="position.phiDeg" :label="t('holo.phi')" :min="0" :max="359" :step="1" :format="degInt" :disabled="manyPicked" @pointerdown="beginControlEdit" @update:model-value="setPhi" />
             <div v-if="overlapping.length" class="notice warn">
               <UiIcon :path="mdiAlertOutline" />
               <div class="grow">{{ t('holo.overlap') }}</div>
@@ -454,7 +460,7 @@
               </div>
             </div>
             <div class="add-row">
-              <UiButton variant="ghost" :icon="mdiPlus" :disabled="loadingMesh || !!s.job" @click="addModelFromPicker">{{ t('holo.addModel') }}</UiButton>
+              <UiButton variant="ghost" :icon="mdiPlus" :disabled="loadingMesh || !!s.job || position.spin" :data-tooltip="position.spin ? t('holo.spinNoModels') : undefined" @click="addModelFromPicker">{{ t('holo.addModel') }}</UiButton>
               <UiButton variant="ghost" :icon="mdiImagePlusOutline" :disabled="imagesFull || !!s.job" :data-tooltip="imagesFull ? t('carve.full') : undefined" @click="addImage">{{ t('holo.addImage') }}</UiButton>
             </div>
 
@@ -1135,6 +1141,7 @@ import {
   DEFAULT_DISTANCE_MM,
   DEFAULT_HEAD_SPAN_MM,
   DEFAULT_PICTURE_CHROMA,
+  SPIN_LOOK_DEG,
   DEFAULT_TILT_DEG,
   LAMP_HELD_MM,
   LAMP_PRESETS,
@@ -1517,6 +1524,10 @@ async function ensureMeshesLoaded(objects: HoloSceneObject[]): Promise<string[]>
 }
 
 async function addModelPath(path: string, displayName?: string) {
+  if (position.value.spin) {
+    notifyError(t('holo.spinNoModels'))
+    return
+  }
   loadingMesh.value = true
   loadError.value = ''
   try {
@@ -1678,6 +1689,41 @@ function removePosition() {
   scene.value.positions = scene.value.positions.filter((q) => q.id !== id)
   // The one before it, or the one that was after the first.
   goToPosition(scene.value.positions[Math.max(0, at - 1)].id)
+}
+
+const positionKindOptions = computed(() => [
+  { value: 'fixed', label: t('holo.positionFixed') },
+  { value: 'spin', label: t('holo.positionSpin') },
+])
+/** Degrees clockwise from 12 o'clock, as a clock hour where it falls on one. */
+const clockWords = (deg: number) => {
+  const d = Math.round(deg)
+  return d % 30 === 0 ? t('holo.oclock', { n: d === 0 ? 12 : d / 30 }) : `${d}°`
+}
+
+/** A spinning position is solved whatever the turn, so it holds pictures only and stays unturned. */
+function setPositionSpin(spin: boolean) {
+  const q = position.value
+  if (!!q.spin === spin) return
+  if (spin && positionObjects.value.length) {
+    notifyError(t('holo.spinNoModels'))
+    return
+  }
+  pushHistory()
+  if (spin) {
+    q.spin = true
+    q.phiDeg = 0
+    lookTurn.value = 0
+  } else {
+    delete q.spin
+    delete q.lookDeg
+  }
+}
+
+function setLookDeg(deg: number) {
+  const v = wrapDeg(Math.round(deg))
+  if (v === SPIN_LOOK_DEG) delete position.value.lookDeg
+  else position.value.lookDeg = v
 }
 
 function setPhi(deg: number) {

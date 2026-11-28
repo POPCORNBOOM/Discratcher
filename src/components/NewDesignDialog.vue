@@ -51,6 +51,10 @@
           <span class="small muted">{{ t(tpl.description) }}</span>
         </button>
       </div>
+      <div v-if="template === 'spin' && lamp === 'held'" class="notice warn">
+        <UiIcon :path="mdiAlertOutline" />
+        <div class="grow">{{ t('wizard.spinSideLight') }}</div>
+      </div>
       <p class="small muted">{{ t('wizard.lampLater') }}</p>
     </template>
 
@@ -64,7 +68,7 @@
 </template>
 
 <script setup lang="ts">
-import { mdiChevronRight, mdiLightbulbOn } from '@mdi/js'
+import { mdiAlertOutline, mdiChevronRight, mdiLightbulbOn } from '@mdi/js'
 import { onMounted, ref } from 'vue'
 import { LAMP_PRESETS, lampMmToCylindrical, type LampPresetId } from '../holo/constants'
 import { lampPictures } from '../holo/lampPictures'
@@ -124,7 +128,7 @@ function create() {
 .steps .on { color: var(--oc-fg-default); font-weight: 600; }
 .cards { display: grid; gap: var(--oc-space-sm); }
 .cards.three { grid-template-columns: repeat(3, 1fr); }
-.cards.two { grid-template-columns: 1fr 1fr; }
+.cards.two { grid-template-columns: repeat(3, 1fr); }
 .card { display: flex; flex-direction: column; align-items: center; gap: var(--oc-space-2xs); padding: var(--oc-space-sm); border: 1px solid var(--oc-border-muted); border-radius: var(--oc-radius-control); background: var(--oc-bg-base); color: var(--oc-fg-default); text-align: center; }
 .card.left { align-items: flex-start; text-align: left; padding: var(--oc-space-md); }
 .card:hover { border-color: var(--oc-border-strong); }

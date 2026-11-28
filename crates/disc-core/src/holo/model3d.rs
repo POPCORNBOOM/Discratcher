@@ -648,6 +648,14 @@ pub struct Position {
     /// sharper; none takes each model's mode's default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub neutral: Option<f64>,
+    /// Solved for a disc that keeps turning: every cell as it passes `look_deg`, so the turn
+    /// does not matter. Holds pictures only; its models are left out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub spin: bool,
+    /// Where on the disc a spinning position is looked at, clockwise from 12 o'clock as seen,
+    /// degrees; none takes `turntable::SPIN_LOOK_DEG`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look_deg: Option<f64>,
     /// Its models' and pictures' ids, top first: where two want the same disc, the higher wins.
     #[serde(default)]
     pub order: Vec<String>,

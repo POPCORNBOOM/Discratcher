@@ -171,6 +171,13 @@ export interface HoloPosition {
   crops: HoloCrop[]
   /** How hard every view is held white rather than sharper and in colour; absent takes each model's mode's default. */
   neutral?: number
+  /**
+   * Solved for a disc that keeps turning: every cell as it passes `lookDeg`, so the turn does not
+   * matter and `phiDeg` stays 0. Holds pictures only.
+   */
+  spin?: boolean
+  /** Where a spinning position is looked at, clockwise from 12 o'clock; absent takes `SPIN_LOOK_DEG`. */
+  lookDeg?: number
   /** Its models' and pictures' ids, top first: where two want the same disc, the higher wins. */
   order: string[]
 }
@@ -299,7 +306,8 @@ export const wrapDeg = (d: number) => ((Math.round(d * 10) / 10) % 360 + 360) % 
  * An angle for a new position. Every position has two best regions, opposite each other, so
  * the widest gap is looked for over half a turn, and the side with more room is taken.
  */
-export function freePhi(positions: HoloPosition[]): number {
+export function freePhi(all: HoloPosition[]): number {
+  const positions = all.filter((p) => !p.spin)
   const at = positions.map((p) => wrapDeg(p.phiDeg) % 180).sort((a, b) => a - b)
   if (!at.length) return 0
   let best = { gap: -1, mid: 0 }
@@ -496,6 +504,8 @@ export function validateScene(raw: unknown): HoloScene {
         phiDeg: wrapDeg(q.phiDeg),
         crops,
         ...(typeof q.neutral === 'number' && Number.isFinite(q.neutral) ? { neutral: Math.min(3, Math.max(0, q.neutral)) } : {}),
+        ...(q.spin === true ? { spin: true } : {}),
+        ...(typeof q.lookDeg === 'number' && Number.isFinite(q.lookDeg) ? { lookDeg: wrapDeg(q.lookDeg) } : {}),
         order: Array.isArray(q.order) ? q.order.filter((x): x is string => typeof x === 'string') : [],
       })
     }

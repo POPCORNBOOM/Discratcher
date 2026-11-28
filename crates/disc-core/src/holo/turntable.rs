@@ -27,6 +27,8 @@ pub const TRANSFORM_VIEWS: usize = 40;
 pub const MAX_TILT_DEG: f64 = 30.0;
 /// Tilt either way used when the position does not choose one, degrees.
 pub const DEFAULT_TRANSFORM_TILT_DEG: f64 = 3.5;
+/// Where a spinning position is looked at when it does not say: 3 o'clock, clockwise from 12.
+pub const SPIN_LOOK_DEG: f64 = 90.0;
 /// Fixed target exposure for transform animation (Winner A).
 pub const TRANSFORM_EXPOSURE: f64 = 0.6;
 /// Half the width of the head's sweep, mm.
@@ -256,7 +258,7 @@ pub(crate) fn positions(scene: &Scene) -> Vec<Position> {
     if !scene.positions.is_empty() {
         return scene.positions.clone();
     }
-    vec![Position { id: String::new(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, crop_side: Default::default(), crop_offset_deg: 0.0, crops: None, neutral: None, order: vec![] }]
+    vec![Position { id: String::new(), name: String::new(), phi_deg: 0.0, crop_deg: 30.0, crop_side: Default::default(), crop_offset_deg: 0.0, crops: None, neutral: None, spin: false, look_deg: None, order: vec![] }]
 }
 
 /// Position `at`'s models and pictures, top first: as its `order` lists them, then any it leaves
@@ -308,7 +310,7 @@ fn groups<'a>(scene: &'a Scene, positions: &[Position]) -> Vec<Group<'a>> {
     for at in 0..positions.len() {
         for (rank, it) in items(scene, positions, at).into_iter().enumerate() {
             let Item::Model(o) = it else { continue };
-            if !o.visible {
+            if !o.visible || positions[at].spin {
                 continue;
             }
             let shape = shape_of(o);
@@ -536,6 +538,17 @@ fn srgb_to_linear(v: f32) -> f64 {
     }
 }
 
+/// The eye across both eyes' span, and the lamp, for a colour picture on a disc turned by `angle`.
+fn colour_poses(opts: &Options, lamp: V3, angle: f64) -> Vec<(V3, V3)> {
+    (0..COLOUR_VIEWS).map(|i| eye_and_lamp(opts, lamp, EYE_HALF_MM * (2.0 * i as f64 / (COLOUR_VIEWS - 1) as f64 - 1.0), angle)).collect()
+}
+
+/// How far the disc is turned when its solve-grid point (`x`, `y`) (mm, y down) is seen at
+/// `look` radians, clockwise from 12 o'clock: `turn` moves a point clockwise as seen by its angle.
+pub fn spin_angle(x: f64, y: f64, look: f64) -> f64 {
+    x.atan2(-y) - look
+}
+
 /// Solve one disc cell's codebook weights for a colour picture across the viewing poses, its
 /// hues weighted `chroma` against its brightness.
 fn solve_colour_cell(x: f64, y: f64, rgb: [f32; 3], chroma: f64, poses: &[(V3, V3)], opts: &Options, resp: &Responses) -> Vec<f32> {
@@ -700,14 +713,16 @@ pub fn solve(scene: &Scene, opts: &Options, cb: &Codebook, resp: &Responses, pre
                             }
                         }
                     }
-                    let angle = positions[pic.at].phi_deg.to_radians();
-                    let poses: Vec<_> = (0..COLOUR_VIEWS)
-                        .map(|i| eye_and_lamp(&opts, lamp, EYE_HALF_MM * (2.0 * i as f64 / (COLOUR_VIEWS - 1) as f64 - 1.0), angle))
-                        .collect();
+                    let pos = &positions[pic.at];
+                    let fixed = colour_poses(&opts, lamp, pos.phi_deg.to_radians());
+                    let look = pos.look_deg.unwrap_or(SPIN_LOOK_DEG).to_radians();
                     let chroma = pic.chroma.unwrap_or(PICTURE_CHROMA);
                     let solved_cells: Vec<(usize, Vec<f32>)> = cells
                         .par_iter()
-                        .map(|&(c, x, y, rgb)| (c, solve_colour_cell(x, y, rgb, chroma, &poses, &opts, resp)))
+                        .map(|&(c, x, y, rgb)| {
+                            let poses = if pos.spin { colour_poses(&opts, lamp, spin_angle(x, y, look)) } else { fixed.clone() };
+                            (c, solve_colour_cell(x, y, rgb, chroma, &poses, &opts, resp))
+                        })
                         .collect();
                     for (c, w) in solved_cells {
                         weights[c * k..(c + 1) * k].copy_from_slice(&w);
@@ -819,7 +834,7 @@ mod tests {
             crop_side: Default::default(),
             crop_offset_deg: 0.0,
             crops: None,
-            neutral: None,
+            neutral: None, spin: false, look_deg: None,
             order: vec![],
         }
     }
@@ -876,6 +891,66 @@ mod tests {
         assert_eq!(owner_at_star(vec!["pic".into(), model.id.clone()]), Some(0), "picture on top");
         assert_eq!(owner_at_star(vec![model.id.clone(), "pic".into()]), None, "model on top");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn spin_angle_brings_the_point_to_the_look() {
+        for (x, y) in [(0.0, -41.0), (30.0, 12.0), (-20.0, 35.0)] {
+            for look_deg in [0.0f64, 90.0, 250.0] {
+                let at = turn([x, y, 0.0], -spin_angle(x, y, look_deg.to_radians()));
+                let seen = at[0].atan2(-at[1]).to_degrees().rem_euclid(360.0);
+                assert!((seen - look_deg).abs() < 1e-9 || (seen - look_deg).abs() > 360.0 - 1e-9, "({x}, {y}) at {look_deg}: seen at {seen}");
+            }
+        }
+    }
+
+    #[test]
+    fn spinning_colour_picture_is_right_wherever_it_passes_the_look() {
+        let dir = std::env::temp_dir().join(format!("holo-spin-pic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rb.png");
+        image::RgbImage::from_fn(16, 16, |x, _| if x < 8 { image::Rgb([255, 0, 0]) } else { image::Rgb([0, 0, 255]) }).save(&path).unwrap();
+        let preset = reference_preset();
+        let across = 2.0 * preset.outer_radius_mm;
+        let shared = design::shared_codebook(0.1333);
+        let (cb, resp) = (&shared.0, &shared.1);
+        let opts = Options { grid: 128, ..Default::default() };
+        let (k, plain) = (resp.options, resp.options - 1);
+        let top_lamp = [0.0, 150.0, 400.0];
+        // The picture sits at 12 o'clock; the position is looked at at 3 o'clock.
+        let picture = SceneImage {
+            id: "pic".into(),
+            name: "rb".into(),
+            width: 16,
+            height: 16,
+            position_id: "0".into(),
+            colour: true,
+            chroma: None,
+            layer: crate::artwork::Layer { path: path.to_string_lossy().into(), x: 0.0, y: -41.0 / across, size: 28.0 / across, ..crate::artwork::Layer::plain() },
+        };
+        let spinning = Position { spin: true, ..pos("0", 0.0, 90.0) };
+        let sc = Scene { version: model3d::SCENE_VERSION, objects: vec![], lamp_mm: Some(top_lamp), positions: vec![spinning], images: vec![picture] };
+        let sol = solve(&sc, &opts, cb, resp, &preset).unwrap();
+        let seen = |x: f64, y: f64, hx: f64, angle: f64| -> [f64; 3] {
+            let (eye, lamp) = eye_and_lamp(&opts, top_lamp, hx, angle);
+            let (gt, gr) = scene::g_at(&scene::Scene { light_mm: lamp, camera_mm: eye, ..Default::default() }, x, y);
+            let w = sol.solved.cell(x / across + 0.5, y / across + 0.5).unwrap();
+            let pl = resp.at(plain, gt, gr);
+            let mut rgb = [0.0f64; 3];
+            for j in 0..k {
+                let c = resp.at(j, gt, gr);
+                for ch in 0..3 {
+                    rgb[ch] += w[j] as f64 * c[ch] as f64;
+                }
+            }
+            rgb.map(|v| v * (1.0 - PLAIN_LEAK)).iter().zip(pl).map(|(v, p)| v + PLAIN_LEAK * p as f64).collect::<Vec<_>>().try_into().unwrap()
+        };
+        let look = SPIN_LOOK_DEG.to_radians();
+        for &hx in &[-EYE_HALF_MM, 0.0, EYE_HALF_MM] {
+            let (red, blue) = (seen(-7.0, -41.0, hx, spin_angle(-7.0, -41.0, look)), seen(7.0, -41.0, hx, spin_angle(7.0, -41.0, look)));
+            assert!(red[0] > red[1] && red[0] > red[2], "hx={hx}: red half turned to 3 o'clock should be red: {red:?}");
+            assert!(blue[2] > blue[0] && blue[2] > blue[1], "hx={hx}: blue half turned to 3 o'clock should be blue: {blue:?}");
+        }
     }
 
     #[test]
@@ -1847,7 +1922,7 @@ mod frames_study {
             crop_side: Default::default(),
             crop_offset_deg: 0.0,
             crops: None,
-            neutral: None,
+            neutral: None, spin: false, look_deg: None,
             order: vec![],
         };
         let opts = Options { grid, ..Default::default() };

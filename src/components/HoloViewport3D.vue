@@ -70,6 +70,7 @@ import {
   LAMP_MAX_UP_MM,
   LAMP_MIN_UP_MM,
   LAMP_REACH_MM,
+  SPIN_LOOK_DEG,
   type Vec3,
 } from '../holo/constants'
 import { createAxesGizmo } from '../holo/axesGizmo'
@@ -440,6 +441,9 @@ function updateZones() {
   u.kind.value = ZONE_KIND_VALUE[props.zones]
   u.inner.value = props.innerRadiusMm
   u.outer.value = props.outerRadiusMm
+  const here = currentPosition()
+  u.spin.value = here?.spin ? 1 : 0
+  u.lookRad.value = MathUtils.degToRad(here?.lookDeg ?? SPIN_LOOK_DEG)
   if (usabilityMesh) usabilityMesh.visible = true
   const left = turnLeft()
   u.phi.value = Math.abs(left) < 0.05 ? 0 : MathUtils.degToRad(left)

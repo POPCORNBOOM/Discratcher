@@ -11,7 +11,8 @@ export const ZONE_KIND_VALUE: Record<ZoneKind, number> = { depth: 0, colour: 1, 
  * light cannot work it is hatched. When nothing is selected (`none`), only the lamp's glare band is
  * hatched: where some eye in the head span sees the track part of the light flip sign or come within
  * 0.15 of it, the rainbow streak of the grooves covers everything. Depth and colour both read 0
- * there, so the hatching only grows when something is selected. When a
+ * there, so the hatching only grows when something is selected. A spinning position (`spin`) is
+ * judged as each place passes `lookRad`, clockwise from 12 o'clock, so its zones are rings. When a
  * grey carved picture is selected (`crop`), only the crop border is shown. The current position's
  * crop (`cropMap`, in its frame turned by `phi`) is marked by a violet outline while the optical
  * zones remain visible across the whole ring. `g_t` and `g_r` are the parts of light and view
@@ -33,6 +34,8 @@ export function zonesMaterial(initialCropMap: Texture | null = null): ShaderMate
       inner: { value: 0 },
       outer: { value: 0 },
       hatchMm: { value: 2.4 },
+      spin: { value: 0 },
+      lookRad: { value: Math.PI / 2 },
     },
     vertexShader: `
       varying vec2 at;
@@ -42,7 +45,7 @@ export function zonesMaterial(initialCropMap: Texture | null = null): ShaderMate
       varying vec2 at;
       uniform sampler2D cropMap;
       uniform vec3 lamp;
-      uniform float distance, span, phi, hasCrop, kind, inner, outer, hatchMm;
+      uniform float distance, span, phi, hasCrop, kind, inner, outer, hatchMm, spin, lookRad;
       vec2 gAt(vec3 p, vec2 r, float eyeX) {
         vec3 g = normalize(lamp - p) + normalize(vec3(eyeX, 0.0, distance) - p);
         return vec2(-g.x * r.y + g.y * r.x, dot(g.xy, r));
@@ -113,8 +116,10 @@ export function zonesMaterial(initialCropMap: Texture | null = null): ShaderMate
           }
         }
         if (kind > 2.5) discard;
-        vec3 p = vec3(at, 0.0);
-        vec2 r = normalize(at);
+        // A spinning position is seen as each place passes the look, so only its radius counts.
+        vec2 seen = spin > 0.5 ? length(at) * vec2(sin(lookRad), cos(lookRad)) : at;
+        vec3 p = vec3(seen, 0.0);
+        vec2 r = normalize(seen);
         bool dead;
         float strength;
         if (kind < 0.5) {
