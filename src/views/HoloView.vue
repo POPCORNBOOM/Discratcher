@@ -714,9 +714,9 @@
           <!-- The lamp and where you look from, shared by every position. -->
           <UiSection name="lighting" :icon="mdiLightbulbOutline" :title="t('holo.lighting')">
             <UiSelect :model-value="opts.lampPreset" :label="t('holo.lampPosition')" :options="lampPresetOptions" @update:model-value="setLampPreset" />
-            <UiSlider :model-value="opts.lampMm[0]" :label="t('holo.lampSide')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampSideWords" @update:model-value="(v) => setLampAxis(0, v)" />
-            <UiSlider :model-value="opts.lampMm[1]" :label="t('holo.lampAway')" :min="-LAMP_REACH_MM" :max="LAMP_REACH_MM" :step="5" :format="lampAwayWords" @update:model-value="(v) => setLampAxis(1, v)" />
-            <UiSlider :model-value="opts.lampMm[2]" :label="t('holo.lampUp')" :min="LAMP_MIN_UP_MM" :max="LAMP_MAX_UP_MM" :step="5" :format="cm" @update:model-value="(v) => setLampAxis(2, v)" />
+            <UiSlider :model-value="opts.lampAzimuthDeg" :label="t('holo.azimuth')" :min="0" :max="359" :step="1" :format="degInt" @pointerdown="beginControlEdit" @update:model-value="setLampAzimuth" />
+            <UiSlider :model-value="opts.lampRadiusMm" :label="t('holo.lampRadius')" :min="0" :max="LAMP_REACH_MM" :step="5" :format="cm" @pointerdown="beginControlEdit" @update:model-value="setLampRadius" />
+            <UiSlider :model-value="opts.lampMm[2]" :label="t('holo.lampUp')" :min="LAMP_MIN_UP_MM" :max="LAMP_MAX_UP_MM" :step="5" :format="cm" @pointerdown="beginControlEdit" @update:model-value="setLampUp" />
             <UiSlider
               :model-value="opts.distanceMm"
               :label="t('holo.distance')"
@@ -1122,6 +1122,7 @@ import UiSlider from '../components/UiSlider.vue'
 import UiSwitch from '../components/UiSwitch.vue'
 import {
   BUILTIN_SAMPLE_PATH,
+  cylindricalToLampMm,
   DEFAULT_DATA_INNER_MM,
   DEFAULT_DATA_OUTER_MM,
   DEFAULT_DISTANCE_MM,
@@ -1134,6 +1135,9 @@ import {
   LAMP_MAX_UP_MM,
   LAMP_MIN_UP_MM,
   LAMP_REACH_MM,
+  LAMP_RIGHT_MM,
+  LAMP_UP_MM,
+  lampMmToCylindrical,
   transformTiltDeg,
   DEFAULT_TRANSFORM_TILT_DEG,
   MAX_TRANSFORM_TILT_DEG,
@@ -1301,6 +1305,8 @@ const redoStack = ref<HoloScene[]>([])
 const opts = reactive<{
   lampPreset: string
   lampMm: Vec3
+  lampAzimuthDeg: number
+  lampRadiusMm: number
   distanceMm: number
   chromaWeight: number
   exposure: number
@@ -1308,6 +1314,8 @@ const opts = reactive<{
 }>({
   lampPreset: 'held',
   lampMm: [...LAMP_HELD_MM],
+  lampAzimuthDeg: 90,
+  lampRadiusMm: LAMP_RIGHT_MM,
   distanceMm: DEFAULT_DISTANCE_MM,
   chromaWeight: 1,
   exposure: 0.6,
@@ -2222,6 +2230,7 @@ function onTransformStart(_id: string) {
 function onTransformChange(payload: { id: string; positionMm: Vec3; rotationDeg: Vec3; scaleMm: Vec3 }) {
   if (payload.id === LAMP_ID) {
     opts.lampMm = payload.positionMm
+    syncCylindricalFromLampMm(opts.lampMm)
     opts.lampPreset = matchLampPreset(opts.lampMm, opts.distanceMm)
     return
   }
@@ -2240,36 +2249,51 @@ function onImageTransform(p: { id: string; x: number; y: number; size: number; s
 
 
 // ---- Lamp & optical controls ----
-const sameVec3 = (a: Vec3, b: Vec3) => a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
+function syncCylindricalFromLampMm(at: Vec3) {
+  const { radiusMm, azimuthDeg } = lampMmToCylindrical(at, opts.lampAzimuthDeg)
+  opts.lampRadiusMm = radiusMm
+  opts.lampAzimuthDeg = azimuthDeg
+}
 
 function matchLampPreset(lampMm: Vec3, distanceMm: number): string {
   if (distanceMm === DEFAULT_DISTANCE_MM) {
-    if (sameVec3(lampMm, LAMP_HELD_MM)) return 'held'
-    if (sameVec3(lampMm, LAMP_FAR_MM)) return 'far'
-    if (sameVec3(lampMm, LAMP_FAR_RIGHT_MM)) return 'farRight'
+    const { radiusMm, azimuthDeg, upMm } = lampMmToCylindrical(lampMm, opts.lampAzimuthDeg)
+    if (radiusMm === LAMP_RIGHT_MM && upMm === LAMP_UP_MM) {
+      if (azimuthDeg === 90) return 'held'
+      if (azimuthDeg === 0) return 'far'
+      if (azimuthDeg === 45) return 'farRight'
+    }
   }
   return 'custom'
 }
 
 function setLampPreset(preset: string) {
-  if (preset === 'held') {
-    opts.lampPreset = 'held'
-    opts.lampMm = [...LAMP_HELD_MM]
-    opts.distanceMm = DEFAULT_DISTANCE_MM
-  } else if (preset === 'far') {
-    opts.lampPreset = 'far'
-    opts.lampMm = [...LAMP_FAR_MM]
-    opts.distanceMm = DEFAULT_DISTANCE_MM
-  } else if (preset === 'farRight') {
-    opts.lampPreset = 'farRight'
-    opts.lampMm = [...LAMP_FAR_RIGHT_MM]
-    opts.distanceMm = DEFAULT_DISTANCE_MM
-  }
+  const next = preset === 'held' ? LAMP_HELD_MM : preset === 'far' ? LAMP_FAR_MM : preset === 'farRight' ? LAMP_FAR_RIGHT_MM : null
+  if (!next) return
+  if (String(next) !== String(opts.lampMm)) pushHistory()
+  opts.lampPreset = preset
+  opts.lampMm = [...next]
+  syncCylindricalFromLampMm(opts.lampMm)
+  opts.distanceMm = DEFAULT_DISTANCE_MM
 }
 
-function setLampAxis(idx: number, v: number) {
-  opts.lampMm[idx] = Math.round(v)
+function updateLampCylindrical(radiusMm: number, azimuthDeg: number, upMm: number) {
+  opts.lampRadiusMm = Math.min(LAMP_REACH_MM, Math.max(0, Math.round(radiusMm)))
+  opts.lampAzimuthDeg = ((Math.round(azimuthDeg) % 360) + 360) % 360
+  opts.lampMm = cylindricalToLampMm(opts.lampRadiusMm, opts.lampAzimuthDeg, upMm)
   opts.lampPreset = matchLampPreset(opts.lampMm, opts.distanceMm)
+}
+
+function setLampAzimuth(deg: number) {
+  updateLampCylindrical(opts.lampRadiusMm, deg, opts.lampMm[2])
+}
+
+function setLampRadius(r: number) {
+  updateLampCylindrical(r, opts.lampAzimuthDeg, opts.lampMm[2])
+}
+
+function setLampUp(z: number) {
+  updateLampCylindrical(opts.lampRadiusMm, opts.lampAzimuthDeg, z)
 }
 
 function setDistance(v: number) {
@@ -2278,8 +2302,6 @@ function setDistance(v: number) {
 }
 
 const cm = (x: number) => t('holo.cm', { n: Math.round(Math.abs(x) / 5) / 2 })
-const lampSideWords = (x: number) => (x === 0 ? t('holo.centred') : t(x > 0 ? 'holo.toRight' : 'holo.toLeft', { d: cm(x) }))
-const lampAwayWords = (y: number) => (y === 0 ? t('holo.centred') : t(y > 0 ? 'holo.awayFromYou' : 'holo.towardsYou', { d: cm(y) }))
 
 // The lamp belongs to the scene, so it is saved, opened and undone with it.
 watch(() => [...opts.lampMm], (v) => {
@@ -2290,6 +2312,7 @@ watch(() => scene.value, (sc) => {
   else if (String(sc.lampMm) !== String(opts.lampMm)) {
     const at = sc.lampMm
     opts.lampMm = [...at]
+    syncCylindricalFromLampMm(at)
     opts.lampPreset = matchLampPreset(at, opts.distanceMm)
   }
 })

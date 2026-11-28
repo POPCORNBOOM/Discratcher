@@ -807,9 +807,17 @@ function onGizmoObjectChange(control: TransformControls) {
   if (!mesh || !id) return
 
   if (id === LAMP_ID) {
+    let lx = mesh.position.x
+    let ly = mesh.position.y
+    const r = Math.hypot(lx, ly)
+    if (r > LAMP_REACH_MM) {
+      const k = LAMP_REACH_MM / r
+      lx *= k
+      ly *= k
+    }
     const at: Vec3 = [
-      MathUtils.clamp(Math.round(mesh.position.x), -LAMP_REACH_MM, LAMP_REACH_MM),
-      MathUtils.clamp(Math.round(mesh.position.y), -LAMP_REACH_MM, LAMP_REACH_MM),
+      round1(lx),
+      round1(ly),
       MathUtils.clamp(Math.round(mesh.position.z), LAMP_MIN_UP_MM, LAMP_MAX_UP_MM),
     ]
     mesh.position.set(...at)
