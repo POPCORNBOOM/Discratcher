@@ -1,8 +1,10 @@
 name: Release
 
 # Push a tag such as v0.1.0 to build installers and publish a release.
-# The notes are the tag's message (git tag -a v0.2.0 -m "..."), or else the commits
-# since the previous tag. If any platform fails, the release stays a draft.
+# The notes are docs/releases/<tag>.<locale>.md, one file per language (v0.3.0.zh-CN.md,
+# v0.3.0.en.md); the app shows the one in its own language. Without them, the tag's message
+# (git tag -a v0.2.0 -m "..."), or else the commits since the previous tag.
+# If any platform fails, the release stays a draft.
 on:
   push:
     tags: ['v*']
@@ -77,15 +79,31 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="$GITHUB_REF_NAME"
-          if [ "$(git cat-file -t "$tag")" = tag ]; then
-            notes="$(git tag -l --format='%(contents)' "$tag")"
+          hint='macOS 版未签名，首次打开请右键选择“打开”。'
+          # Each language's notes, by locale, from docs/releases/<tag>.<locale>.md.
+          by='{}'
+          for f in "docs/releases/$tag".*.md; do
+            [ -e "$f" ] || continue
+            code="${f#docs/releases/$tag.}"
+            by="$(jq --arg c "${code%.md}" --rawfile n "$f" '. + {($c): $n}' <<<"$by")"
+          done
+          if [ "$by" != '{}' ]; then
+            # Apps before per-language notes read the Chinese; the page shows every language.
+            notes="$(jq -r '.["zh-CN"] // ([.[]] | first)' <<<"$by")"
+            page="$(jq -r '[.["zh-CN"] // empty] + [to_entries[] | select(.key != "zh-CN") | .value] | join("\n\n---\n\n")' <<<"$by")"
           else
-            prev="$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || true)"
-            notes="$(git log --pretty='- %s' "${prev:+$prev..}$tag")"
+            if [ "$(git cat-file -t "$tag")" = tag ]; then
+              notes="$(git tag -l --format='%(contents)' "$tag")"
+            else
+              prev="$(git describe --tags --abbrev=0 "$tag^" 2>/dev/null || true)"
+              notes="$(git log --pretty='- %s' "${prev:+$prev..}$tag")"
+            fi
+            page="$notes"
           fi
-          printf '%s\n\n---\n\nmacOS 版未签名，首次打开请右键选择“打开”。\n' "$notes" > notes.md
+          printf '%s\n\n---\n\n%s\n' "$notes" "$hint" > notes.md
+          printf '%s\n\n---\n\n%s\n' "$page" "$hint" > page.md
           gh release download "$tag" --pattern latest.json
-          jq --rawfile notes notes.md '.notes = $notes' latest.json > notes.json
+          jq --rawfile notes notes.md --argjson by "$by" '.notes = $notes | if $by == {} then . else .notesByLocale = $by end' latest.json > notes.json
           mv notes.json latest.json
           gh release upload "$tag" latest.json --clobber
-          gh release edit "$tag" --draft=false --latest --notes-file notes.md
+          gh release edit "$tag" --draft=false --latest --notes-file page.md
